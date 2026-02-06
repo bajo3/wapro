@@ -21,17 +21,28 @@ import {
   updateIntelligenceSettings,
   listPolicies,
   createPolicy,
+  updatePolicy,
   deletePolicy,
   listFaq,
   createFaq,
+  updateFaq,
   deleteFaq,
   listPlaybooks,
   createPlaybook,
+  updatePlaybook,
   deletePlaybook,
   listExamples,
   createExample,
   deleteExample,
-  listDecisions
+  listDecisions,
+  searchKnowledge,
+  listEpisodes,
+  rateEpisode,
+  listAudit,
+  logAudit,
+  listAbVariants,
+  createAbVariant,
+  deleteAbVariant
 } from '../services/intelligence.js';
 
 import { runPlayground } from '../services/playground.js';
@@ -403,7 +414,33 @@ adminRouter.post('/intelligence/policies', async (req, res) => {
       title: req.body?.title,
       triggers: req.body?.triggers ?? [],
       body: req.body?.body ?? '',
-      enabled: req.body?.enabled
+      enabled: req.body?.enabled,
+      draft: req.body?.draft
+    });
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'create',
+      entity: 'policy',
+      entity_id: String(policy?.id ?? ''),
+      diff: { title: policy?.title ?? null }
+    });
+    return res.json({ ok: true, policy });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.patch('/intelligence/policies/:id', async (req, res) => {
+  const idNum = Number(req.params.id);
+  if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
+  try {
+    const policy = await updatePolicy(idNum, req.body ?? {});
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'update',
+      entity: 'policy',
+      entity_id: String(idNum),
+      diff: req.body ?? {}
     });
     return res.json({ ok: true, policy });
   } catch (e: any) {
@@ -416,6 +453,12 @@ adminRouter.delete('/intelligence/policies/:id', async (req, res) => {
   if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
   try {
     await deletePolicy(idNum);
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'delete',
+      entity: 'policy',
+      entity_id: String(idNum)
+    });
     return res.json({ ok: true });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
@@ -437,7 +480,33 @@ adminRouter.post('/intelligence/faqs', async (req, res) => {
       title: req.body?.title,
       triggers: req.body?.triggers ?? [],
       answer: req.body?.answer ?? '',
-      enabled: req.body?.enabled
+      enabled: req.body?.enabled,
+      draft: req.body?.draft
+    });
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'create',
+      entity: 'faq',
+      entity_id: String(faq?.id ?? ''),
+      diff: { title: faq?.title ?? null }
+    });
+    return res.json({ ok: true, faq });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.patch('/intelligence/faqs/:id', async (req, res) => {
+  const idNum = Number(req.params.id);
+  if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
+  try {
+    const faq = await updateFaq(idNum, req.body ?? {});
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'update',
+      entity: 'faq',
+      entity_id: String(idNum),
+      diff: req.body ?? {}
     });
     return res.json({ ok: true, faq });
   } catch (e: any) {
@@ -450,7 +519,31 @@ adminRouter.delete('/intelligence/faqs/:id', async (req, res) => {
   if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
   try {
     await deleteFaq(idNum);
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'delete',
+      entity: 'faq',
+      entity_id: String(idNum)
+    });
     return res.json({ ok: true });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.patch('/intelligence/faqs/:id', async (req, res) => {
+  const idNum = Number(req.params.id);
+  if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
+  try {
+    const faq = await updateFaq(idNum, req.body ?? {});
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'update',
+      entity: 'faq',
+      entity_id: String(idNum),
+      diff: req.body ?? {}
+    });
+    return res.json({ ok: true, faq });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
   }
@@ -471,7 +564,34 @@ adminRouter.post('/intelligence/playbooks', async (req, res) => {
       intent: String(req.body?.intent ?? ''),
       triggers: req.body?.triggers ?? [],
       template: String(req.body?.template ?? ''),
-      enabled: req.body?.enabled
+      enabled: req.body?.enabled,
+      draft: req.body?.draft,
+      config: req.body?.config
+    });
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'create',
+      entity: 'playbook',
+      entity_id: String(playbook?.id ?? ''),
+      diff: { intent: playbook?.intent ?? null }
+    });
+    return res.json({ ok: true, playbook });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.patch('/intelligence/playbooks/:id', async (req, res) => {
+  const idNum = Number(req.params.id);
+  if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
+  try {
+    const playbook = await updatePlaybook(idNum, req.body ?? {});
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'update',
+      entity: 'playbook',
+      entity_id: String(idNum),
+      diff: req.body ?? {}
     });
     return res.json({ ok: true, playbook });
   } catch (e: any) {
@@ -484,6 +604,12 @@ adminRouter.delete('/intelligence/playbooks/:id', async (req, res) => {
   if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
   try {
     await deletePlaybook(idNum);
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'delete',
+      entity: 'playbook',
+      entity_id: String(idNum)
+    });
     return res.json({ ok: true });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
@@ -507,6 +633,13 @@ adminRouter.post('/intelligence/examples', async (req, res) => {
       ideal_answer: String(req.body?.ideal_answer ?? ''),
       notes: req.body?.notes
     });
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'create',
+      entity: 'example',
+      entity_id: String(example?.id ?? ''),
+      diff: { intent: example?.intent ?? null }
+    });
     return res.json({ ok: true, example });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
@@ -518,6 +651,12 @@ adminRouter.delete('/intelligence/examples/:id', async (req, res) => {
   if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
   try {
     await deleteExample(idNum);
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'delete',
+      entity: 'example',
+      entity_id: String(idNum)
+    });
     return res.json({ ok: true });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
@@ -530,6 +669,114 @@ adminRouter.get('/intelligence/decisions', async (req, res) => {
   try {
     const decisions = await listDecisions(limit);
     return res.json({ ok: true, decisions });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// Knowledge search ("mostrar fuentes usadas")
+adminRouter.get('/intelligence/search', async (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  const limitRaw = Number(req.query.limit ?? 5);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 20) : 5;
+  if (!q) return res.status(400).json({ ok: false, message: 'q required' });
+  try {
+    const hits = await searchKnowledge(q, limit);
+    return res.json({ ok: true, hits });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// Training Episodes: list + rate
+adminRouter.get('/intelligence/episodes', async (req, res) => {
+  const limitRaw = Number(req.query.limit ?? 200);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 200;
+  try {
+    const episodes = await listEpisodes(limit);
+    return res.json({ ok: true, episodes });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.post('/intelligence/episodes/:id/rate', async (req, res) => {
+  const idNum = Number(req.params.id);
+  if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
+  const rating = req.body?.rating === null || req.body?.rating === undefined ? null : Number(req.body?.rating);
+  const feedback = typeof req.body?.feedback === 'string' ? req.body.feedback : null;
+  try {
+    const ep = await rateEpisode(idNum, Number.isFinite(rating as any) ? (rating as any) : null, feedback);
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'rate',
+      entity: 'episode',
+      entity_id: String(idNum),
+      diff: { rating, feedback }
+    });
+    return res.json({ ok: true, episode: ep });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// Audit log
+adminRouter.get('/intelligence/audit', async (req, res) => {
+  const limitRaw = Number(req.query.limit ?? 200);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 1000) : 200;
+  try {
+    const audit = await listAudit(limit);
+    return res.json({ ok: true, audit });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// A/B variants
+adminRouter.get('/intelligence/ab/variants', async (_req, res) => {
+  try {
+    const variants = await listAbVariants();
+    return res.json({ ok: true, variants });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.post('/intelligence/ab/variants', async (req, res) => {
+  try {
+    const v = await createAbVariant({
+      scope: req.body?.scope,
+      scope_key: String(req.body?.scope_key ?? ''),
+      variant: String(req.body?.variant ?? ''),
+      weight: req.body?.weight,
+      template_override: req.body?.template_override,
+      enabled: req.body?.enabled
+    } as any);
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'create',
+      entity: 'ab_variant',
+      entity_id: String(v?.id ?? ''),
+      diff: { scope: v?.scope, scope_key: v?.scope_key, variant: v?.variant, weight: v?.weight }
+    });
+    return res.json({ ok: true, variant: v });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.delete('/intelligence/ab/variants/:id', async (req, res) => {
+  const idNum = Number(req.params.id);
+  if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
+  try {
+    await deleteAbVariant(idNum);
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'delete',
+      entity: 'ab_variant',
+      entity_id: String(idNum)
+    });
+    return res.json({ ok: true });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
   }
@@ -571,7 +818,17 @@ adminRouter.post('/tests/cases', async (req, res) => {
       expected_source_type: req.body?.expected_source_type,
       expected_source_id: req.body?.expected_source_id,
       expected_contains: req.body?.expected_contains ?? [],
+      expected_not_contains: req.body?.expected_not_contains ?? [],
+      expected_regex: req.body?.expected_regex,
+      expected_must_ask_fields: req.body?.expected_must_ask_fields ?? [],
       enabled: req.body?.enabled
+    });
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'create',
+      entity: 'test_case',
+      entity_id: String(tc?.id ?? ''),
+      diff: { name: tc?.name ?? null }
     });
     return res.json({ ok: true, test_case: tc });
   } catch (e: any) {
@@ -584,6 +841,12 @@ adminRouter.delete('/tests/cases/:id', async (req, res) => {
   if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
   try {
     await deleteTestCase(idNum);
+    await logAudit({
+      actor: String(req.header('x-admin-actor') ?? '') || null,
+      action: 'delete',
+      entity: 'test_case',
+      entity_id: String(idNum)
+    });
     return res.json({ ok: true });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
@@ -596,21 +859,6 @@ adminRouter.post('/tests/run', async (req, res) => {
   try {
     const report = await runTestSuite(limit);
     return res.json({ ok: true, report });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
-  }
-});
-
-/**
- * Playground (dry-run). It does not send messages to WhatsApp.
- * Returns reply preview + intent + sources used.
- */
-adminRouter.post('/playground/run', async (req, res) => {
-  try {
-    const text = String(req.body?.text ?? '');
-    const state = req.body?.state ?? {};
-    const result = await runPlayground({ text, state });
-    return res.json({ ok: true, result });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
   }

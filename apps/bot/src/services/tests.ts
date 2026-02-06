@@ -27,6 +27,27 @@ function containsAll(text: string, needles: string[]): string[] {
   return missing;
 }
 
+function containsAny(text: string, needles: string[]): boolean {
+  const hay = String(text || '').toLowerCase();
+  for (const n of needles || []) {
+    const nn = String(n || '').toLowerCase().trim();
+    if (!nn) continue;
+    if (hay.includes(nn)) return true;
+  }
+  return false;
+}
+
+const fieldHints: Record<string, string[]> = {
+  model: ['modelo', 'marca', 'vehiculo'],
+  year: ['año', 'anio'],
+  km: ['km', 'kms', 'kilomet'],
+  gnc: ['gnc'],
+  percent: ['%', 'porcentaje'],
+  cuotas: ['cuotas', 'meses'],
+  city: ['zona', 'ciudad'],
+  query: ['cual', 'que producto', 'que modelo']
+};
+
 export async function runTestSuite(limit = 200): Promise<{
   total: number;
   passed: number;
@@ -65,6 +86,38 @@ export async function runTestSuite(limit = 200): Promise<{
     const expContains: string[] = Array.isArray(tc.expected_contains) ? tc.expected_contains : [];
     const missing = containsAll(sim.reply, expContains);
     if (missing.length) reasons.push(`faltan textos: ${missing.join(' | ')}`);
+
+    // Negative assertions
+    const expNot: string[] = Array.isArray(tc.expected_not_contains) ? tc.expected_not_contains : [];
+    for (const ban of expNot) {
+      const b = String(ban || '').trim();
+      if (b && String(sim.reply || '').toLowerCase().includes(b.toLowerCase())) {
+        reasons.push(`contiene texto prohibido: ${b}`);
+      }
+    }
+
+    // Regex assertion
+    if (tc.expected_regex) {
+      try {
+        const re = new RegExp(String(tc.expected_regex));
+        if (!re.test(String(sim.reply || ''))) reasons.push(`regex no matchea: ${String(tc.expected_regex)}`);
+      } catch {
+        reasons.push(`regex inválido: ${String(tc.expected_regex)}`);
+      }
+    }
+
+    // Guardrail assertion: bot debe pedir ciertos campos
+    const mustAsk: string[] = Array.isArray(tc.expected_must_ask_fields) ? tc.expected_must_ask_fields : [];
+    if (mustAsk.length) {
+      const missingFields: string[] = Array.isArray(sim.missing_fields) ? sim.missing_fields : [];
+      for (const f of mustAsk) {
+        const key = String(f || '').trim();
+        if (!key) continue;
+        const hinted = fieldHints[key] || [key];
+        const ok = missingFields.includes(key) || containsAny(sim.reply, hinted);
+        if (!ok) reasons.push(`no pide el campo: ${key}`);
+      }
+    }
 
     const pass = reasons.length === 0;
     results.push({
