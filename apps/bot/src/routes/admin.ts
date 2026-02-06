@@ -19,6 +19,9 @@ import {
 import {
   getIntelligenceSettings,
   updateIntelligenceSettings,
+  listPolicies,
+  createPolicy,
+  deletePolicy,
   listFaq,
   createFaq,
   deleteFaq,
@@ -30,6 +33,10 @@ import {
   deleteExample,
   listDecisions
 } from '../services/intelligence.js';
+
+import { runPlayground } from '../services/playground.js';
+import { listTestCases, createTestCase, deleteTestCase } from '../services/intelligence.js';
+import { runTestSuite } from '../services/tests.js';
 
 export const adminRouter = Router();
 
@@ -380,6 +387,41 @@ adminRouter.put('/intelligence/settings', async (req, res) => {
   }
 });
 
+// Policies
+adminRouter.get('/intelligence/policies', async (_req, res) => {
+  try {
+    const policies = await listPolicies();
+    return res.json({ ok: true, policies });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.post('/intelligence/policies', async (req, res) => {
+  try {
+    const policy = await createPolicy({
+      title: req.body?.title,
+      triggers: req.body?.triggers ?? [],
+      body: req.body?.body ?? '',
+      enabled: req.body?.enabled
+    });
+    return res.json({ ok: true, policy });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.delete('/intelligence/policies/:id', async (req, res) => {
+  const idNum = Number(req.params.id);
+  if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
+  try {
+    await deletePolicy(idNum);
+    return res.json({ ok: true });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
 adminRouter.get('/intelligence/faqs', async (_req, res) => {
   try {
     const faqs = await listFaq();
@@ -492,3 +534,86 @@ adminRouter.get('/intelligence/decisions', async (req, res) => {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
   }
 });
+
+/**
+ * Playground: simulate matching without sending a message.
+ * Returns reply + intent + sources used.
+ */
+adminRouter.post('/playground/run', async (req, res) => {
+  const text = String(req.body?.text ?? '');
+  if (!text.trim()) return res.status(400).json({ ok: false, message: 'text required' });
+  try {
+    const result = await runPlayground({ text, state: req.body?.state });
+    return res.json({ ok: true, result });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+/**
+ * Tests: CRUD cases + run suite.
+ */
+adminRouter.get('/tests/cases', async (_req, res) => {
+  try {
+    const cases = await listTestCases();
+    return res.json({ ok: true, cases });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.post('/tests/cases', async (req, res) => {
+  try {
+    const tc = await createTestCase({
+      name: String(req.body?.name ?? ''),
+      user_text: String(req.body?.user_text ?? ''),
+      expected_intent: req.body?.expected_intent,
+      expected_source_type: req.body?.expected_source_type,
+      expected_source_id: req.body?.expected_source_id,
+      expected_contains: req.body?.expected_contains ?? [],
+      enabled: req.body?.enabled
+    });
+    return res.json({ ok: true, test_case: tc });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.delete('/tests/cases/:id', async (req, res) => {
+  const idNum = Number(req.params.id);
+  if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });
+  try {
+    await deleteTestCase(idNum);
+    return res.json({ ok: true });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.post('/tests/run', async (req, res) => {
+  const limitRaw = Number(req.body?.limit ?? 200);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 200;
+  try {
+    const report = await runTestSuite(limit);
+    return res.json({ ok: true, report });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+/**
+ * Playground (dry-run). It does not send messages to WhatsApp.
+ * Returns reply preview + intent + sources used.
+ */
+adminRouter.post('/playground/run', async (req, res) => {
+  try {
+    const text = String(req.body?.text ?? '');
+    const state = req.body?.state ?? {};
+    const result = await runPlayground({ text, state });
+    return res.json({ ok: true, result });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+

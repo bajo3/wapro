@@ -55,6 +55,24 @@ export async function deleteFaq(id: number): Promise<void> {
   await pool.query('delete from bot_faq where id=$1', [id]);
 }
 
+// ---- Policies ----
+export async function listPolicies(): Promise<any[]> {
+  const r = await pool.query('select * from bot_policies order by id desc');
+  return r.rows;
+}
+
+export async function createPolicy(input: { title?: string; triggers: string[]; body: string; enabled?: boolean }): Promise<any> {
+  const r = await pool.query(
+    'insert into bot_policies (title, triggers, body, enabled) values ($1, $2, $3, $4) returning *',
+    [input.title ?? null, input.triggers ?? [], input.body, input.enabled ?? true]
+  );
+  return r.rows[0];
+}
+
+export async function deletePolicy(id: number): Promise<void> {
+  await pool.query('delete from bot_policies where id=$1', [id]);
+}
+
 // ---- Playbooks ----
 export async function listPlaybooks(): Promise<any[]> {
   const r = await pool.query('select * from bot_playbooks order by id desc');
@@ -101,6 +119,41 @@ export async function deleteExample(id: number): Promise<void> {
   await pool.query('delete from bot_examples where id=$1', [id]);
 }
 
+// ---- Test cases ----
+export async function listTestCases(): Promise<any[]> {
+  const r = await pool.query('select * from bot_test_cases order by id desc');
+  return r.rows;
+}
+
+export async function createTestCase(input: {
+  name: string;
+  user_text: string;
+  expected_intent?: string;
+  expected_source_type?: string;
+  expected_source_id?: number;
+  expected_contains?: string[];
+  enabled?: boolean;
+}): Promise<any> {
+  const r = await pool.query(
+    'insert into bot_test_cases (name, user_text, expected_intent, expected_source_type, expected_source_id, expected_contains, enabled)\n' +
+      'values ($1,$2,$3,$4,$5,$6,$7) returning *',
+    [
+      input.name,
+      input.user_text,
+      input.expected_intent ?? null,
+      input.expected_source_type ?? null,
+      input.expected_source_id ?? null,
+      input.expected_contains ?? [],
+      input.enabled ?? true
+    ]
+  );
+  return r.rows[0];
+}
+
+export async function deleteTestCase(id: number): Promise<void> {
+  await pool.query('delete from bot_test_cases where id=$1', [id]);
+}
+
 // ---- Decisions ----
 export async function listDecisions(limit = 100): Promise<any[]> {
   const r = await pool.query('select * from bot_decisions order by id desc limit $1', [limit]);
@@ -125,19 +178,30 @@ const cache = {
   at: 0,
   ttlMs: 15_000,
   faqs: [] as any[],
-  playbooks: [] as any[]
+  playbooks: [] as any[],
+  policies: [] as any[]
 };
 
 async function refreshCacheIfNeeded() {
   const now = Date.now();
-  if (now - cache.at < cache.ttlMs && (cache.faqs.length || cache.playbooks.length)) return;
-  const [faqs, playbooks] = await Promise.all([
+  if (now - cache.at < cache.ttlMs && (cache.faqs.length || cache.playbooks.length || cache.policies.length)) return;
+  const [policies, faqs, playbooks] = await Promise.all([
+    pool.query('select * from bot_policies where enabled=true order by id desc'),
     pool.query('select * from bot_faq where enabled=true order by id desc'),
     pool.query('select * from bot_playbooks where enabled=true order by id desc')
   ]);
+  cache.policies = policies.rows;
   cache.faqs = faqs.rows;
   cache.playbooks = playbooks.rows;
   cache.at = now;
+}
+
+export async function matchPolicy(text: string): Promise<any | null> {
+  await refreshCacheIfNeeded();
+  for (const row of cache.policies) {
+    if (textMatchesTriggers(text, row.triggers || [])) return row;
+  }
+  return null;
 }
 
 export async function matchFaq(text: string): Promise<any | null> {

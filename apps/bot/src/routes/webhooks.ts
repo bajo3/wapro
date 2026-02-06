@@ -7,7 +7,7 @@ import { getState, setState, seenDedupe, markDedupe } from '../services/state.js
 import { getContactRule, setContactRule } from '../services/contacts.js';
 import { getConversationRule, setConversationRule } from '../services/rules.js';
 import { getSocket } from '../services/socket.js';
-import { matchFaq, matchPlaybook, renderTemplate, logDecision, getIntelligenceSettings } from '../services/intelligence.js';
+import { matchPolicy, matchFaq, matchPlaybook, renderTemplate, logDecision, getIntelligenceSettings } from '../services/intelligence.js';
 import { createHash } from 'node:crypto';
 import type { ConvState } from '../services/state.js';
 
@@ -320,15 +320,41 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     // Intelligence: FAQ / Playbooks (panel-configurable)
     try {
       const settings = await getIntelligenceSettings();
+      const policy = await matchPolicy(rawText);
+      if (policy?.body) {
+        const reply = renderTemplate(String(policy.body), { state, settings, policy });
+        await logDecision({
+          instance,
+          remoteJid,
+          intent: 'policy',
+          confidence: 0.99,
+          data: { policyId: policy.id, sources: [{ type: 'policy', id: policy.id, title: policy.title ?? null }] }
+        });
+        scheduleReply(reply, {
+          ...state,
+          stage: state.stage ?? 'idle',
+          last_intent: 'policy',
+          last_policy_id: policy.id,
+          last_sources: [{ type: 'policy', id: policy.id, title: policy.title ?? null }]
+        });
+        return;
+      }
       const faq = await matchFaq(rawText);
       if (faq?.answer) {
         const reply = renderTemplate(String(faq.answer), { state, settings });
-        await logDecision({ instance, remoteJid, intent: 'faq', confidence: 0.99, data: { faqId: faq.id } });
+        await logDecision({
+          instance,
+          remoteJid,
+          intent: 'faq',
+          confidence: 0.99,
+          data: { faqId: faq.id, sources: [{ type: 'faq', id: faq.id, title: faq.title ?? null }] }
+        });
         scheduleReply(reply, {
           ...state,
           stage: state.stage ?? 'idle',
           last_intent: 'faq',
-          last_faq_id: faq.id
+          last_faq_id: faq.id,
+          last_sources: [{ type: 'faq', id: faq.id, title: faq.title ?? null }]
         });
         return;
       }
@@ -336,12 +362,19 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       const pb = await matchPlaybook(rawText);
       if (pb?.template) {
         const reply = renderTemplate(String(pb.template), { state, settings, playbook: pb });
-        await logDecision({ instance, remoteJid, intent: String(pb.intent ?? 'playbook'), confidence: 0.9, data: { playbookId: pb.id } });
+        await logDecision({
+          instance,
+          remoteJid,
+          intent: String(pb.intent ?? 'playbook'),
+          confidence: 0.9,
+          data: { playbookId: pb.id, sources: [{ type: 'playbook', id: pb.id, intent: pb.intent ?? null }] }
+        });
         scheduleReply(reply, {
           ...state,
           stage: state.stage ?? 'idle',
           last_intent: String(pb.intent ?? 'playbook'),
-          last_playbook_id: pb.id
+          last_playbook_id: pb.id,
+          last_sources: [{ type: 'playbook', id: pb.id, intent: pb.intent ?? null }]
         });
         return;
       }
