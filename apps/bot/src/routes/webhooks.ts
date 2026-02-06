@@ -19,8 +19,6 @@ import {
   logEpisode
 } from '../services/intelligence.js';
 import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from '../services/extract.js';
-
-import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from '../services/extract.js';
 import { createHash } from 'node:crypto';
 import type { ConvState } from '../services/state.js';
 
@@ -302,8 +300,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 channel: 'whatsapp',
                 user_text: rawText,
                 reply_text: reply,
-                intent: intent || null,
-                variant: variant ? String(variant) : null,
+                intent: intent || undefined,
+                variant: variant ? String(variant) : undefined,
                 sources,
                 extracted,
                 missing_fields: missingFields
