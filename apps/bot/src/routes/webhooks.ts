@@ -19,8 +19,6 @@ import {
   logEpisode
 } from '../services/intelligence.js';
 import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from '../services/extract.js';
-
-import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from '../services/extract.js';
 import { createHash } from 'node:crypto';
 import type { ConvState } from '../services/state.js';
 
@@ -270,7 +268,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       const delayMs = computeHumanDelay(reply);
 
       // Best-effort typing indicator. Don’t block on errors.
-      void evolutionSendPresence(instance, number, 'composing', Math.min(delayMs, 5000)).catch(() => { });
+      void evolutionSendPresence(instance, number, 'composing', Math.min(delayMs, 5000)).catch(() => {});
 
       const timer = setTimeout(async () => {
         const sentIso = new Date().toISOString();
@@ -290,11 +288,20 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
           // Training episode (best-effort): store what the user wrote and what we replied.
           try {
-            const intent = String(nextState?.last_intent ?? '');
+            const intent =
+              typeof nextState?.last_intent === 'string' && nextState.last_intent.trim()
+                ? nextState.last_intent.trim()
+                : undefined;
+
             const sources = Array.isArray(nextState?.last_sources) ? nextState.last_sources : [];
-            const extracted = nextState?.extracted ?? nextState?.lead ?? {};
+            const extractedObj = nextState?.extracted ?? nextState?.lead ?? {};
             const missingFields = Array.isArray(nextState?.missing_fields) ? nextState.missing_fields : [];
-            const variant = nextState?.last_variant ?? null;
+
+            const variant =
+              typeof nextState?.last_variant === 'string' && nextState.last_variant.trim()
+                ? nextState.last_variant.trim()
+                : undefined;
+
             if (rawText && reply) {
               await logEpisode({
                 instance,
@@ -302,16 +309,17 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 channel: 'whatsapp',
                 user_text: rawText,
                 reply_text: reply,
-                intent: intent || null,
-                variant: variant ? String(variant) : null,
+                intent, // ✅ undefined if missing
+                variant, // ✅ undefined if missing
                 sources,
-                extracted,
+                extracted: extractedObj,
                 missing_fields: missingFields
               });
             }
           } catch {
             // ignore episode failures
           }
+
           // Emit socket event for outgoing message
           const sock = getSocket();
           if (sock) {
@@ -346,7 +354,9 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     }
 
     // Test mode: when the user explicitly says they are testing.
-    const isTestMode = /(probando|testeando|test\b|configurando|\bestoy\s+(?:probando|testeando|configurando)|\bchatbot\b|no\s+le\s+des\s+bola|no\s+respondas|no\s+contestes)/i.test(rawText);
+    const isTestMode = /(probando|testeando|test\b|configurando|\bestoy\s+(?:probando|testeando|configurando)|\bchatbot\b|no\s+le\s+des\s+bola|no\s+respondas|no\s+contestes)/i.test(
+      rawText
+    );
     if (isTestMode) {
       const testReply = 'jaja ok 😄 decime qué querés testear: búsqueda, precios o checkout';
       scheduleReply(testReply, {
@@ -428,11 +438,14 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         // Guardrails: required fields
         const req = requiredFieldsForIntent(String(pb.intent ?? 'playbook'), (pb as any).config);
         const missing = computeMissingFields(req, extracted);
-        const cfg = ((pb as any).config && typeof (pb as any).config === 'object') ? (pb as any).config : {};
+        const cfg = (pb as any).config && typeof (pb as any).config === 'object' ? (pb as any).config : {};
         const autoAsk = cfg.autoAskMissing !== undefined ? Boolean(cfg.autoAskMissing) : true;
-        const reply = autoAsk && missing.length
-          ? buildMissingQuestions(req, missing)
-          : renderTemplate(String(template), { state, settings, playbook: pb, extracted, missing_fields: missing, variant });
+
+        const reply =
+          autoAsk && missing.length
+            ? buildMissingQuestions(req, missing)
+            : renderTemplate(String(template), { state, settings, playbook: pb, extracted, missing_fields: missing, variant });
+
         await logDecision({
           instance,
           remoteJid,
@@ -447,6 +460,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             missing_fields: missing
           }
         });
+
         scheduleReply(reply, {
           ...state,
           stage: state.stage ?? 'idle',
@@ -553,25 +567,33 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           const detailReply = `Dale. Opción ${opt}:\n${formatItemLine(item, opt)}\n\n¿Querés coordinar reserva o te paso otra alternativa?`;
           // If the item has an image, include it as media; otherwise send plain text.
           const imageUrl = (item as any).image ?? undefined;
-          scheduleReply(detailReply, {
-            ...state,
-            stage: 'idle',
-            last_intent: 'option_selected'
-          } as any, imageUrl);
+          scheduleReply(
+            detailReply,
+            {
+              ...state,
+              stage: 'idle',
+              last_intent: 'option_selected'
+            } as any,
+            imageUrl
+          );
           return;
         }
       }
 
       if (asksPriceQuick && !opt) {
         const askWhich = `Dale. ¿De cuál opción querés el precio? (1-${Math.min(lastHits.length, 6)})`;
-        scheduleReply(askWhich, {
-          ...state,
-          stage: 'idle',
-          last_intent: 'ask_price_which'
-        } as any);
+        scheduleReply(
+          askWhich,
+          {
+            ...state,
+            stage: 'idle',
+            last_intent: 'ask_price_which'
+          } as any
+        );
         return;
       }
     }
+
     let reply = '';
     // Start newState from previous state so we don't drop unrelated keys
     let newState: ConvState = { ...state, stage: 'idle', lastBotAt: nowIso, extracted } as any;
@@ -633,20 +655,12 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       const shouldSearch = stage === 'awaiting_query' || looksLikeQuery || (asksPrice && hasContent) || hasContent;
 
       if (isGreeting) {
-        const greetingVariants = [
-          '¡Buenas 😄! ¿Qué estás buscando hoy?',
-          '¡Hola! Decime qué necesitás y te paso opciones.',
-          '¡Hola! ¿Qué andás buscando?'
-        ];
+        const greetingVariants = ['¡Buenas 😄! ¿Qué estás buscando hoy?', '¡Hola! Decime qué necesitás y te paso opciones.', '¡Hola! ¿Qué andás buscando?'];
         reply = pickOne(greetingVariants);
         newState.stage = 'awaiting_query';
         newState.last_intent = 'greeting';
       } else if (asksPrice) {
-        const priceVariants = [
-          'Dale. ¿De qué producto/modelo querés precio?',
-          '¡Ok! Decime el modelo o marca y busco el precio.',
-          'Decime el producto o modelo para chequear el precio.'
-        ];
+        const priceVariants = ['Dale. ¿De qué producto/modelo querés precio?', '¡Ok! Decime el modelo o marca y busco el precio.', 'Decime el producto o modelo para chequear el precio.'];
         reply = pickOne(priceVariants);
         newState.stage = 'awaiting_query';
         newState.last_intent = 'price_request';
@@ -730,11 +744,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       const lastFb = Date.parse(lastFallbackAt);
       if (!Number.isNaN(lastFb) && now - lastFb < env.fallbackCooldownMs) {
         // Instead of repeating, ask one clarifying question
-        const clarVariants = [
-          '¿Tenés alguna marca o modelo en mente?',
-          '¿Cuál es tu presupuesto aproximado?',
-          '¿Para qué lo vas a usar?'
-        ];
+        const clarVariants = ['¿Tenés alguna marca o modelo en mente?', '¿Cuál es tu presupuesto aproximado?', '¿Para qué lo vas a usar?'];
         reply = pickOne(clarVariants);
         isFallback = false; // treat as different
       }
