@@ -23,7 +23,23 @@ app.set("trust proxy", 1);
 app.use(
   cors({
     credentials: true,
-    origin: process.env.FRONTEND_URL
+    origin: (origin, cb) => {
+      // Allow non-browser requests (no Origin) and allow-list configured origins.
+      if (!origin) return cb(null, true);
+
+      const raw = String(process.env.FRONTEND_URL || "").trim();
+      if (!raw) return cb(null, true);
+
+      const allowed = raw
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      if (allowed.includes(origin)) return cb(null, true);
+
+      // If misconfigured, fail closed with a clear message.
+      return cb(new Error(`Not allowed by CORS: ${origin}`));
+    }
   })
 );
 app.use(cookieParser());

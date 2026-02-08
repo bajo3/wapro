@@ -53,6 +53,22 @@ botIntelligenceRoutes.get("/bot/intelligence/settings", async (req, res) => {
   return res.status(r.status).json(r.data);
 });
 
+// Policies
+botIntelligenceRoutes.get("/bot/intelligence/policies", async (req, res) => {
+  const r = await forward(req, "/admin/intelligence/policies");
+  return res.status(r.status).json(r.data);
+});
+
+botIntelligenceRoutes.post("/bot/intelligence/policies", async (req, res) => {
+  const r = await forward(req, "/admin/intelligence/policies");
+  return res.status(r.status).json(r.data);
+});
+
+botIntelligenceRoutes.delete("/bot/intelligence/policies/:id", async (req, res) => {
+  const r = await forward(req, `/admin/intelligence/policies/${encodeURIComponent(req.params.id)}`);
+  return res.status(r.status).json(r.data);
+});
+
 botIntelligenceRoutes.put("/bot/intelligence/settings", async (req, res) => {
   const r = await forward(req, "/admin/intelligence/settings");
   return res.status(r.status).json(r.data);
@@ -110,6 +126,33 @@ botIntelligenceRoutes.delete("/bot/intelligence/examples/:id", async (req, res) 
 botIntelligenceRoutes.get("/bot/intelligence/decisions", async (req, res) => {
   const limit = req.query.limit ? `?limit=${encodeURIComponent(String(req.query.limit))}` : "";
   const r = await forward(req, `/admin/intelligence/decisions${limit}`);
+  return res.status(r.status).json(r.data);
+});
+
+// Playground
+botIntelligenceRoutes.post("/bot/playground/run", async (req, res) => {
+  const r = await forward(req, "/admin/playground/run");
+  return res.status(r.status).json(r.data);
+});
+
+// Tests
+botIntelligenceRoutes.get("/bot/tests/cases", async (req, res) => {
+  const r = await forward(req, "/admin/tests/cases");
+  return res.status(r.status).json(r.data);
+});
+
+botIntelligenceRoutes.post("/bot/tests/cases", async (req, res) => {
+  const r = await forward(req, "/admin/tests/cases");
+  return res.status(r.status).json(r.data);
+});
+
+botIntelligenceRoutes.delete("/bot/tests/cases/:id", async (req, res) => {
+  const r = await forward(req, `/admin/tests/cases/${encodeURIComponent(req.params.id)}`);
+  return res.status(r.status).json(r.data);
+});
+
+botIntelligenceRoutes.post("/bot/tests/run", async (req, res) => {
+  const r = await forward(req, "/admin/tests/run");
   return res.status(r.status).json(r.data);
 });
 

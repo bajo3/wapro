@@ -5,9 +5,22 @@ import { evolutionSendPresence, evolutionSendText, evolutionSendImage } from '..
 import { getCatalog, searchCatalog, formatItemLine } from '../services/catalog.js';
 import { getState, setState, seenDedupe, markDedupe } from '../services/state.js';
 import { getContactRule, setContactRule } from '../services/contacts.js';
-import { getConversationRule, setConversationRule } from '../services/rules.js';
+import { getConversationRule, setConversationRule, addConversationNote } from '../services/rules.js';
 import { getSocket } from '../services/socket.js';
-import { matchFaq, matchPlaybook, renderTemplate, logDecision, getIntelligenceSettings } from '../services/intelligence.js';
+import {
+  matchPolicy,
+  matchFaq,
+  matchPlaybook,
+  renderTemplate,
+  logDecision,
+  getIntelligenceSettings,
+  searchKnowledge,
+  getAbVariantsFor,
+  logEpisode
+} from '../services/intelligence.js';
+import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from '../services/extract.js';
+
+import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from '../services/extract.js';
 import { createHash } from 'node:crypto';
 import type { ConvState } from '../services/state.js';
 
@@ -240,6 +253,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // Conversation state
     const state: ConvState = await getState(instance, remoteJid);
+    // Structured extraction (best-effort): keeps useful fields across turns.
+    const extracted = extractLeadFields(rawText, (state as any)?.extracted ?? (state as any)?.lead ?? {});
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
 
@@ -272,6 +287,31 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             last_bot_reply_at: sentIso,
             last_bot_reply_hash: hashString(reply)
           });
+
+          // Training episode (best-effort): store what the user wrote and what we replied.
+          try {
+            const intent = String(nextState?.last_intent ?? '');
+            const sources = Array.isArray(nextState?.last_sources) ? nextState.last_sources : [];
+            const extracted = nextState?.extracted ?? nextState?.lead ?? {};
+            const missingFields = Array.isArray(nextState?.missing_fields) ? nextState.missing_fields : [];
+            const variant = nextState?.last_variant ?? null;
+            if (rawText && reply) {
+              await logEpisode({
+                instance,
+                remoteJid,
+                channel: 'whatsapp',
+                user_text: rawText,
+                reply_text: reply,
+                intent: intent || null,
+                variant: variant ? String(variant) : null,
+                sources,
+                extracted,
+                missing_fields: missingFields
+              });
+            }
+          } catch {
+            // ignore episode failures
+          }
           // Emit socket event for outgoing message
           const sock = getSocket();
           if (sock) {
@@ -320,28 +360,125 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     // Intelligence: FAQ / Playbooks (panel-configurable)
     try {
       const settings = await getIntelligenceSettings();
+      const policy = await matchPolicy(rawText);
+      if (policy?.body) {
+        const reply = renderTemplate(String(policy.body), { state, settings, policy, extracted });
+        await logDecision({
+          instance,
+          remoteJid,
+          intent: 'policy',
+          confidence: 0.99,
+          data: {
+            policyId: policy.id,
+            sources: [{ type: 'policy', id: policy.id, title: policy.title ?? null }],
+            extracted
+          }
+        });
+        scheduleReply(reply, {
+          ...state,
+          stage: state.stage ?? 'idle',
+          last_intent: 'policy',
+          last_policy_id: policy.id,
+          last_sources: [{ type: 'policy', id: policy.id, title: policy.title ?? null }],
+          extracted,
+          missing_fields: []
+        });
+        return;
+      }
       const faq = await matchFaq(rawText);
       if (faq?.answer) {
-        const reply = renderTemplate(String(faq.answer), { state, settings });
-        await logDecision({ instance, remoteJid, intent: 'faq', confidence: 0.99, data: { faqId: faq.id } });
+        const reply = renderTemplate(String(faq.answer), { state, settings, faq, extracted });
+        await logDecision({
+          instance,
+          remoteJid,
+          intent: 'faq',
+          confidence: 0.99,
+          data: { faqId: faq.id, sources: [{ type: 'faq', id: faq.id, title: faq.title ?? null }], extracted }
+        });
         scheduleReply(reply, {
           ...state,
           stage: state.stage ?? 'idle',
           last_intent: 'faq',
-          last_faq_id: faq.id
+          last_faq_id: faq.id,
+          last_sources: [{ type: 'faq', id: faq.id, title: faq.title ?? null }],
+          extracted,
+          missing_fields: []
         });
         return;
       }
 
       const pb = await matchPlaybook(rawText);
       if (pb?.template) {
-        const reply = renderTemplate(String(pb.template), { state, settings, playbook: pb });
-        await logDecision({ instance, remoteJid, intent: String(pb.intent ?? 'playbook'), confidence: 0.9, data: { playbookId: pb.id } });
+        // A/B: allow overrides per playbook or per intent
+        let variant: string | null = null;
+        let template = String(pb.template);
+        const abRows = (await getAbVariantsFor('playbook', String(pb.id))).concat(await getAbVariantsFor('intent', String(pb.intent)));
+        if (abRows.length) {
+          const total = abRows.reduce((acc: number, r: any) => acc + Number(r.weight ?? 0), 0) || 1;
+          let pick = Math.random() * total;
+          const chosen =
+            abRows.find((r: any) => {
+              pick -= Number(r.weight ?? 0);
+              return pick <= 0;
+            }) ?? abRows[0];
+          variant = String(chosen.variant ?? 'A');
+          if (chosen.template_override) template = String(chosen.template_override);
+        }
+
+        // Guardrails: required fields
+        const req = requiredFieldsForIntent(String(pb.intent ?? 'playbook'), (pb as any).config);
+        const missing = computeMissingFields(req, extracted);
+        const cfg = ((pb as any).config && typeof (pb as any).config === 'object') ? (pb as any).config : {};
+        const autoAsk = cfg.autoAskMissing !== undefined ? Boolean(cfg.autoAskMissing) : true;
+        const reply = autoAsk && missing.length
+          ? buildMissingQuestions(req, missing)
+          : renderTemplate(String(template), { state, settings, playbook: pb, extracted, missing_fields: missing, variant });
+        await logDecision({
+          instance,
+          remoteJid,
+          intent: String(pb.intent ?? 'playbook'),
+          confidence: 0.9,
+          data: {
+            playbookId: pb.id,
+            intent: pb.intent ?? null,
+            variant,
+            sources: [{ type: 'playbook', id: pb.id, intent: pb.intent ?? null, variant }],
+            extracted,
+            missing_fields: missing
+          }
+        });
         scheduleReply(reply, {
           ...state,
           stage: state.stage ?? 'idle',
           last_intent: String(pb.intent ?? 'playbook'),
-          last_playbook_id: pb.id
+          last_playbook_id: pb.id,
+          last_sources: [{ type: 'playbook', id: pb.id, intent: pb.intent ?? null, variant }],
+          last_variant: variant,
+          extracted,
+          missing_fields: missing
+        });
+        return;
+      }
+
+      // Fallback: RAG-lite FTS search for a close FAQ/Policy
+      const hits = await searchKnowledge(rawText, 3);
+      const top = hits?.[0];
+      if (top && Number(top.rank ?? 0) >= 0.12) {
+        const src = { type: top.type, id: top.id, title: top.title ?? null };
+        await logDecision({
+          instance,
+          remoteJid,
+          intent: String(top.type),
+          confidence: 0.55,
+          data: { rag: true, top, sources: [src], extracted }
+        });
+        scheduleReply(String(top.snippet), {
+          ...state,
+          stage: state.stage ?? 'idle',
+          last_intent: String(top.type),
+          last_sources: [src],
+          extracted,
+          missing_fields: []
         });
         return;
       }
@@ -377,6 +514,12 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       // Mark this conversation as handled by a human from now on
       try {
         await setConversationRule(instance, remoteJid, 'HUMAN_ONLY');
+        const pairs = Object.entries(extracted || {})
+          .filter(([_, v]) => v !== undefined && v !== null && String(v).trim() !== '')
+          .slice(0, 12)
+          .map(([k, v]) => `${k}=${String(v)}`);
+        const summary = `Handoff automático. Texto: "${rawText.slice(0, 140)}"\nDatos: ${pairs.join(' | ') || 'n/a'}`;
+        await addConversationNote(instance, remoteJid, summary);
       } catch (err) {
         console.error('Failed to set conversation rule on handoff', err);
       }
@@ -384,16 +527,14 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       scheduleReply(handoffMsg, {
         ...state,
         stage: 'idle',
-        last_intent: 'handoff'
+        last_intent: 'handoff',
+        extracted,
+        missing_fields: []
       });
       return;
     }
 
     const catalog = await getCatalog();
-console.log("[CATALOG] loaded", {
-  count: catalog.length,
-  sample: catalog.slice(0, 2).map((x) => ({ id: x.id, name: x.name, price: (x as any).priceNumber ?? (x as any).priceArs })),
-});
 
     // Quick follow-up handling when we previously showed options.
     // Examples: user replies "2" or asks "y el precio?".
@@ -433,7 +574,7 @@ console.log("[CATALOG] loaded", {
     }
     let reply = '';
     // Start newState from previous state so we don't drop unrelated keys
-    let newState: ConvState = { ...state, stage: 'idle', lastBotAt: nowIso };
+    let newState: ConvState = { ...state, stage: 'idle', lastBotAt: nowIso, extracted } as any;
     let isFallback = false;
 
     // If awaiting a query from previous greeting/price intent

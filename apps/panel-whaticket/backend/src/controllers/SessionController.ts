@@ -47,6 +47,9 @@ export const remove = async (
 ): Promise<Response> => {
   const prod =
     String(process.env.NODE_ENV || "").toLowerCase() === "production" ||
+    !!process.env.RAILWAY_ENVIRONMENT ||
+    !!process.env.RAILWAY_PUBLIC_DOMAIN ||
+    String(process.env.FRONTEND_URL || "").startsWith("https://") ||
     String(process.env.BACKEND_URL || "").startsWith("https://") ||
     String(process.env.PUBLIC_URL || "").startsWith("https://") ||
     String(process.env.API_URL || "").startsWith("https://");

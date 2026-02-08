@@ -84,35 +84,132 @@ const Bot = () => {
 
   // Lists
   const [faqs, setFaqs] = useState([]);
+  const [policies, setPolicies] = useState([]);
   const [playbooks, setPlaybooks] = useState([]);
   const [examples, setExamples] = useState([]);
   const [decisions, setDecisions] = useState([]);
 
+  // Playground
+  const [playgroundText, setPlaygroundText] = useState("");
+  const [playgroundResult, setPlaygroundResult] = useState(null);
+
+  // Tests
+  const [testCases, setTestCases] = useState([]);
+  const [testReport, setTestReport] = useState(null);
+
   // Create forms
   const [faqForm, setFaqForm] = useState({ title: "", triggers: "", answer: "" });
+  const [policyForm, setPolicyForm] = useState({ title: "", triggers: "", body: "" });
   const [pbForm, setPbForm] = useState({ intent: "", triggers: "", template: "" });
   const [exForm, setExForm] = useState({ intent: "", user_text: "", ideal_answer: "", notes: "" });
+
+  const [tcForm, setTcForm] = useState({
+    name: "",
+    user_text: "",
+    expected_intent: "",
+    expected_source_type: "",
+    expected_source_id: "",
+    expected_contains: "",
+  });
 
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [s, f, p, e, d] = await Promise.all([
+      const [s, pol, f, p, e, d, tcs] = await Promise.all([
         api.get("/bot/intelligence/settings"),
+        api.get("/bot/intelligence/policies"),
         api.get("/bot/intelligence/faqs"),
         api.get("/bot/intelligence/playbooks"),
         api.get("/bot/intelligence/examples"),
         api.get("/bot/intelligence/decisions", { params: { limit: 200 } }),
+        api.get("/bot/tests/cases"),
       ]);
 
       setSettingsRaw(JSON.stringify(s.data?.settings ?? {}, null, 2));
+      setPolicies(pol.data?.policies ?? []);
       setFaqs(f.data?.faqs ?? []);
       setPlaybooks(p.data?.playbooks ?? []);
       setExamples(e.data?.examples ?? []);
       setDecisions(d.data?.decisions ?? []);
+      setTestCases(tcs.data?.cases ?? []);
     } catch (err) {
       toastError(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const createPolicyRow = async () => {
+    try {
+      await api.post("/bot/intelligence/policies", {
+        title: policyForm.title || null,
+        triggers: parseCsvTriggers(policyForm.triggers),
+        body: policyForm.body,
+        enabled: true,
+      });
+      toast.success("Política creada");
+      setPolicyForm({ title: "", triggers: "", body: "" });
+      await loadAll();
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const deletePolicyRow = async (id) => {
+    try {
+      await api.delete(`/bot/intelligence/policies/${id}`);
+      toast.success("Política eliminada");
+      await loadAll();
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const runPlayground = async () => {
+    try {
+      const r = await api.post("/bot/playground/run", { text: playgroundText });
+      setPlaygroundResult(r.data?.result ?? null);
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const createTestCaseRow = async () => {
+    try {
+      await api.post("/bot/tests/cases", {
+        name: tcForm.name,
+        user_text: tcForm.user_text,
+        expected_intent: tcForm.expected_intent || null,
+        expected_source_type: tcForm.expected_source_type || null,
+        expected_source_id: tcForm.expected_source_id ? Number(tcForm.expected_source_id) : null,
+        expected_contains: parseCsvTriggers(tcForm.expected_contains),
+        enabled: true,
+      });
+      toast.success("Test case creado");
+      setTcForm({ name: "", user_text: "", expected_intent: "", expected_source_type: "", expected_source_id: "", expected_contains: "" });
+      await loadAll();
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const deleteTestCaseRow = async (id) => {
+    try {
+      await api.delete(`/bot/tests/cases/${id}`);
+      toast.success("Test case eliminado");
+      await loadAll();
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const runTests = async () => {
+    try {
+      const r = await api.post("/bot/tests/run", { limit: 200 });
+      setTestReport(r.data?.report ?? null);
+      toast.success("Suite ejecutada");
+    } catch (err) {
+      toastError(err);
     }
   };
 
@@ -230,9 +327,12 @@ const Bot = () => {
       <Paper className={classes.mainPaper}>
         <Tabs value={tab} onChange={(_, v) => setTab(v)} indicatorColor="primary" textColor="primary">
           <Tab label="General" />
+          <Tab label="Políticas" />
           <Tab label="FAQs" />
           <Tab label="Playbooks" />
           <Tab label="Training" />
+          <Tab label="Playground" />
+          <Tab label="Tests" />
           <Tab label="Decisions" />
         </Tabs>
         <Divider />
@@ -258,6 +358,44 @@ const Bot = () => {
           </TabPanel>
 
           <TabPanel value={tab} index={1}>
+            <Box className={classes.formRow}>
+              <TextField label="Título" variant="outlined" value={policyForm.title} onChange={(e) => setPolicyForm({ ...policyForm, title: e.target.value })} />
+              <TextField label="Triggers (comma)" variant="outlined" value={policyForm.triggers} onChange={(e) => setPolicyForm({ ...policyForm, triggers: e.target.value })} />
+              <TextField className={classes.full} label="Body" variant="outlined" multiline rows={4} value={policyForm.body} onChange={(e) => setPolicyForm({ ...policyForm, body: e.target.value })} />
+              <Box className={classes.full}>
+                <Button color="primary" variant="contained" onClick={createPolicyRow}>Crear Política</Button>
+              </Box>
+            </Box>
+
+            <Box mt={2}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>ID</TableCell>
+                    <TableCell>Título</TableCell>
+                    <TableCell>Triggers</TableCell>
+                    <TableCell>Body</TableCell>
+                    <TableCell align="right">Acciones</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {policies.map((p) => (
+                    <TableRow key={p.id}>
+                      <TableCell>{p.id}</TableCell>
+                      <TableCell>{p.title || ""}</TableCell>
+                      <TableCell>{(p.triggers || []).join(", ")}</TableCell>
+                      <TableCell style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}>{p.body}</TableCell>
+                      <TableCell align="right">
+                        <Button size="small" variant="outlined" color="secondary" onClick={() => deletePolicyRow(p.id)}>Eliminar</Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
+          </TabPanel>
+
+          <TabPanel value={tab} index={2}>
             <Box className={classes.formRow}>
               <TextField label="Título" variant="outlined" value={faqForm.title} onChange={(e) => setFaqForm({ ...faqForm, title: e.target.value })} />
               <TextField label="Triggers (comma)" variant="outlined" value={faqForm.triggers} onChange={(e) => setFaqForm({ ...faqForm, triggers: e.target.value })} />
@@ -295,7 +433,7 @@ const Bot = () => {
             </Box>
           </TabPanel>
 
-          <TabPanel value={tab} index={2}>
+          <TabPanel value={tab} index={3}>
             <Box className={classes.formRow}>
               <TextField label="Intent" variant="outlined" value={pbForm.intent} onChange={(e) => setPbForm({ ...pbForm, intent: e.target.value })} />
               <TextField label="Triggers (comma)" variant="outlined" value={pbForm.triggers} onChange={(e) => setPbForm({ ...pbForm, triggers: e.target.value })} />
@@ -333,7 +471,7 @@ const Bot = () => {
             </Box>
           </TabPanel>
 
-          <TabPanel value={tab} index={3}>
+          <TabPanel value={tab} index={4}>
             <Typography variant="body2" gutterBottom>
               Ejemplos: sirven como base para futuros upgrades (LLM), y hoy te dejan documentar respuestas ideales por intent.
             </Typography>
@@ -375,7 +513,7 @@ const Bot = () => {
             </Box>
           </TabPanel>
 
-          <TabPanel value={tab} index={4}>
+          <TabPanel value={tab} index={7}>
             <Typography variant="body2" gutterBottom>
               Últimas decisiones. Útil para auditar por qué respondió FAQ/Playbook.
             </Typography>
@@ -401,6 +539,118 @@ const Bot = () => {
                 ))}
               </TableBody>
             </Table>
+          </TabPanel>
+
+          <TabPanel value={tab} index={5}>
+            <Typography variant="body2" gutterBottom>
+              Probá una frase y mirá qué responde y qué fuentes usó (policy/faq/playbook).
+            </Typography>
+            <TextField
+              value={playgroundText}
+              onChange={(e) => setPlaygroundText(e.target.value)}
+              variant="outlined"
+              fullWidth
+              multiline
+              rows={4}
+              placeholder="Ej: ¿dónde están? / ¿hacen envíos? / quiero financiación"
+            />
+            <Box mt={2}>
+              <Button color="primary" variant="contained" onClick={runPlayground}>Ejecutar</Button>
+            </Box>
+            {playgroundResult && (
+              <Box mt={2}>
+                <Typography variant="subtitle2">Intent: {playgroundResult.intent}</Typography>
+                <Typography variant="subtitle2">Fuentes:</Typography>
+                <Typography variant="body2" style={{ whiteSpace: "pre-wrap" }}>
+                  {JSON.stringify(playgroundResult.sources || [], null, 2)}
+                </Typography>
+                <Divider style={{ margin: "12px 0" }} />
+                <Typography variant="subtitle2">Respuesta</Typography>
+                <Typography variant="body1" style={{ whiteSpace: "pre-wrap" }}>
+                  {playgroundResult.reply}
+                </Typography>
+              </Box>
+            )}
+          </TabPanel>
+
+          <TabPanel value={tab} index={6}>
+            <Typography variant="body2" gutterBottom>
+              Suite básica: casos tipo "si el usuario escribe X, esperamos intent Y / fuente Z".
+            </Typography>
+
+            <Box className={classes.formRow}>
+              <TextField label="Nombre" variant="outlined" value={tcForm.name} onChange={(e) => setTcForm({ ...tcForm, name: e.target.value })} />
+              <TextField label="Expected intent" variant="outlined" value={tcForm.expected_intent} onChange={(e) => setTcForm({ ...tcForm, expected_intent: e.target.value })} placeholder="faq / policy / stock / none" />
+              <TextField className={classes.full} label="User text" variant="outlined" multiline rows={2} value={tcForm.user_text} onChange={(e) => setTcForm({ ...tcForm, user_text: e.target.value })} />
+              <TextField label="Expected source type" variant="outlined" value={tcForm.expected_source_type} onChange={(e) => setTcForm({ ...tcForm, expected_source_type: e.target.value })} placeholder="policy / faq / playbook" />
+              <TextField label="Expected source id" variant="outlined" value={tcForm.expected_source_id} onChange={(e) => setTcForm({ ...tcForm, expected_source_id: e.target.value })} />
+              <TextField className={classes.full} label="Expected contains (comma)" variant="outlined" value={tcForm.expected_contains} onChange={(e) => setTcForm({ ...tcForm, expected_contains: e.target.value })} />
+              <Box className={classes.full}>
+                <Button color="primary" variant="contained" onClick={createTestCaseRow}>Crear test case</Button>
+                <Button style={{ marginLeft: 8 }} variant="outlined" onClick={runTests}>Run suite</Button>
+              </Box>
+            </Box>
+
+            <Box mt={2}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>ID</TableCell>
+                    <TableCell>Nombre</TableCell>
+                    <TableCell>User text</TableCell>
+                    <TableCell>Esperado</TableCell>
+                    <TableCell align="right">Acciones</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {testCases.map((tc) => (
+                    <TableRow key={tc.id}>
+                      <TableCell>{tc.id}</TableCell>
+                      <TableCell>{tc.name}</TableCell>
+                      <TableCell style={{ maxWidth: 320, whiteSpace: "pre-wrap" }}>{tc.user_text}</TableCell>
+                      <TableCell style={{ maxWidth: 340, whiteSpace: "pre-wrap" }}>
+                        {JSON.stringify({ intent: tc.expected_intent, source: { type: tc.expected_source_type, id: tc.expected_source_id }, contains: tc.expected_contains }, null, 0)}
+                      </TableCell>
+                      <TableCell align="right">
+                        <Button size="small" variant="outlined" color="secondary" onClick={() => deleteTestCaseRow(tc.id)}>Eliminar</Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
+
+            {testReport && (
+              <Box mt={2}>
+                <Typography variant="subtitle2">
+                  Resultado: {testReport.passed}/{testReport.total} OK (fails: {testReport.failed})
+                </Typography>
+                <Box mt={1}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Pass</TableCell>
+                        <TableCell>Caso</TableCell>
+                        <TableCell>Actual</TableCell>
+                        <TableCell>Reasons</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {(testReport.results || []).map((r) => (
+                        <TableRow key={r.id}>
+                          <TableCell>{r.pass ? "✅" : "❌"}</TableCell>
+                          <TableCell>{r.name}</TableCell>
+                          <TableCell style={{ maxWidth: 380, whiteSpace: "pre-wrap" }}>
+                            {JSON.stringify({ intent: r.actual_intent, sources: r.actual_sources }, null, 0)}
+                          </TableCell>
+                          <TableCell style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}>{(r.reasons || []).join("\n")}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Box>
+              </Box>
+            )}
           </TabPanel>
         </Box>
       </Paper>

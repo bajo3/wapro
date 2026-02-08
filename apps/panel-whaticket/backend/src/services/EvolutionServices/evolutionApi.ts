@@ -15,9 +15,20 @@ function assertConfigured() {
 }
 
 function headers(extra?: Record<string, string>) {
+  // Some Evolution deployments enforce CORS at the application layer and
+  // reject requests without an allowed Origin. Node-fetch does not set Origin,
+  // so we provide one explicitly.
+  const origin =
+    process.env.EVOLUTION_ORIGIN ||
+    process.env.FRONTEND_URL ||
+    process.env.BACKEND_URL ||
+    process.env.PUBLIC_URL ||
+    "http://localhost";
+
   return {
     "content-type": "application/json",
     apikey: EVOLUTION_API_KEY,
+    Origin: origin,
     ...(extra || {})
   } as any;
 }
