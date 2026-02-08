@@ -288,6 +288,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
           // Training episode (best-effort): store what the user wrote and what we replied.
           try {
+<<<<<<< HEAD
             const intent =
               typeof nextState?.last_intent === 'string' && nextState.last_intent.trim()
                 ? nextState.last_intent.trim()
@@ -302,6 +303,13 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 ? nextState.last_variant.trim()
                 : undefined;
 
+=======
+            const intent = String(nextState?.last_intent ?? '');
+            const sources = Array.isArray(nextState?.last_sources) ? nextState.last_sources : [];
+            const extracted = nextState?.extracted ?? nextState?.lead ?? {};
+            const missingFields = Array.isArray(nextState?.missing_fields) ? nextState.missing_fields : [];
+            const variant = nextState?.last_variant ?? null;
+>>>>>>> origin/main
             if (rawText && reply) {
               await logEpisode({
                 instance,
@@ -309,17 +317,27 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 channel: 'whatsapp',
                 user_text: rawText,
                 reply_text: reply,
+<<<<<<< HEAD
                 intent, // ✅ undefined if missing
                 variant, // ✅ undefined if missing
                 sources,
                 extracted: extractedObj,
+=======
+                intent: intent || undefined,
+                variant: variant ? String(variant) : undefined,
+                sources,
+                extracted,
+>>>>>>> origin/main
                 missing_fields: missingFields
               });
             }
           } catch {
             // ignore episode failures
           }
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/main
           // Emit socket event for outgoing message
           const sock = getSocket();
           if (sock) {
@@ -438,6 +456,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         // Guardrails: required fields
         const req = requiredFieldsForIntent(String(pb.intent ?? 'playbook'), (pb as any).config);
         const missing = computeMissingFields(req, extracted);
+<<<<<<< HEAD
         const cfg = (pb as any).config && typeof (pb as any).config === 'object' ? (pb as any).config : {};
         const autoAsk = cfg.autoAskMissing !== undefined ? Boolean(cfg.autoAskMissing) : true;
 
@@ -446,6 +465,13 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             ? buildMissingQuestions(req, missing)
             : renderTemplate(String(template), { state, settings, playbook: pb, extracted, missing_fields: missing, variant });
 
+=======
+        const cfg = ((pb as any).config && typeof (pb as any).config === 'object') ? (pb as any).config : {};
+        const autoAsk = cfg.autoAskMissing !== undefined ? Boolean(cfg.autoAskMissing) : true;
+        const reply = autoAsk && missing.length
+          ? buildMissingQuestions(req, missing)
+          : renderTemplate(String(template), { state, settings, playbook: pb, extracted, missing_fields: missing, variant });
+>>>>>>> origin/main
         await logDecision({
           instance,
           remoteJid,
@@ -460,7 +486,10 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             missing_fields: missing
           }
         });
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/main
         scheduleReply(reply, {
           ...state,
           stage: state.stage ?? 'idle',

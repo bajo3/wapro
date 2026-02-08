@@ -92,3 +92,24 @@ El backend va a:
 - Descargar media entrante desde Evolution y guardar en `/public` para ver imágenes recibidas.
 - Reglas de handoff (BOT_ON / HUMAN_ONLY) por contacto + panel de control.
 - Multi-tenant real (Whaticket base es single-company).
+
+---
+
+## Bot Panel (v2)
+
+Este repo incluye `apps/bot` con:
+- Policies + FAQs + Playbooks (Flows)
+- Playground (simulador) con “sources usadas”
+- Episodes (replay + rating) + Audit log
+- Test Suite (casos + runner) + A/B variants
+
+### Migraciones + Seed
+
+Ejecutar SQL (en orden):
+- `apps/bot/sql/001_init.sql`
+- `apps/bot/sql/002_intelligence.sql`
+- `apps/bot/sql/003_bot_panel_v1.sql`
+- `apps/bot/sql/004_bot_intelligence_v2.sql`
+- `apps/bot/sql/005_seed_botpanel_v2.sql`  ← (opcional) carga playbooks/casos de ejemplo
+
+> El seed crea 4 flows base: `usado`, `financiacion`, `stock`, `ubicacion` y ~24 casos de test.
