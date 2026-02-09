@@ -490,19 +490,33 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     } else {
       // Heuristics to infer intent
       const isGreeting = /^(hola|buenas|buen\s+dia|buen\s+tarde|buen\s+noche|hey|que\s+tal)\b/i.test(rawText);
-      const asksPrice = /(precio|cuanto|vale|valor|sale)/i.test(rawText);
-      const looksLikeQuery = /(ps5|play\s*5|xbox|consola|auricular|headset|monitor|notebook|silla|joystick|teclado|mouse)/i.test(rawText);
+      const isSmallTalk = /(te\s*amo|te\s*amoo|amor|jaja|jajaja|😂|🤣|😍|❤️|❤️‍🔥|😘|jajaj)/i.test(rawText);
+      const asksPrice = /(precio|cuanto|vale|valor|sale|financi|cuota|entrega)/i.test(rawText);
+
+      // Catalog intent: keep BOTH profiles (gaming + autos) but only search when it looks intentional.
+      const looksLikeGamingQuery = /(ps5|play\s*5|xbox|consola|auricular|headset|monitor|notebook|silla|joystick|teclado|mouse)/i.test(rawText);
+      const looksLikeVehicleQuery = /(auto|auto[s]?|coche|camioneta|pick\s*up|suv|fiat|ford|volkswagen|vw|renault|toyota|chevrolet|peugeot|jeep|honda|nissan|cronos|gol|amarok|hilux|duster|onix|corolla|km\b|años?\b|modelo\b|version\b|nafta|diesel|gnc|manual|automatic)/i.test(rawText);
 
       const norm = normalize(rawText);
       const hasContent = norm.length >= 3 && /[a-z0-9]/i.test(norm);
       const stage = state.stage as ConvState['stage'];
-      const shouldSearch = stage === 'awaiting_query' || looksLikeQuery || (asksPrice && hasContent) || hasContent;
+      // Only search when:
+      // - user is already in query mode, OR
+      // - message looks like a product/vehicle query, OR
+      // - user explicitly asked for price/financing.
+      const shouldSearch = stage === 'awaiting_query' || looksLikeGamingQuery || looksLikeVehicleQuery || (asksPrice && hasContent);
 
       if (isGreeting) {
         const greetingVariants = ['¡Buenas 😄! ¿Qué estás buscando hoy?', '¡Hola! Decime qué necesitás y te paso opciones.', '¡Hola! ¿Qué andás buscando?'];
         reply = pickOne(greetingVariants);
         newState.stage = 'awaiting_query';
         newState.last_intent = 'greeting';
+      } else if (isSmallTalk) {
+        // Prevent "random" messages (e.g. "Te amoo") from triggering a catalog search.
+        const smallTalkVariants = ['❤️ Yo también 😊', 'Jajaja 😄 ¿Qué hacés?', '😍 Qué lindo. ¿En qué te ayudo?'];
+        reply = pickOne(smallTalkVariants);
+        newState.stage = 'idle';
+        newState.last_intent = 'smalltalk';
       } else if (asksPrice) {
         const priceVariants = ['Dale. ¿De qué producto/modelo querés precio?', '¡Ok! Decime el modelo o marca y busco el precio.', 'Decime el producto o modelo para chequear el precio.'];
         reply = pickOne(priceVariants);

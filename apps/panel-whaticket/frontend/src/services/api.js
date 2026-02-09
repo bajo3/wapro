@@ -43,11 +43,13 @@ if (!api.__authInterceptorsInstalled) {
     (response) => response,
     async (error) => {
       const originalRequest = error.config;
+      const hasAccessToken = !!localStorage.getItem("token");
 
       if (
         (error?.response?.status === 401 || error?.response?.status === 403) &&
         originalRequest &&
         !originalRequest._retry &&
+        hasAccessToken &&
         !String(originalRequest.url || "").includes("/auth/refresh_token")
       ) {
         originalRequest._retry = true;
@@ -62,6 +64,10 @@ if (!api.__authInterceptorsInstalled) {
         } catch (err) {
           localStorage.removeItem("token");
           delete api.defaults.headers.common.Authorization;
+          // Avoid endless refresh loops: force navigation back to login.
+          try {
+            window.location.href = "/login";
+          } catch {}
           return Promise.reject(err);
         }
       }

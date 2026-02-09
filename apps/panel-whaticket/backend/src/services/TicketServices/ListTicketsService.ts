@@ -114,9 +114,10 @@ const ListTicketsService = async ({
           )
         },
         { "$contact.number$": { [Op.like]: `%${sanitizedSearchParam}%` } },
+        // Match by message body (joined as alias: "messages")
         {
-          "$message.body$": where(
-            fn("LOWER", col("body")),
+          "$messages.body$": where(
+            fn("LOWER", col("messages.body")),
             "LIKE",
             `%${sanitizedSearchParam}%`
           )
@@ -126,12 +127,22 @@ const ListTicketsService = async ({
   }
 
   if (date) {
-    whereCondition = {
-      ...whereCondition,
-      createdAt: {
-        [Op.between]: [+startOfDay(parseISO(date)), +endOfDay(parseISO(date))]
+    // Guard against invalid dates (would crash with 500).
+    try {
+      const parsed = parseISO(date);
+      const start = startOfDay(parsed);
+      const end = endOfDay(parsed);
+      if (!Number.isNaN(+start) && !Number.isNaN(+end)) {
+        whereCondition = {
+          ...whereCondition,
+          createdAt: {
+            [Op.between]: [+start, +end]
+          }
+        };
       }
-    };
+    } catch {
+      // ignore invalid date filter
+    }
   }
 
   if (withUnreadMessages === "true") {
