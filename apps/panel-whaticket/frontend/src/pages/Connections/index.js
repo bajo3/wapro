@@ -95,7 +95,7 @@ const CustomToolTip = ({ title, content, children }) => {
 const Connections = () => {
 	const classes = useStyles();
 
-	const { whatsApps, loading } = useContext(WhatsAppsContext);
+	const { whatsApps, loading, reload, removeLocal } = useContext(WhatsAppsContext);
 	const [whatsAppModalOpen, setWhatsAppModalOpen] = useState(false);
 	const [qrModalOpen, setQrModalOpen] = useState(false);
 	const [selectedWhatsApp, setSelectedWhatsApp] = useState(null);
@@ -185,6 +185,10 @@ const Connections = () => {
 		if (confirmModalInfo.action === "delete") {
 			try {
 				await api.delete(`/whatsapp/${confirmModalInfo.whatsAppId}`);
+				// Actualizar UI aunque el websocket no esté conectado o falle la auth.
+				removeLocal?.(confirmModalInfo.whatsAppId);
+				// Fallback: re-sincronizar desde API.
+				await reload?.();
 				toast.success(i18n.t("connections.toasts.deleted"));
 			} catch (err) {
 				toastError(err);

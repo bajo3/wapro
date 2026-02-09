@@ -23,5 +23,14 @@ module.exports = {
         }
       }
     : {}),
-  logging: false
+  logging: false,
+
+  // Railway/Supabase poolers suelen limitar conexiones concurrentes.
+  // Exponer pool por ENV ayuda a evitar: "sorry, too many clients already".
+  pool: {
+    max: Number(process.env.DB_POOL_MAX || 2),
+    min: Number(process.env.DB_POOL_MIN || 0),
+    acquire: Number(process.env.DB_POOL_ACQUIRE || 30000),
+    idle: Number(process.env.DB_POOL_IDLE || 10000)
+  }
 };

@@ -62,7 +62,9 @@ const useAuth = () => {
         const originalRequest = error.config;
 
         // refresh token
-        if (error?.response?.status === 403 && !originalRequest._retry) {
+        // - en este backend algunas rutas devuelven 401 al expirar el access token
+        // - otras devuelven 403
+        if ((error?.response?.status === 401 || error?.response?.status === 403) && !originalRequest._retry) {
           originalRequest._retry = true;
 
           try {
@@ -81,7 +83,7 @@ const useAuth = () => {
           }
         }
 
-        // 401 => limpiar token y header (SIN setear undefined)
+        // si llega acá y sigue siendo 401, limpiamos token y header
         if (error?.response?.status === 401) {
           localStorage.removeItem("token");
           setAuthHeader(null);

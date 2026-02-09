@@ -57,19 +57,25 @@ const useWhatsApps = () => {
 	const [whatsApps, dispatch] = useReducer(reducer, []);
 	const [loading, setLoading] = useState(true);
 
-	useEffect(() => {
+	const reload = async () => {
 		setLoading(true);
-		const fetchSession = async () => {
-			try {
-				const { data } = await api.get("/whatsapp/");
-				dispatch({ type: "LOAD_WHATSAPPS", payload: data });
-				setLoading(false);
-			} catch (err) {
-				setLoading(false);
-				toastError(err);
-			}
-		};
-		fetchSession();
+		try {
+			const { data } = await api.get("/whatsapp/");
+			dispatch({ type: "LOAD_WHATSAPPS", payload: data });
+		} catch (err) {
+			toastError(err);
+		} finally {
+			setLoading(false);
+		}
+	};
+
+	const removeLocal = (id) => {
+		dispatch({ type: "DELETE_WHATSAPPS", payload: id });
+	};
+
+	useEffect(() => {
+		reload();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	useEffect(() => {
@@ -98,7 +104,7 @@ const useWhatsApps = () => {
 		};
 	}, []);
 
-	return { whatsApps, loading };
+	return { whatsApps, loading, reload, removeLocal };
 };
 
 export default useWhatsApps;
