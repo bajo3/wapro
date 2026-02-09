@@ -700,6 +700,34 @@ adminRouter.get('/intelligence/episodes', async (req, res) => {
   }
 });
 
+
+adminRouter.post('/intelligence/episodes/ingest', async (req, res) => {
+  // Ingest a training episode from external systems (e.g. panel-human replies)
+  const body = req.body || {};
+  const channel = body.channel || 'WHATSAPP';
+  const contact_id = body.contact_id ?? null;
+  const user_text = body.user_text;
+  const reply_text = body.reply_text;
+  const meta = body.meta || {};
+
+  if (!user_text || !reply_text) {
+    return res.status(400).json({ error: 'user_text and reply_text are required' });
+  }
+
+  try {
+    const { logEpisode } = await import('../services/intelligence');
+    const id = await logEpisode({
+      channel,
+      contact_id,
+      user_text,
+      reply_text,
+      meta
+    });
+    return res.status(201).json({ id });
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || 'failed to ingest episode' });
+  }
+});
 adminRouter.post('/intelligence/episodes/:id/rate', async (req, res) => {
   const idNum = Number(req.params.id);
   if (!Number.isFinite(idNum)) return res.status(400).json({ ok: false, message: 'valid id required' });

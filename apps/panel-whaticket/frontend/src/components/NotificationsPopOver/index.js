@@ -137,7 +137,8 @@ const NotificationsPopOver = () => {
 		});
 
 		return () => {
-			socket.disconnect();
+			socket.emit("leaveNotification");
+			socket.off("notification");
 		};
 	}, [user]);
 

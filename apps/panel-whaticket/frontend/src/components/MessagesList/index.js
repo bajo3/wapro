@@ -375,7 +375,8 @@ const MessagesList = ({ ticketId, isGroup }) => {
     });
 
     return () => {
-      socket.disconnect();
+      socket.emit("leaveChatBox", ticketId);
+      socket.off("appMessage");
     };
   }, [ticketId]);
 

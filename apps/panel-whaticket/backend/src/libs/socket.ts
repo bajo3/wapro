@@ -35,14 +35,26 @@ export const initIO = (httpServer: Server): SocketIO => {
       socket.join(ticketId);
     });
 
+    socket.on("leaveChatBox", (ticketId: string) => {
+      socket.leave(ticketId);
+    });
+
     socket.on("joinNotification", () => {
       logger.info("A client joined notification channel");
       socket.join("notification");
     });
 
+    socket.on("leaveNotification", () => {
+      socket.leave("notification");
+    });
+
     socket.on("joinTickets", (status: string) => {
       logger.info(`A client joined to ${status} tickets channel.`);
       socket.join(status);
+    });
+
+    socket.on("leaveTickets", (status: string) => {
+      socket.leave(status);
     });
 
     socket.on("disconnect", () => {

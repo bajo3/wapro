@@ -205,7 +205,7 @@ const Contacts = () => {
     });
 
     return () => {
-      socket.disconnect();
+      socket.off();
     };
   }, []);
 

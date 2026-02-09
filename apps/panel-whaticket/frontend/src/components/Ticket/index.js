@@ -131,7 +131,9 @@ const Ticket = () => {
     });
 
     return () => {
-      socket.disconnect();
+      socket.emit("leaveChatBox", ticketId);
+      socket.off("ticket");
+      socket.off("contact");
     };
   }, [ticketId, history]);
 

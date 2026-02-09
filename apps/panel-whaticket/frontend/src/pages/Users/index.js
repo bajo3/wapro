@@ -135,7 +135,7 @@ const Users = () => {
     });
 
     return () => {
-      socket.disconnect();
+      socket.off();
     };
   }, []);
 

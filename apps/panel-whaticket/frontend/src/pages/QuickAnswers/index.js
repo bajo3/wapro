@@ -138,7 +138,7 @@ const QuickAnswers = () => {
     });
 
     return () => {
-      socket.disconnect();
+      socket.off();
     };
   }, []);
 

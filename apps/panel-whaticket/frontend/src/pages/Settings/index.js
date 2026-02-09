@@ -69,7 +69,7 @@ const Settings = () => {
 		});
 
 		return () => {
-			socket.disconnect();
+			socket.off();
 		};
 	}, []);
 

@@ -92,3 +92,38 @@ export async function botDeleteConversationRule(params: {
     logger.warn({ err: String(err?.message ?? err) }, "botDeleteConversationRule error");
   }
 }
+
+export async function botIngestEpisode(params: {
+  channel?: string;
+  contact_id?: string | null;
+  user_text: string;
+  reply_text: string;
+  meta?: any;
+}): Promise<void> {
+  if (!isConfigured() || !BOT_ADMIN_TOKEN) return;
+
+  try {
+    const url = `${BOT_URL}/admin/intelligence/episodes/ingest`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-admin-token": BOT_ADMIN_TOKEN
+      } as any,
+      body: JSON.stringify({
+        channel: params.channel ?? "WHATSAPP",
+        contact_id: params.contact_id ?? null,
+        user_text: params.user_text,
+        reply_text: params.reply_text,
+        meta: params.meta ?? {}
+      })
+    });
+
+    if (!r.ok) {
+      const text = await r.text().catch(() => "");
+      logger.warn({ status: r.status, text }, "botIngestEpisode failed");
+    }
+  } catch (err: any) {
+    logger.warn({ err: String(err?.message ?? err) }, "botIngestEpisode error");
+  }
+}

@@ -64,7 +64,7 @@ const useAuth = () => {
     });
 
     return () => {
-      socket.disconnect();
+      socket.off("user");
     };
   }, [isAuth, user?.id]);
 
@@ -91,6 +91,11 @@ const useAuth = () => {
   };
 
   const handleLogout = async () => {
+    try {
+      const socket = openSocket();
+      socket.disconnect();
+    } catch (e) {}
+
     setLoading(true);
 
     try {

@@ -242,7 +242,10 @@ const reducer = (state, action) => {
 		});
 
 		return () => {
-			socket.disconnect();
+			socket.emit("leaveTickets", status);
+			socket.off("ticket");
+			socket.off("appMessage");
+			socket.off("contact");
 		};
 	}, [status, searchParam, showAll, user, selectedQueueIds]);
 

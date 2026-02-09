@@ -100,7 +100,8 @@ const useWhatsApps = () => {
 		});
 
 		return () => {
-			socket.disconnect();
+			socket.off("whatsapp");
+			socket.off("whatsappSession");
 		};
 	}, []);
 

@@ -39,7 +39,7 @@ const QrcodeModal = ({ open, onClose, whatsAppId }) => {
 		});
 
 		return () => {
-			socket.disconnect();
+			socket.off("whatsappSession");
 		};
 	}, [whatsAppId, onClose]);
 
