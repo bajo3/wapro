@@ -22,83 +22,8 @@ const useAuth = () => {
       delete api.defaults.headers.common.Authorization;
     }
   };
-
-  useEffect(() => {
-    // ✅ Registrar interceptors UNA sola vez (evita duplicados por rerender)
-    const reqId = api.interceptors.request.use(
-      (config) => {
-        const raw = localStorage.getItem("token");
-
-        // si no hay token, asegurá que NO se mande Authorization
-        if (!raw) {
-          if (config?.headers) delete config.headers.Authorization;
-          return config;
-        }
-
-        // token guardado como JSON.stringify(token)
-        let token;
-        try {
-          token = JSON.parse(raw);
-        } catch {
-          // si quedó guardado sin JSON, usalo igual
-          token = raw;
-        }
-
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
-          setIsAuth(true);
-        } else {
-          delete config.headers.Authorization;
-        }
-
-        return config;
-      },
-      (error) => Promise.reject(error)
-    );
-
-    const resId = api.interceptors.response.use(
-      (response) => response,
-      async (error) => {
-        const originalRequest = error.config;
-
-        // refresh token
-        // - en este backend algunas rutas devuelven 401 al expirar el access token
-        // - otras devuelven 403
-        if ((error?.response?.status === 401 || error?.response?.status === 403) && !originalRequest._retry) {
-          originalRequest._retry = true;
-
-          try {
-            const { data } = await api.post("/auth/refresh_token");
-            if (data?.token) {
-              localStorage.setItem("token", JSON.stringify(data.token));
-              setAuthHeader(data.token);
-            }
-            return api(originalRequest);
-          } catch (err) {
-            // si refresh falla, limpiamos sesión
-            localStorage.removeItem("token");
-            setAuthHeader(null);
-            setIsAuth(false);
-            return Promise.reject(err);
-          }
-        }
-
-        // si llega acá y sigue siendo 401, limpiamos token y header
-        if (error?.response?.status === 401) {
-          localStorage.removeItem("token");
-          setAuthHeader(null);
-          setIsAuth(false);
-        }
-
-        return Promise.reject(error);
-      }
-    );
-
-    return () => {
-      api.interceptors.request.eject(reqId);
-      api.interceptors.response.eject(resId);
-    };
-  }, []);
+  // NOTE: Axios interceptors are installed globally in services/api.js
+  // to avoid race conditions with pages that fire requests on mount.
 
   useEffect(() => {
     const raw = localStorage.getItem("token");

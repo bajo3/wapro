@@ -35,9 +35,21 @@ const ListTicketsService = async ({
   userId,
   withUnreadMessages
 }: Request): Promise<Response> => {
+  // When the frontend sends queueIds=[] (e.g. "all queues"), the previous
+  // condition `queueId: { [Op.or]: [queueIds, null] }` could produce invalid SQL
+  // (or Sequelize errors) depending on dialect/version.
+  //
+  // We only apply the queue filter when the list is non-empty.
+  const buildQueueWhere = (ids: number[] | undefined) => {
+    if (!ids || ids.length === 0) return undefined;
+    return { [Op.or]: [{ [Op.in]: ids }, null] };
+  };
+
+  const queueWhere = buildQueueWhere(queueIds);
+
   let whereCondition: Filterable["where"] = {
     [Op.or]: [{ userId }, { status: "pending" }],
-    queueId: { [Op.or]: [queueIds, null] }
+    ...(queueWhere ? { queueId: queueWhere } : {})
   };
   let includeCondition: Includeable[];
 
@@ -60,7 +72,7 @@ const ListTicketsService = async ({
   ];
 
   if (showAll === "true") {
-    whereCondition = { queueId: { [Op.or]: [queueIds, null] } };
+    whereCondition = queueWhere ? { queueId: queueWhere } : {};
   }
 
   if (status) {
@@ -115,6 +127,7 @@ const ListTicketsService = async ({
 
   if (date) {
     whereCondition = {
+      ...whereCondition,
       createdAt: {
         [Op.between]: [+startOfDay(parseISO(date)), +endOfDay(parseISO(date))]
       }
@@ -125,9 +138,11 @@ const ListTicketsService = async ({
     const user = await ShowUserService(userId);
     const userQueueIds = user.queues.map(queue => queue.id);
 
+    const userQueueWhere = buildQueueWhere(userQueueIds);
+
     whereCondition = {
       [Op.or]: [{ userId }, { status: "pending" }],
-      queueId: { [Op.or]: [userQueueIds, null] },
+      ...(userQueueWhere ? { queueId: userQueueWhere } : {}),
       unreadMessages: { [Op.gt]: 0 }
     };
   }

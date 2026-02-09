@@ -44,7 +44,14 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
   let queueIds: number[] = [];
 
   if (queueIdsStringified) {
-    queueIds = JSON.parse(queueIdsStringified);
+    try {
+      // Frontend sends queueIds as a JSON string, e.g. "[]" or "[1,2]".
+      // Be defensive: never let a malformed query blow up the endpoint.
+      queueIds = JSON.parse(queueIdsStringified);
+      if (!Array.isArray(queueIds)) queueIds = [];
+    } catch {
+      queueIds = [];
+    }
   }
 
   const { tickets, count, hasMore } = await ListTicketsService({
