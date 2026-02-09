@@ -279,6 +279,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           } else {
             await sendTextHuman(instance, number, reply);
           }
+
           await setState(instance, remoteJid, {
             ...nextState,
             lastBotAt: sentIso,
@@ -288,7 +289,6 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
           // Training episode (best-effort): store what the user wrote and what we replied.
           try {
-<<<<<<< HEAD
             const intent =
               typeof nextState?.last_intent === 'string' && nextState.last_intent.trim()
                 ? nextState.last_intent.trim()
@@ -303,13 +303,6 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 ? nextState.last_variant.trim()
                 : undefined;
 
-=======
-            const intent = String(nextState?.last_intent ?? '');
-            const sources = Array.isArray(nextState?.last_sources) ? nextState.last_sources : [];
-            const extracted = nextState?.extracted ?? nextState?.lead ?? {};
-            const missingFields = Array.isArray(nextState?.missing_fields) ? nextState.missing_fields : [];
-            const variant = nextState?.last_variant ?? null;
->>>>>>> origin/main
             if (rawText && reply) {
               await logEpisode({
                 instance,
@@ -317,27 +310,17 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 channel: 'whatsapp',
                 user_text: rawText,
                 reply_text: reply,
-<<<<<<< HEAD
-                intent, // ✅ undefined if missing
-                variant, // ✅ undefined if missing
+                intent,
+                variant,
                 sources,
                 extracted: extractedObj,
-=======
-                intent: intent || undefined,
-                variant: variant ? String(variant) : undefined,
-                sources,
-                extracted,
->>>>>>> origin/main
                 missing_fields: missingFields
               });
             }
           } catch {
             // ignore episode failures
           }
-<<<<<<< HEAD
 
-=======
->>>>>>> origin/main
           // Emit socket event for outgoing message
           const sock = getSocket();
           if (sock) {
@@ -361,174 +344,6 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         aggregators.set(key, aggEntry);
       }
     };
-
-    // Cooldown: avoid replying too often
-    if (state.lastBotAt) {
-      const last = Date.parse(state.lastBotAt);
-      if (!Number.isNaN(last) && now - last < env.cooldownMs) {
-        cleanup();
-        return;
-      }
-    }
-
-    // Test mode: when the user explicitly says they are testing.
-    const isTestMode = /(probando|testeando|test\b|configurando|\bestoy\s+(?:probando|testeando|configurando)|\bchatbot\b|no\s+le\s+des\s+bola|no\s+respondas|no\s+contestes)/i.test(
-      rawText
-    );
-    if (isTestMode) {
-      const testReply = 'jaja ok 😄 decime qué querés testear: búsqueda, precios o checkout';
-      scheduleReply(testReply, {
-        ...state,
-        stage: 'idle',
-        last_intent: 'test_mode'
-      });
-      return;
-    }
-
-    // Intelligence: FAQ / Playbooks (panel-configurable)
-    try {
-      const settings = await getIntelligenceSettings();
-      const policy = await matchPolicy(rawText);
-      if (policy?.body) {
-        const reply = renderTemplate(String(policy.body), { state, settings, policy, extracted });
-        await logDecision({
-          instance,
-          remoteJid,
-          intent: 'policy',
-          confidence: 0.99,
-          data: {
-            policyId: policy.id,
-            sources: [{ type: 'policy', id: policy.id, title: policy.title ?? null }],
-            extracted
-          }
-        });
-        scheduleReply(reply, {
-          ...state,
-          stage: state.stage ?? 'idle',
-          last_intent: 'policy',
-          last_policy_id: policy.id,
-          last_sources: [{ type: 'policy', id: policy.id, title: policy.title ?? null }],
-          extracted,
-          missing_fields: []
-        });
-        return;
-      }
-      const faq = await matchFaq(rawText);
-      if (faq?.answer) {
-        const reply = renderTemplate(String(faq.answer), { state, settings, faq, extracted });
-        await logDecision({
-          instance,
-          remoteJid,
-          intent: 'faq',
-          confidence: 0.99,
-          data: { faqId: faq.id, sources: [{ type: 'faq', id: faq.id, title: faq.title ?? null }], extracted }
-        });
-        scheduleReply(reply, {
-          ...state,
-          stage: state.stage ?? 'idle',
-          last_intent: 'faq',
-          last_faq_id: faq.id,
-          last_sources: [{ type: 'faq', id: faq.id, title: faq.title ?? null }],
-          extracted,
-          missing_fields: []
-        });
-        return;
-      }
-
-      const pb = await matchPlaybook(rawText);
-      if (pb?.template) {
-        // A/B: allow overrides per playbook or per intent
-        let variant: string | null = null;
-        let template = String(pb.template);
-        const abRows = (await getAbVariantsFor('playbook', String(pb.id))).concat(await getAbVariantsFor('intent', String(pb.intent)));
-        if (abRows.length) {
-          const total = abRows.reduce((acc: number, r: any) => acc + Number(r.weight ?? 0), 0) || 1;
-          let pick = Math.random() * total;
-          const chosen =
-            abRows.find((r: any) => {
-              pick -= Number(r.weight ?? 0);
-              return pick <= 0;
-            }) ?? abRows[0];
-          variant = String(chosen.variant ?? 'A');
-          if (chosen.template_override) template = String(chosen.template_override);
-        }
-
-        // Guardrails: required fields
-        const req = requiredFieldsForIntent(String(pb.intent ?? 'playbook'), (pb as any).config);
-        const missing = computeMissingFields(req, extracted);
-<<<<<<< HEAD
-        const cfg = (pb as any).config && typeof (pb as any).config === 'object' ? (pb as any).config : {};
-        const autoAsk = cfg.autoAskMissing !== undefined ? Boolean(cfg.autoAskMissing) : true;
-
-        const reply =
-          autoAsk && missing.length
-            ? buildMissingQuestions(req, missing)
-            : renderTemplate(String(template), { state, settings, playbook: pb, extracted, missing_fields: missing, variant });
-
-=======
-        const cfg = ((pb as any).config && typeof (pb as any).config === 'object') ? (pb as any).config : {};
-        const autoAsk = cfg.autoAskMissing !== undefined ? Boolean(cfg.autoAskMissing) : true;
-        const reply = autoAsk && missing.length
-          ? buildMissingQuestions(req, missing)
-          : renderTemplate(String(template), { state, settings, playbook: pb, extracted, missing_fields: missing, variant });
->>>>>>> origin/main
-        await logDecision({
-          instance,
-          remoteJid,
-          intent: String(pb.intent ?? 'playbook'),
-          confidence: 0.9,
-          data: {
-            playbookId: pb.id,
-            intent: pb.intent ?? null,
-            variant,
-            sources: [{ type: 'playbook', id: pb.id, intent: pb.intent ?? null, variant }],
-            extracted,
-            missing_fields: missing
-          }
-        });
-<<<<<<< HEAD
-
-=======
->>>>>>> origin/main
-        scheduleReply(reply, {
-          ...state,
-          stage: state.stage ?? 'idle',
-          last_intent: String(pb.intent ?? 'playbook'),
-          last_playbook_id: pb.id,
-          last_sources: [{ type: 'playbook', id: pb.id, intent: pb.intent ?? null, variant }],
-          last_variant: variant,
-          extracted,
-          missing_fields: missing
-        });
-        return;
-      }
-
-      // Fallback: RAG-lite FTS search for a close FAQ/Policy
-      const hits = await searchKnowledge(rawText, 3);
-      const top = hits?.[0];
-      if (top && Number(top.rank ?? 0) >= 0.12) {
-        const src = { type: top.type, id: top.id, title: top.title ?? null };
-        await logDecision({
-          instance,
-          remoteJid,
-          intent: String(top.type),
-          confidence: 0.55,
-          data: { rag: true, top, sources: [src], extracted }
-        });
-        scheduleReply(String(top.snippet), {
-          ...state,
-          stage: state.stage ?? 'idle',
-          last_intent: String(top.type),
-          last_sources: [src],
-          extracted,
-          missing_fields: []
-        });
-        return;
-      }
-    } catch (e) {
-      // Best-effort. Never break the bot if intelligence subsystem fails.
-      console.error('intelligence match error', e);
-    }
 
     // Low-signal acknowledgements: reply only occasionally and only when not
     // waiting for the user to specify a query.

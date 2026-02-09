@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node --enable-source-maps dist/index.js"
+    "start": "node --enable-source-maps dist/index.js",
+    "check:conflicts": "node -e \"const fs=require('fs');const path=require('path');const walk=(d)=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>{const p=path.join(d,e.name);return e.isDirectory()?walk(p):[p];});const bad=[];for(const f of walk('src')){if(!f.endsWith('.ts'))continue;const t=fs.readFileSync(f,'utf8');if(t.includes('<<<<<<<')||t.includes('=======')||t.includes('>>>>>>>'))bad.push(f);}if(bad.length){console.error('Merge conflict markers found:\\n'+bad.join('\\n'));process.exit(1);}console.log('OK');\"",
+    "prebuild": "npm run check:conflicts"
   },
   "dependencies": {
     "cors": "^2.8.5",
