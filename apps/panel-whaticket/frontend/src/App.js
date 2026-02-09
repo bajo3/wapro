@@ -20,8 +20,11 @@ const App = () => {
           backgroundColor: "#e8e8e8",
         },
       },
+      // Override default Material UI palette with a fresh color scheme.
+      // Primary uses turquoise and secondary uses navy blue to match the new logo.
       palette: {
-        primary: { main: "#2576d2" },
+        primary: { main: "#009688" },
+        secondary: { main: "#003f5c" },
       },
     },
     locale

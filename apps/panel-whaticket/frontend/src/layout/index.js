@@ -26,6 +26,9 @@ import BackdropLoading from "../components/BackdropLoading";
 import { i18n } from "../translate/i18n";
 import { useThemeContext } from "../context/DarkMode";
 
+// Import custom logo for sidebar branding
+import logo from "../assets/logo.png";
+
 const drawerWidth = 240;
 
 const useStyles = makeStyles((theme) => ({
@@ -195,6 +198,14 @@ const LoggedInLayout = ({ children }) => {
         open={drawerOpen}
       >
         <div className={classes.toolbarIcon}>
+          {/* Display the custom logo when drawer is open */}
+          {drawerOpen && (
+            <img
+              src={logo}
+              alt="App logo"
+              style={{ height: 40, marginRight: 8 }}
+            />
+          )}
           <IconButton onClick={() => setDrawerOpen(!drawerOpen)}>
             <ChevronLeftIcon />
           </IconButton>
