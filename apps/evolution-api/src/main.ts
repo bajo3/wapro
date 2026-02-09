@@ -48,6 +48,13 @@ async function bootstrap() {
     cors({
       origin(requestOrigin, callback) {
         const { ORIGIN } = configService.get<Cors>('CORS');
+
+        // Server-to-server calls (and tools like curl) usually don't send an Origin header.
+        // Those requests should not be blocked by CORS checks.
+        if (!requestOrigin) {
+          return callback(null, true);
+        }
+
         if (ORIGIN.includes('*')) {
           return callback(null, true);
         }
