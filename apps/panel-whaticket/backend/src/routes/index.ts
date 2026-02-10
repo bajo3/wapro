@@ -12,21 +12,37 @@ import queueRoutes from "./queueRoutes";
 import quickAnswerRoutes from "./quickAnswerRoutes";
 import apiRoutes from "./apiRoutes";
 import evolutionWebhookRoutes from "./evolutionWebhookRoutes";
+import metaWebhookRoutes from "./metaWebhookRoutes";
 import botIntelligenceRoutes from "./botIntelligenceRoutes";
+import scheduledMessageRoutes from "./scheduledMessageRoutes";
+import trainingMessageRoutes from "./trainingMessageRoutes";
+import campaignRoutes from "./campaignRoutes";
+
+import sequelize from "../database";
 
 const routes = Router();
 
-routes.get("/health", (req, res) => {
+routes.get("/health", async (req, res) => {
+  let dbOk = false;
+  try {
+    await sequelize.authenticate();
+    dbOk = true;
+  } catch {
+    dbOk = false;
+  }
   res.json({
     ok: true,
+    dbOk,
     provider: String(process.env.WHATSAPP_PROVIDER || "").toUpperCase() || "WWEBJS",
     evolutionConfigured: !!process.env.EVOLUTION_API_URL,
+    metaConfigured: !!process.env.GATEWAY_META_URL,
     time: new Date().toISOString()
   });
 });
 
 // Webhooks (no auth)
 routes.use("/webhooks", evolutionWebhookRoutes);
+routes.use("/webhooks", metaWebhookRoutes);
 
 routes.use(userRoutes);
 routes.use("/auth", authRoutes);
@@ -38,6 +54,9 @@ routes.use(messageRoutes);
 routes.use(whatsappSessionRoutes);
 routes.use(queueRoutes);
 routes.use(quickAnswerRoutes);
+routes.use(scheduledMessageRoutes);
+routes.use(trainingMessageRoutes);
+routes.use(campaignRoutes);
 routes.use("/api/messages", apiRoutes);
 routes.use(botIntelligenceRoutes);
 

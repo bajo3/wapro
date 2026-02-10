@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { env } from '../lib/env.js';
 import { validateSignature, replyToCommentPublic, privateReplyToComment } from '../services/metaGraph.js';
+import fetch from 'node-fetch';
 import { getMappedVehicleId } from '../services/publicationMap.js';
 import { getVehicleById, getVehicleBySlug, buildVehicleUrl, formatPrice, vehicleTitle } from '../services/vehicles.js';
 
@@ -11,6 +12,15 @@ type IncomingCommentEvent = {
   commentId: string;
   mediaId?: string;
   text: string;
+};
+
+type IncomingDmEvent = {
+  platform: Platform;
+  senderId: string;
+  recipientId: string;
+  text: string;
+  messageId?: string;
+  timestamp?: number;
 };
 
 const seen = new Map<string, number>();
@@ -135,6 +145,36 @@ function extractCommentEvents(body: any): IncomingCommentEvent[] {
   return out;
 }
 
+function extractDmEvents(body: any): IncomingDmEvent[] {
+  const out: IncomingDmEvent[] = [];
+  if (!body || !Array.isArray(body.entry)) return out;
+
+  for (const entry of body.entry) {
+    // Messenger / IG DMs frequently come in entry.messaging
+    if (Array.isArray(entry.messaging)) {
+      for (const m of entry.messaging) {
+        const senderId = String(m?.sender?.id ?? '');
+        const recipientId = String(m?.recipient?.id ?? '');
+        const text = String(m?.message?.text ?? m?.message?.message ?? '');
+        const messageId = String(m?.message?.mid ?? m?.message?.id ?? '');
+        const ts = Number(m?.timestamp ?? Date.now());
+        if (senderId && recipientId && text) {
+          out.push({ platform: 'IG', senderId, recipientId, text, messageId: messageId || undefined, timestamp: ts });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+async function forwardToPanel(payload: any): Promise<void> {
+  if (!env.panelBackendUrl) return;
+  const url = new URL('/webhooks/meta', env.panelBackendUrl).toString();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (env.panelWebhookSecret) headers['x-meta-secret'] = env.panelWebhookSecret;
+  await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) });
+}
+
 export async function metaWebhookVerify(req: Request, res: Response) {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -158,6 +198,21 @@ export async function metaWebhookReceiver(req: Request, res: Response) {
 
   // Ack ASAP
   res.status(200).send('OK');
+
+  // Forward DMs and comments to CRM backend (best-effort)
+  try {
+    const dmEvents = extractDmEvents(req.body);
+    if (dmEvents.length > 0) {
+      await forwardToPanel({ type: 'dm', events: dmEvents, raw: req.body });
+    }
+    const commentEvents = extractCommentEvents(req.body);
+    if (commentEvents.length > 0) {
+      await forwardToPanel({ type: 'comment', events: commentEvents, raw: req.body });
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('forward to panel failed', { err });
+  }
 
   const events = extractCommentEvents(req.body);
   for (const ev of events) {

@@ -71,3 +71,16 @@ export async function privateReplyToComment(commentId: string, message: string):
     message: { text: message }
   });
 }
+
+/**
+ * Send a 1:1 message (DM) using the Send API.
+ * - For IG DMs, `recipientId` should be the IG-scoped id from webhook payloads.
+ * - For FB Page messaging, it should be the PSID.
+ */
+export async function sendDirectMessage(recipientId: string, message: string): Promise<any> {
+  return await graphPostJson(`/${env.pageId}/messages`, {
+    messaging_type: 'RESPONSE',
+    recipient: { id: recipientId },
+    message: { text: message }
+  });
+}

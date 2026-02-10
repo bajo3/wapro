@@ -7,7 +7,7 @@ import cors from 'cors';
 import { env } from './lib/env.js';
 import { migrate } from './services/db.js';
 import { metaWebhookReceiver, metaWebhookVerify } from './routes/webhooks.js';
-import { adminUpsertMapping, adminGetMapping, adminListMappings } from './routes/admin.js';
+import { adminUpsertMapping, adminGetMapping, adminListMappings, adminSendMessage, adminCampaignSend } from './routes/admin.js';
 
 const app = express();
 
@@ -34,6 +34,10 @@ app.post('/webhooks/meta', metaWebhookReceiver);
 app.post('/admin/map', adminUpsertMapping);
 app.get('/admin/map', adminGetMapping);
 app.get('/admin/maps', adminListMappings);
+
+// Send 1:1 messages / campaigns (X-Admin-Token)
+app.post('/admin/send', adminSendMessage);
+app.post('/admin/campaign', adminCampaignSend);
 
 app.use((err: any, _req: any, res: any, _next: any) => {
   const status = err?.status ?? 500;

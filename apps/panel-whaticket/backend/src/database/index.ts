@@ -12,6 +12,8 @@ import UserQueue from "../models/UserQueue";
 import QuickAnswer from "../models/QuickAnswer";
 import TicketTag from "../models/TicketTag";
 import TicketNote from "../models/TicketNote";
+import ScheduledMessage from "../models/ScheduledMessage";
+import TrainingMessage from "../models/TrainingMessage";
 
 // eslint-disable-next-line
 const dbConfig = require("../config/database");
@@ -32,7 +34,9 @@ const models = [
   UserQueue,
   QuickAnswer,
   TicketTag,
-  TicketNote
+  TicketNote,
+  ScheduledMessage,
+  TrainingMessage
 ];
 
 sequelize.addModels(models);

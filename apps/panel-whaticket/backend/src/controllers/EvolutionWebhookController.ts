@@ -6,6 +6,7 @@ import fetch from "node-fetch";
 import CreateOrUpdateContactService from "../services/ContactServices/CreateOrUpdateContactService";
 import FindOrCreateTicketService from "../services/TicketServices/FindOrCreateTicketService";
 import CreateMessageService from "../services/MessageServices/CreateMessageService";
+import TrainingMessage from "../models/TrainingMessage";
 import Whatsapp from "../models/Whatsapp";
 import { logger } from "../utils/logger";
 import uploadConfig from "../config/upload";
@@ -233,6 +234,22 @@ export const evolutionWebhook = async (req: Request, res: Response): Promise<Res
         mediaUrl
       }
     } as any);
+
+    // Persist to training dataset (IN/OUT)
+    try {
+      await TrainingMessage.create({
+        channel: "whatsapp",
+        direction: fromMe ? "OUT" : "IN",
+        body: bodyText,
+        externalMessageId: msgId,
+        contactId: contact.id,
+        ticketId: ticket.id,
+        messageId: msgId,
+        meta: { instance: instanceName, remoteJid }
+      } as any);
+    } catch {
+      // ignore
+    }
 
     // Forward inbound messages to the bot (optional).
     // Human takeover is handled by the panel send flow: when an operator replies, we set

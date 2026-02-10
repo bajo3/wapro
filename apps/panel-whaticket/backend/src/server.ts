@@ -3,6 +3,7 @@ import app from "./app";
 import { initIO } from "./libs/socket";
 import { logger } from "./utils/logger";
 import { StartAllWhatsAppsSessions } from "./services/WbotServices/StartAllWhatsAppsSessions";
+import { ProcessDueScheduledMessages } from "./services/ScheduledMessages/ProcessDueScheduledMessages";
 
 // Healthcheck para Railway / monitoreo
 app.get("/health", (_req, res) => res.status(200).json({ ok: true }));
@@ -33,5 +34,13 @@ Promise.resolve()
   .then(() => StartAllWhatsAppsSessions())
   .then(() => logger.info("StartAllWhatsAppsSessions completed"))
   .catch((err) => logger.error({ err }, "StartAllWhatsAppsSessions failed"));
+
+// Scheduled messages worker (runs even if WhatsApp sessions fail; best-effort)
+const pollMs = Number(process.env.SCHEDULED_MESSAGES_POLL_MS ?? 15000);
+if (Number.isFinite(pollMs) && pollMs > 0) {
+  setInterval(() => {
+    ProcessDueScheduledMessages().catch((err) => logger.error({ err }, "ProcessDueScheduledMessages failed"));
+  }, pollMs);
+}
 
 gracefulShutdown(server);

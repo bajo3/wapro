@@ -32,7 +32,11 @@ export const env = (() => {
     META_KEYWORDS: z.string().optional(),
 
     // Optional: base URL to your web catalog
-    PUBLIC_CATALOG_BASE_URL: z.string().url().optional()
+    PUBLIC_CATALOG_BASE_URL: z.string().url().optional(),
+
+    // Optional: forward all webhook events to your CRM backend
+    PANEL_BACKEND_URL: z.string().url().optional(),
+    PANEL_WEBHOOK_SECRET: z.string().optional()
   });
 
   const parsed = schema.parse(process.env);
@@ -60,6 +64,9 @@ export const env = (() => {
       .map((s) => s.trim().toLowerCase())
       .filter((s) => s.length > 0),
 
-    publicCatalogBaseUrl: parsed.PUBLIC_CATALOG_BASE_URL ?? undefined
+    publicCatalogBaseUrl: parsed.PUBLIC_CATALOG_BASE_URL ?? undefined,
+
+    panelBackendUrl: parsed.PANEL_BACKEND_URL ?? undefined,
+    panelWebhookSecret: parsed.PANEL_WEBHOOK_SECRET ?? undefined
   };
 })();
