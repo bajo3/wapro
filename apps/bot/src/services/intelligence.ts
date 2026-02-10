@@ -318,10 +318,11 @@ export async function logEpisode(input: {
   sources?: any[];
   extracted?: any;
   missing_fields?: string[];
-}): Promise<void> {
-  await pool.query(
+}): Promise<number> {
+  const r = await pool.query(
     `insert into bot_episodes (instance, remote_jid, channel, user_text, reply_text, intent, variant, sources, extracted, missing_fields)
-     values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10)`,
+     values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10)
+     returning id`,
     [
       input.instance ?? null,
       input.remoteJid ?? null,
@@ -335,6 +336,7 @@ export async function logEpisode(input: {
       input.missing_fields ?? []
     ]
   );
+  return Number(r.rows?.[0]?.id);
 }
 
 export async function listEpisodes(limit = 200): Promise<any[]> {

@@ -83,7 +83,8 @@ const CreateMessageService = async ({
             source: "panel-human",
             ticketId: message.ticketId,
             whatsappId: message.ticket.whatsappId,
-            companyId: message.ticket.companyId
+            // Some forks include multi-company support; keep optional for compatibility.
+            companyId: (message.ticket as any)?.companyId ?? null
           }
         });
       }

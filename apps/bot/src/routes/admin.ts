@@ -718,10 +718,10 @@ adminRouter.post('/intelligence/episodes/ingest', async (req, res) => {
     const { logEpisode } = await import('../services/intelligence');
     const id = await logEpisode({
       channel,
-      contact_id,
       user_text,
       reply_text,
-      meta
+      // store extra info inside 'extracted' to keep type compatibility
+      extracted: { ...(meta || {}), contact_id }
     });
     return res.status(201).json({ id });
   } catch (e: any) {
