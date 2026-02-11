@@ -1,6 +1,16 @@
+// This modified Spanish translations file updates certain labels and adds
+// new menu options for the enhanced ticket actions menu.  We also
+// replace the Portuguese word "Linhas" with the Spanish "Colas" in all
+// relevant UI elements (queue selection, main drawer, queues page).  The
+// original file structure is preserved to ensure compatibility with the
+// existing translation system.  Additional keys are added to
+// `ticketOptionsMenu` to provide translations for the new actions.
+
 const messages = {
   es: {
     translations: {
+      // ... existing translations omitted for brevity.  They are copied
+      // below to maintain a self-contained file.
       signup: {
         title: "Registro",
         toasts: {
@@ -42,15 +52,15 @@ const messages = {
         },
         messages: {
           inAttendance: {
-            title: "En servicio"
+            title: "En servicio",
           },
           waiting: {
-            title: "Esperando"
+            title: "Esperando",
           },
           closed: {
-            title: "Finalizado"
-          }
-        }
+            title: "Finalizado",
+          },
+        },
       },
       connections: {
         title: "Conexiones",
@@ -62,7 +72,8 @@ const messages = {
           deleteTitle: "Borrar",
           deleteMessage: "¿Estás seguro? Este proceso no puede ser revertido.",
           disconnectTitle: "Desconectar",
-          disconnectMessage: "Estás seguro? Deberá volver a leer el código QR",
+          disconnectMessage:
+            "Estás seguro? Deberá volver a leer el código QR",
         },
         buttons: {
           add: "Agrega WhatsApp",
@@ -229,7 +240,8 @@ const messages = {
         },
       },
       ticketsQueueSelect: {
-        placeholder: "Linhas",
+        // Replace Portuguese word "Linhas" with the Spanish equivalent "Colas"
+        placeholder: "Colas",
       },
       tickets: {
         toasts: {
@@ -290,7 +302,8 @@ const messages = {
           tickets: "Tickets",
           contacts: "Contactos",
           quickAnswers: "Respuestas rápidas",
-          queues: "Linhas",
+          // Replace "Linhas" with "Colas" here as well
+          queues: "Colas",
           administration: "Administración",
           users: "Usuarios",
           settings: "Configuración",
@@ -306,7 +319,8 @@ const messages = {
         noTickets: "Sin notificaciones.",
       },
       queues: {
-        title: "Linhas",
+        // Replace title from "Linhas" to "Colas"
+        title: "Colas",
         table: {
           name: "Nombre",
           color: "Color",
@@ -323,7 +337,8 @@ const messages = {
         },
       },
       queueSelect: {
-        inputLabel: "Linhas",
+        // Replace "Linhas" with "Colas" on the input label
+        inputLabel: "Colas",
       },
       quickAnswers: {
         title: "Respuestas rápidas",
@@ -391,7 +406,8 @@ const messages = {
         },
       },
       messagesInput: {
-        placeholderOpen: "Escriba un mensaje o presione '' / '' para usar las respuestas rápidas registradas",
+        placeholderOpen:
+          "Escriba un mensaje o presione '' / '' para usar las respuestas rápidas registradas",
         placeholderClosed:
           "Vuelva a abrir o acepte este ticket para enviar un mensaje.",
         signMessage: "Firmar",
@@ -433,9 +449,20 @@ const messages = {
           empty: "Sin historial",
         },
       },
+      // Extend the ticketOptionsMenu translations with additional actions for a more modern, comprehensive menu.
       ticketOptionsMenu: {
         delete: "Borrar",
         transfer: "Transferir",
+        // New menu options
+        resolveWithoutFarewell: "Resolver sin despedida",
+        return: "Devolver",
+        postpone: "Posponer",
+        selectMessages: "Seleccionar mensajes",
+        markAsUnread: "Marcar como no leído",
+        contactDetails: "Detalles de contacto",
+        contactReason: "Motivos del contacto",
+        keep: "Mantener conmigo",
+        turnOffBot: "Apagar Bot",
         confirmationModal: {
           title: "¿Borrar ticket #",
           titleFrom: "del contacto ",

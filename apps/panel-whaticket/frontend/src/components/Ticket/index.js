@@ -11,12 +11,14 @@ import ContactDrawer from "../ContactDrawer";
 import MessageInput from "../MessageInput/";
 import TicketHeader from "../TicketHeader";
 import TicketInfo from "../TicketInfo";
+// NOTE: use our enhanced TicketActionButtons component that accepts onOpenContact
 import TicketActionButtons from "../TicketActionButtons";
 import MessagesList from "../MessagesList";
 import api from "../../services/api";
 import { ReplyMessageProvider } from "../../context/ReplyingMessage/ReplyingMessageContext";
 import toastError from "../../errors/toastError";
 
+// Maintain the same drawer width as the original implementation
 const drawerWidth = 320;
 
 const useStyles = makeStyles((theme) => ({
@@ -73,6 +75,10 @@ const useStyles = makeStyles((theme) => ({
   },
 }));
 
+// This component displays a single ticket conversation. We enhanced it so
+// that the ticket action buttons can open the contact drawer via the
+// `onOpenContact` prop. This aligns with the new menu option for viewing
+// contact details.
 const Ticket = () => {
   const { ticketId } = useParams();
   const history = useHistory();
@@ -137,6 +143,7 @@ const Ticket = () => {
     };
   }, [ticketId, history]);
 
+  // Handlers to control the contact drawer state
   const handleDrawerOpen = () => {
     setDrawerOpen(true);
   };
@@ -163,7 +170,8 @@ const Ticket = () => {
             />
           </div>
           <div className={classes.ticketActionButtons}>
-            <TicketActionButtons ticket={ticket} />
+            {/* Provide handleDrawerOpen to TicketActionButtons via onOpenContact prop */}
+            <TicketActionButtons ticket={ticket} onOpenContact={handleDrawerOpen} />
           </div>
         </TicketHeader>
         <ReplyMessageProvider>
