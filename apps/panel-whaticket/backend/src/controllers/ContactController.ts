@@ -15,8 +15,9 @@ import AppError from "../errors/AppError";
 import GetContactService from "../services/ContactServices/GetContactService";
 
 type IndexQuery = {
-  searchParam: string;
-  pageNumber: string;
+  searchParam?: string;
+  pageNumber?: string;
+  pageSize?: string;
 };
 
 type IndexGetContactQuery = {
@@ -36,14 +37,22 @@ interface ContactData {
 }
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
-  const { searchParam, pageNumber } = req.query as IndexQuery;
+  const { searchParam, pageNumber, pageSize } = req.query as IndexQuery;
 
-  const { contacts, count, hasMore } = await ListContactsService({
+  const { contacts, count, hasMore, pageNumber: currentPage, pageSize: currentPageSize, totalPages } = await ListContactsService({
     searchParam,
-    pageNumber
+    pageNumber,
+    pageSize
   });
 
-  return res.json({ contacts, count, hasMore });
+  return res.json({
+    contacts,
+    count,
+    hasMore,
+    pageNumber: currentPage,
+    pageSize: currentPageSize,
+    totalPages
+  });
 };
 
 export const getContact = async (
