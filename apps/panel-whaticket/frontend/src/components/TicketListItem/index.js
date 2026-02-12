@@ -4,7 +4,6 @@ import { useHistory, useParams } from "react-router-dom";
 import { parseISO, format, isSameDay } from "date-fns";
 import clsx from "clsx";
 
-import { makeStyles } from "@material-ui/core/styles";
 import { green } from "@material-ui/core/colors";
 import ListItem from "@material-ui/core/ListItem";
 import ListItemText from "@material-ui/core/ListItemText";
@@ -23,103 +22,7 @@ import { Tooltip } from "@material-ui/core";
 import { AuthContext } from "../../context/Auth/AuthContext";
 import toastError from "../../errors/toastError";
 
-// Styles remain largely the same as the original component. We leave room
-// for additional spacing by not using the `dense` prop on the ListItem.
-const useStyles = makeStyles(theme => ({
-  ticket: {
-    position: "relative",
-  },
-
-  pendingTicket: {
-    cursor: "unset",
-  },
-
-  noTicketsDiv: {
-    display: "flex",
-    height: "100px",
-    margin: 40,
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  noTicketsText: {
-    textAlign: "center",
-    color: "rgb(104, 121, 146)",
-    fontSize: "14px",
-    lineHeight: "1.4",
-  },
-
-  noTicketsTitle: {
-    textAlign: "center",
-    fontSize: "16px",
-    fontWeight: "600",
-    margin: "0px",
-  },
-
-  contactNameWrapper: {
-    display: "flex",
-    justifyContent: "space-between",
-  },
-
-  lastMessageTime: {
-    justifySelf: "flex-end",
-  },
-
-  closedBadge: {
-    alignSelf: "center",
-    justifySelf: "flex-end",
-    marginRight: 32,
-    marginLeft: "auto",
-  },
-
-  contactLastMessage: {
-    paddingRight: 20,
-  },
-
-  newMessagesCount: {
-    alignSelf: "center",
-    marginRight: 8,
-    marginLeft: "auto",
-  },
-
-  badgeStyle: {
-    color: "white",
-    backgroundColor: green[500],
-  },
-
-  acceptButton: {
-    position: "absolute",
-    left: "50%",
-  },
-
-  ticketQueueColor: {
-    flex: "none",
-    width: "8px",
-    height: "100%",
-    position: "absolute",
-    top: "0%",
-    left: "0%",
-  },
-
-  userTag: {
-    position: "absolute",
-    marginRight: 5,
-    right: 5,
-    bottom: 5,
-    background: "#2576D2",
-    color: "#ffffff",
-    border: "1px solid #CCC",
-    padding: 1,
-    paddingLeft: 5,
-    paddingRight: 5,
-    borderRadius: 10,
-    fontSize: "0.9em",
-  },
-}));
-
 const TicketListItem = ({ ticket }) => {
-  const classes = useStyles();
   const history = useHistory();
   const [loading, setLoading] = useState(false);
   const { ticketId } = useParams();
@@ -132,18 +35,8 @@ const TicketListItem = ({ ticket }) => {
     };
   }, []);
 
-  // Accept the ticket and assign to current user
-  //
-  // Previously this method awaited the API request before navigating to the
-  // ticket page. That caused the UI to feel sluggish and sometimes appear
-  // frozen while waiting for the response.  To improve perceived
-  // performance, we immediately push the agent to the ticket page and let
-  // the API call complete in the background.  Any errors will be shown
-  // via toast notifications, but the agent can start reading the chat
-  // history without delay.
-  const handleAcepptTicket = async id => {
+  const handleAcepptTicket = async (id) => {
     setLoading(true);
-    // Navigate first so the UI updates instantly
     history.push(`/tickets/${id}`);
     try {
       await api.put(`/tickets/${id}`, {
@@ -151,7 +44,6 @@ const TicketListItem = ({ ticket }) => {
         userId: user?.id,
       });
     } catch (err) {
-      // Inform the user if something went wrong, but stay on the ticket page
       toastError(err);
     } finally {
       if (isMounted.current) {
@@ -160,32 +52,27 @@ const TicketListItem = ({ ticket }) => {
     }
   };
 
-  const handleSelectTicket = id => {
+  const handleSelectTicket = (id) => {
     history.push(`/tickets/${id}`);
   };
 
   return (
     <React.Fragment key={ticket.id}>
       <ListItem
-        // Removed the `dense` prop to provide a more spacious feel for each ticket list item
         button
-        onClick={e => {
+        onClick={(e) => {
           if (ticket.status === "pending") return;
           handleSelectTicket(ticket.id);
         }}
         selected={ticketId && +ticketId === ticket.id}
-        className={clsx(classes.ticket, {
-          [classes.pendingTicket]: ticket.status === "pending",
+        className={clsx("relative py-ticket-sm", {
+          "cursor-default": ticket.status === "pending",
         })}
       >
-        <Tooltip
-          arrow
-          placement="right"
-          title={ticket.queue?.name || "Sem fila"}
-        >
+        <Tooltip arrow placement="right" title={ticket.queue?.name || "Sem fila"}>
           <span
             style={{ backgroundColor: ticket.queue?.color || "#7C7C7C" }}
-            className={classes.ticketQueueColor}
+            className="absolute left-0 top-0 h-full w-2"
           ></span>
         </Tooltip>
         <ListItemAvatar>
@@ -194,37 +81,34 @@ const TicketListItem = ({ ticket }) => {
         <ListItemText
           disableTypography
           primary={
-            <span className={classes.contactNameWrapper}>
-              <Typography
-                noWrap
-                component="span"
-                variant="body2"
-                color="textPrimary"
-              >
+            <span className="flex justify-between">
+              <Typography noWrap component="span" variant="body2" color="textPrimary">
                 {ticket.contact.name}
               </Typography>
 
               {ticket?.contact?.leadSource && (
-                <div className={classes.userTag} title="Lead source">
+                <div
+                  className="absolute bottom-[5px] right-[5px] rounded-full border border-[#CCC] bg-ticket-accent px-1.5 py-[1px] text-[0.9em] text-white"
+                  title="Lead source"
+                >
                   {String(ticket.contact.leadSource).toUpperCase()}
                 </div>
               )}
 
               {String(ticket?.botMode || "ON").toUpperCase() === "HUMAN_ONLY" && (
-                <div className={classes.userTag} title="Derivado a humano">
+                <div
+                  className="absolute bottom-[5px] right-[5px] rounded-full border border-[#CCC] bg-ticket-accent px-1.5 py-[1px] text-[0.9em] text-white"
+                  title="Derivado a humano"
+                >
                   HUMANO
                 </div>
               )}
               {ticket.status === "closed" && (
-                <Badge
-                  className={classes.closedBadge}
-                  badgeContent={"closed"}
-                  color="primary"
-                />
+                <Badge className="ml-auto mr-8 self-center" badgeContent={"closed"} color="primary" />
               )}
               {ticket.lastMessage && (
                 <Typography
-                  className={classes.lastMessageTime}
+                  className="justify-self-end text-ticket-muted"
                   component="span"
                   variant="body2"
                   color="textSecondary"
@@ -238,7 +122,7 @@ const TicketListItem = ({ ticket }) => {
               )}
               {ticket.whatsappId && (
                 <div
-                  className={classes.userTag}
+                  className="absolute bottom-[5px] right-[5px] rounded-full border border-[#CCC] bg-ticket-accent px-1.5 py-[1px] text-[0.9em] text-white"
                   title={i18n.t("ticketsList.connectionTitle")}
                 >
                   {ticket.whatsapp?.name}
@@ -247,27 +131,24 @@ const TicketListItem = ({ ticket }) => {
             </span>
           }
           secondary={
-            <span className={classes.contactNameWrapper}>
+            <span className="flex justify-between">
               <Typography
-                className={classes.contactLastMessage}
+                className="pr-5"
                 noWrap
                 component="span"
                 variant="body2"
                 color="textSecondary"
               >
-                {ticket.lastMessage ? (
-                  <MarkdownWrapper>{ticket.lastMessage}</MarkdownWrapper>
-                ) : (
-                  <br />
-                )}
+                {ticket.lastMessage ? <MarkdownWrapper>{ticket.lastMessage}</MarkdownWrapper> : <br />}
               </Typography>
 
               <Badge
-                className={classes.newMessagesCount}
+                className="ml-auto mr-2 self-center"
                 badgeContent={ticket.unreadMessages}
                 classes={{
-                  badge: classes.badgeStyle,
+                  badge: "text-white",
                 }}
+                style={{ color: "white", backgroundColor: green[500] }}
               />
             </span>
           }
@@ -276,10 +157,10 @@ const TicketListItem = ({ ticket }) => {
           <ButtonWithSpinner
             color="primary"
             variant="contained"
-            className={classes.acceptButton}
+            className="absolute left-1/2"
             size="small"
             loading={loading}
-            onClick={e => handleAcepptTicket(ticket.id)}
+            onClick={(e) => handleAcepptTicket(ticket.id)}
           >
             {i18n.t("ticketsList.buttons.accept")}
           </ButtonWithSpinner>
