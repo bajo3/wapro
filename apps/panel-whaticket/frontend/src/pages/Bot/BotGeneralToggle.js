@@ -4,25 +4,25 @@ import { toast } from "react-toastify";
 import api from "../../services/api";
 
 /**
- * BotGeneralToggle
- * - Toggle global bot on/off for ALL tickets.
- * - Backend required:
- *    GET  /bot/settings  -> { enabled: boolean }
- *    PUT  /bot/settings  -> { enabled: boolean }
+ * FIX: avoid /bot/settings (404) by reusing:
+ *   GET /bot/intelligence/settings
+ *   PUT /bot/intelligence/settings
  *
- * Usage (inside your Bot page):
- *   <BotGeneralToggle />
+ * Stores flag in settings.botEnabled (boolean).
  */
 export default function BotGeneralToggle() {
   const [enabled, setEnabled] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [rawSettings, setRawSettings] = useState({});
 
   const load = async () => {
     try {
-      const { data } = await api.get("/bot/settings");
-      setEnabled(Boolean(data?.enabled));
+      const { data } = await api.get("/bot/intelligence/settings");
+      const settings = data?.settings || data || {};
+      setRawSettings(settings);
+      setEnabled(typeof settings.botEnabled === "boolean" ? settings.botEnabled : true);
     } catch (err) {
-      // Endpoint not present yet: keep default ON without breaking UI.
+      setEnabled(true);
     }
   };
 
@@ -34,7 +34,11 @@ export default function BotGeneralToggle() {
     setLoading(true);
     try {
       const next = !enabled;
-      await api.put("/bot/settings", { enabled: next });
+      const nextSettings = { ...rawSettings, botEnabled: next };
+
+      await api.put("/bot/intelligence/settings", { settings: nextSettings });
+
+      setRawSettings(nextSettings);
       setEnabled(next);
       toast.success(next ? "Bot general activado" : "Bot general apagado");
     } catch (err) {
@@ -61,6 +65,10 @@ export default function BotGeneralToggle() {
 
       <Typography variant="body2" style={{ marginTop: 10, opacity: 0.8 }}>
         Estado actual: {enabled ? "ACTIVO" : "APAGADO"}
+      </Typography>
+
+      <Typography variant="caption" style={{ display: "block", marginTop: 8, opacity: 0.7 }}>
+        Nota: si ves 403, tu sesión expiró. Volvé a iniciar sesión en el panel.
       </Typography>
     </Paper>
   );
