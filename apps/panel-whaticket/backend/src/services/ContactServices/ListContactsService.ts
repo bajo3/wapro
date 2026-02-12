@@ -4,32 +4,49 @@ import Contact from "../../models/Contact";
 interface Request {
   searchParam?: string;
   pageNumber?: string;
+  pageSize?: string;
 }
 
 interface Response {
   contacts: Contact[];
   count: number;
   hasMore: boolean;
+  pageNumber: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 const ListContactsService = async ({
   searchParam = "",
-  pageNumber = "1"
+  pageNumber = "1",
+  pageSize = "20"
 }: Request): Promise<Response> => {
+  const normalizedSearch = searchParam.toLowerCase().trim();
+  const parsedPageNumber = Number(pageNumber);
+  const parsedPageSize = Number(pageSize);
+  const currentPage =
+    Number.isFinite(parsedPageNumber) && parsedPageNumber > 0
+      ? Math.floor(parsedPageNumber)
+      : 1;
+  const limit =
+    Number.isFinite(parsedPageSize) && parsedPageSize > 0
+      ? Math.min(Math.floor(parsedPageSize), 100)
+      : 20;
+
   const whereCondition = {
     [Op.or]: [
       {
         name: Sequelize.where(
           Sequelize.fn("LOWER", Sequelize.col("name")),
           "LIKE",
-          `%${searchParam.toLowerCase().trim()}%`
+          `%${normalizedSearch}%`
         )
       },
-      { number: { [Op.like]: `%${searchParam.toLowerCase().trim()}%` } }
+      { number: { [Op.like]: `%${normalizedSearch}%` } }
     ]
   };
-  const limit = 20;
-  const offset = limit * (+pageNumber - 1);
+
+  const offset = limit * (currentPage - 1);
 
   const { count, rows: contacts } = await Contact.findAndCountAll({
     where: whereCondition,
@@ -43,7 +60,10 @@ const ListContactsService = async ({
   return {
     contacts,
     count,
-    hasMore
+    hasMore,
+    pageNumber: currentPage,
+    pageSize: limit,
+    totalPages: Math.max(Math.ceil(count / limit), 1)
   };
 };
 
