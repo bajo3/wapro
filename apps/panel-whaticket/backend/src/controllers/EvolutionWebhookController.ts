@@ -213,7 +213,8 @@ export const evolutionWebhook = async (req: Request, res: Response): Promise<Res
       name: pushName || number,
       number,
       profilePicUrl: "",
-      isGroup: false
+      isGroup: false,
+      leadSource: "WA"
     });
 
     const ticket = await FindOrCreateTicketService(contact, whatsapp.id, fromMe ? 0 : 1);
@@ -255,7 +256,8 @@ export const evolutionWebhook = async (req: Request, res: Response): Promise<Res
     // Human takeover is handled by the panel send flow: when an operator replies, we set
     // the bot conversation mode to HUMAN_ONLY. So here we can forward all inbound messages
     // and let the bot decide whether to answer.
-    if (!fromMe && String(process.env.BOT_URL || "").trim()) {
+    const botMode = String((ticket as any)?.botMode || "ON").toUpperCase();
+    if (!fromMe && String(process.env.BOT_URL || "").trim() && botMode === "ON") {
       const forwardPayload = {
         ...(body || {}),
         // Ensure the bot sees the instance name even if Evolution didn't include it.

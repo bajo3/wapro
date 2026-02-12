@@ -12,6 +12,7 @@ interface Request {
   isGroup: boolean;
   email?: string;
   profilePicUrl?: string;
+  leadSource?: string;
   extraInfo?: ExtraInfo[];
 }
 
@@ -20,6 +21,7 @@ const CreateOrUpdateContactService = async ({
   number: rawNumber,
   profilePicUrl,
   isGroup,
+  leadSource,
   email = "",
   extraInfo = []
 }: Request): Promise<Contact> => {
@@ -31,7 +33,7 @@ const CreateOrUpdateContactService = async ({
   contact = await Contact.findOne({ where: { number } });
 
   if (contact) {
-    contact.update({ profilePicUrl });
+    contact.update({ profilePicUrl, leadSource: leadSource ?? contact.leadSource });
 
     io.emit("contact", {
       action: "update",
@@ -44,6 +46,7 @@ const CreateOrUpdateContactService = async ({
       profilePicUrl,
       email,
       isGroup,
+      leadSource: leadSource ?? null,
       extraInfo
     });
 

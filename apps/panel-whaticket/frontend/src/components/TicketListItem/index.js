@@ -203,6 +203,18 @@ const TicketListItem = ({ ticket }) => {
               >
                 {ticket.contact.name}
               </Typography>
+
+              {ticket?.contact?.leadSource && (
+                <div className={classes.userTag} title="Lead source">
+                  {String(ticket.contact.leadSource).toUpperCase()}
+                </div>
+              )}
+
+              {String(ticket?.botMode || "ON").toUpperCase() === "HUMAN_ONLY" && (
+                <div className={classes.userTag} title="Derivado a humano">
+                  HUMANO
+                </div>
+              )}
               {ticket.status === "closed" && (
                 <Badge
                   className={classes.closedBadge}

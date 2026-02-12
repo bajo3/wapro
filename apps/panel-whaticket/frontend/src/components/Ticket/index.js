@@ -133,7 +133,13 @@ const Ticket = () => {
   useEffect(() => {
     const socket = openSocket();
 
-    socket.on("connect", () => socket.emit("joinChatBox", ticketId));
+    const join = () => socket.emit("joinChatBox", ticketId);
+
+    // If the socket is already connected (common), the "connect" event
+    // won't fire for this effect. Join immediately to avoid requiring a
+    // manual refresh after accepting a ticket.
+    if (socket.connected) join();
+    socket.on("connect", join);
 
     socket.on("ticket", (data) => {
       if (data.action === "update") {
@@ -159,6 +165,7 @@ const Ticket = () => {
 
     return () => {
       socket.emit("leaveChatBox", ticketId);
+      socket.off("connect", join);
       socket.off("ticket");
       socket.off("contact");
     };

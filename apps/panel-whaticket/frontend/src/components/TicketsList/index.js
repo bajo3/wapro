@@ -184,6 +184,14 @@ const reducer = (state, action) => {
 	useEffect(() => {
 		const socket = openSocket();
 
+		const joinRooms = () => {
+			if (status) {
+				socket.emit("joinTickets", status);
+			} else {
+				socket.emit("joinNotification");
+			}
+		};
+
 		const shouldUpdateTicket = ticket => !searchParam &&
 			(!ticket.userId || ticket.userId === user?.id || showAll) &&
 			(!ticket.queueId || selectedQueueIds.indexOf(ticket.queueId) > -1);
@@ -191,13 +199,10 @@ const reducer = (state, action) => {
 		const notBelongsToUserQueues = ticket =>
 			ticket.queueId && selectedQueueIds.indexOf(ticket.queueId) === -1;
 
-		socket.on("connect", () => {
-			if (status) {
-				socket.emit("joinTickets", status);
-			} else {
-				socket.emit("joinNotification");
-			}
-		});
+		// If the socket is already connected, "connect" won't fire here.
+		// Joining immediately avoids stale lists that require an F5.
+		if (socket.connected) joinRooms();
+		socket.on("connect", joinRooms);
 
 		socket.on("ticket", data => {
 			if (data.action === "updateUnread") {
@@ -243,6 +248,7 @@ const reducer = (state, action) => {
 
 		return () => {
 			socket.emit("leaveTickets", status);
+			socket.off("connect", joinRooms);
 			socket.off("ticket");
 			socket.off("appMessage");
 			socket.off("contact");

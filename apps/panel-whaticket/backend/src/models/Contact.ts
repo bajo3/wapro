@@ -37,6 +37,10 @@ class Contact extends Model<Contact> {
   @Column
   profilePicUrl: string;
 
+  // Lead origin: WA / IG / FB (or any free-form string)
+  @Column
+  leadSource: string;
+
   @Default(false)
   @Column
   isGroup: boolean;

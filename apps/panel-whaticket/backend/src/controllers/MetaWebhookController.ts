@@ -37,6 +37,7 @@ export const metaWebhook = async (req: Request, res: Response) => {
 
   for (const ev of events) {
     try {
+      const platform = String(ev.platform || type || "IG").toUpperCase();
       const senderId = String(ev.senderId ?? ev.fromId ?? "");
       const text = String(ev.text ?? ev.message ?? "");
       if (!senderId || !text) continue;
@@ -49,9 +50,15 @@ export const metaWebhook = async (req: Request, res: Response) => {
         defaults: {
           name: `Instagram ${senderId}`,
           number,
-          profilePicUrl: ""
+          profilePicUrl: "",
+          leadSource: platform
         } as any
       });
+
+      // Ensure leadSource stays updated if the contact already existed.
+      if (contact.leadSource !== platform) {
+        await contact.update({ leadSource: platform });
+      }
 
       // One open ticket per contact per channel
       let ticket = await Ticket.findOne({
