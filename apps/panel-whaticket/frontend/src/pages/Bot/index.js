@@ -15,7 +15,7 @@ import {
   TableBody,
   TableCell,
   TableHead,
-  TableRow
+  TableRow,
 } from "@material-ui/core";
 
 import MainContainer from "../../components/MainContainer";
@@ -27,6 +27,10 @@ import api from "../../services/api";
 import toastError from "../../errors/toastError";
 import { toast } from "react-toastify";
 import { AuthContext } from "../../context/Auth/AuthContext";
+
+// Import the global bot toggle component. This button allows admins
+// to turn the bot on or off for all tickets directly from the Bot page.
+import BotGeneralToggle from "./BotGeneralToggle";
 
 const useStyles = makeStyles((theme) => ({
   mainPaper: {
@@ -325,7 +329,12 @@ const Bot = () => {
       </MainHeader>
 
       <Paper className={classes.mainPaper}>
-        <Tabs value={tab} onChange={(_, v) => setTab(v)} indicatorColor="primary" textColor="primary">
+        <Tabs
+          value={tab}
+          onChange={(_, v) => setTab(v)}
+          indicatorColor="primary"
+          textColor="primary"
+        >
           <Tab label="General" />
           <Tab label="Políticas" />
           <Tab label="FAQs" />
@@ -339,6 +348,8 @@ const Bot = () => {
 
         <Box className={classes.tabPanel}>
           <TabPanel value={tab} index={0}>
+            {/* Global Bot toggle: allow admin to turn the bot on/off for all tickets */}
+            <BotGeneralToggle />
             <Typography variant="body2" gutterBottom>
               Settings en JSON. Se usan para templates: {'{settings.algo}'}
             </Typography>
@@ -351,7 +362,12 @@ const Bot = () => {
               rows={14}
             />
             <Box mt={2}>
-              <Button color="primary" variant="contained" onClick={saveSettings} disabled={loading}>
+              <Button
+                color="primary"
+                variant="contained"
+                onClick={saveSettings}
+                disabled={loading}
+              >
                 Guardar settings
               </Button>
             </Box>
@@ -359,11 +375,37 @@ const Bot = () => {
 
           <TabPanel value={tab} index={1}>
             <Box className={classes.formRow}>
-              <TextField label="Título" variant="outlined" value={policyForm.title} onChange={(e) => setPolicyForm({ ...policyForm, title: e.target.value })} />
-              <TextField label="Triggers (comma)" variant="outlined" value={policyForm.triggers} onChange={(e) => setPolicyForm({ ...policyForm, triggers: e.target.value })} />
-              <TextField className={classes.full} label="Body" variant="outlined" multiline rows={4} value={policyForm.body} onChange={(e) => setPolicyForm({ ...policyForm, body: e.target.value })} />
+              <TextField
+                label="Título"
+                variant="outlined"
+                value={policyForm.title}
+                onChange={(e) =>
+                  setPolicyForm({ ...policyForm, title: e.target.value })
+                }
+              />
+              <TextField
+                label="Triggers (comma)"
+                variant="outlined"
+                value={policyForm.triggers}
+                onChange={(e) =>
+                  setPolicyForm({ ...policyForm, triggers: e.target.value })
+                }
+              />
+              <TextField
+                className={classes.full}
+                label="Body"
+                variant="outlined"
+                multiline
+                rows={4}
+                value={policyForm.body}
+                onChange={(e) =>
+                  setPolicyForm({ ...policyForm, body: e.target.value })
+                }
+              />
               <Box className={classes.full}>
-                <Button color="primary" variant="contained" onClick={createPolicyRow}>Crear Política</Button>
+                <Button color="primary" variant="contained" onClick={createPolicyRow}>
+                  Crear Política
+                </Button>
               </Box>
             </Box>
 
@@ -384,9 +426,20 @@ const Bot = () => {
                       <TableCell>{p.id}</TableCell>
                       <TableCell>{p.title || ""}</TableCell>
                       <TableCell>{(p.triggers || []).join(", ")}</TableCell>
-                      <TableCell style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}>{p.body}</TableCell>
+                      <TableCell
+                        style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}
+                      >
+                        {p.body}
+                      </TableCell>
                       <TableCell align="right">
-                        <Button size="small" variant="outlined" color="secondary" onClick={() => deletePolicyRow(p.id)}>Eliminar</Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="secondary"
+                          onClick={() => deletePolicyRow(p.id)}
+                        >
+                          Eliminar
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -397,11 +450,31 @@ const Bot = () => {
 
           <TabPanel value={tab} index={2}>
             <Box className={classes.formRow}>
-              <TextField label="Título" variant="outlined" value={faqForm.title} onChange={(e) => setFaqForm({ ...faqForm, title: e.target.value })} />
-              <TextField label="Triggers (comma)" variant="outlined" value={faqForm.triggers} onChange={(e) => setFaqForm({ ...faqForm, triggers: e.target.value })} />
-              <TextField className={classes.full} label="Respuesta" variant="outlined" multiline rows={4} value={faqForm.answer} onChange={(e) => setFaqForm({ ...faqForm, answer: e.target.value })} />
+              <TextField
+                label="Título"
+                variant="outlined"
+                value={faqForm.title}
+                onChange={(e) => setFaqForm({ ...faqForm, title: e.target.value })}
+              />
+              <TextField
+                label="Triggers (comma)"
+                variant="outlined"
+                value={faqForm.triggers}
+                onChange={(e) => setFaqForm({ ...faqForm, triggers: e.target.value })}
+              />
+              <TextField
+                className={classes.full}
+                label="Respuesta"
+                variant="outlined"
+                multiline
+                rows={4}
+                value={faqForm.answer}
+                onChange={(e) => setFaqForm({ ...faqForm, answer: e.target.value })}
+              />
               <Box className={classes.full}>
-                <Button color="primary" variant="contained" onClick={createFaqRow}>Crear FAQ</Button>
+                <Button color="primary" variant="contained" onClick={createFaqRow}>
+                  Crear FAQ
+                </Button>
               </Box>
             </Box>
 
@@ -422,9 +495,20 @@ const Bot = () => {
                       <TableCell>{f.id}</TableCell>
                       <TableCell>{f.title || ""}</TableCell>
                       <TableCell>{(f.triggers || []).join(", ")}</TableCell>
-                      <TableCell style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}>{f.answer}</TableCell>
+                      <TableCell
+                        style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}
+                      >
+                        {f.answer}
+                      </TableCell>
                       <TableCell align="right">
-                        <Button size="small" variant="outlined" color="secondary" onClick={() => deleteFaqRow(f.id)}>Eliminar</Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="secondary"
+                          onClick={() => deleteFaqRow(f.id)}
+                        >
+                          Eliminar
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -435,11 +519,31 @@ const Bot = () => {
 
           <TabPanel value={tab} index={3}>
             <Box className={classes.formRow}>
-              <TextField label="Intent" variant="outlined" value={pbForm.intent} onChange={(e) => setPbForm({ ...pbForm, intent: e.target.value })} />
-              <TextField label="Triggers (comma)" variant="outlined" value={pbForm.triggers} onChange={(e) => setPbForm({ ...pbForm, triggers: e.target.value })} />
-              <TextField className={classes.full} label="Template" variant="outlined" multiline rows={5} value={pbForm.template} onChange={(e) => setPbForm({ ...pbForm, template: e.target.value })} />
+              <TextField
+                label="Intent"
+                variant="outlined"
+                value={pbForm.intent}
+                onChange={(e) => setPbForm({ ...pbForm, intent: e.target.value })}
+              />
+              <TextField
+                label="Triggers (comma)"
+                variant="outlined"
+                value={pbForm.triggers}
+                onChange={(e) => setPbForm({ ...pbForm, triggers: e.target.value })}
+              />
+              <TextField
+                className={classes.full}
+                label="Template"
+                variant="outlined"
+                multiline
+                rows={5}
+                value={pbForm.template}
+                onChange={(e) => setPbForm({ ...pbForm, template: e.target.value })}
+              />
               <Box className={classes.full}>
-                <Button color="primary" variant="contained" onClick={createPlaybookRow}>Crear Playbook</Button>
+                <Button color="primary" variant="contained" onClick={createPlaybookRow}>
+                  Crear Playbook
+                </Button>
               </Box>
             </Box>
 
@@ -460,9 +564,20 @@ const Bot = () => {
                       <TableCell>{p.id}</TableCell>
                       <TableCell>{p.intent}</TableCell>
                       <TableCell>{(p.triggers || []).join(", ")}</TableCell>
-                      <TableCell style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}>{p.template}</TableCell>
+                      <TableCell
+                        style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}
+                      >
+                        {p.template}
+                      </TableCell>
                       <TableCell align="right">
-                        <Button size="small" variant="outlined" color="secondary" onClick={() => deletePlaybookRow(p.id)}>Eliminar</Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="secondary"
+                          onClick={() => deletePlaybookRow(p.id)}
+                        >
+                          Eliminar
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -476,12 +591,40 @@ const Bot = () => {
               Ejemplos: sirven como base para futuros upgrades (LLM), y hoy te dejan documentar respuestas ideales por intent.
             </Typography>
             <Box className={classes.formRow}>
-              <TextField label="Intent" variant="outlined" value={exForm.intent} onChange={(e) => setExForm({ ...exForm, intent: e.target.value })} />
-              <TextField label="Notas" variant="outlined" value={exForm.notes} onChange={(e) => setExForm({ ...exForm, notes: e.target.value })} />
-              <TextField className={classes.full} label="User text" variant="outlined" multiline rows={3} value={exForm.user_text} onChange={(e) => setExForm({ ...exForm, user_text: e.target.value })} />
-              <TextField className={classes.full} label="Ideal answer" variant="outlined" multiline rows={4} value={exForm.ideal_answer} onChange={(e) => setExForm({ ...exForm, ideal_answer: e.target.value })} />
+              <TextField
+                label="Intent"
+                variant="outlined"
+                value={exForm.intent}
+                onChange={(e) => setExForm({ ...exForm, intent: e.target.value })}
+              />
+              <TextField
+                label="Notas"
+                variant="outlined"
+                value={exForm.notes}
+                onChange={(e) => setExForm({ ...exForm, notes: e.target.value })}
+              />
+              <TextField
+                className={classes.full}
+                label="User text"
+                variant="outlined"
+                multiline
+                rows={3}
+                value={exForm.user_text}
+                onChange={(e) => setExForm({ ...exForm, user_text: e.target.value })}
+              />
+              <TextField
+                className={classes.full}
+                label="Ideal answer"
+                variant="outlined"
+                multiline
+                rows={4}
+                value={exForm.ideal_answer}
+                onChange={(e) => setExForm({ ...exForm, ideal_answer: e.target.value })}
+              />
               <Box className={classes.full}>
-                <Button color="primary" variant="contained" onClick={createExampleRow}>Guardar ejemplo</Button>
+                <Button color="primary" variant="contained" onClick={createExampleRow}>
+                  Guardar ejemplo
+                </Button>
               </Box>
             </Box>
 
@@ -501,10 +644,25 @@ const Bot = () => {
                     <TableRow key={x.id}>
                       <TableCell>{x.id}</TableCell>
                       <TableCell>{x.intent}</TableCell>
-                      <TableCell style={{ maxWidth: 280, whiteSpace: "pre-wrap" }}>{x.user_text}</TableCell>
-                      <TableCell style={{ maxWidth: 320, whiteSpace: "pre-wrap" }}>{x.ideal_answer}</TableCell>
+                      <TableCell
+                        style={{ maxWidth: 280, whiteSpace: "pre-wrap" }}
+                      >
+                        {x.user_text}
+                      </TableCell>
+                      <TableCell
+                        style={{ maxWidth: 320, whiteSpace: "pre-wrap" }}
+                      >
+                        {x.ideal_answer}
+                      </TableCell>
                       <TableCell align="right">
-                        <Button size="small" variant="outlined" color="secondary" onClick={() => deleteExampleRow(x.id)}>Eliminar</Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="secondary"
+                          onClick={() => deleteExampleRow(x.id)}
+                        >
+                          Eliminar
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -529,10 +687,14 @@ const Bot = () => {
               <TableBody>
                 {decisionRows.map((d) => (
                   <TableRow key={d.id}>
-                    <TableCell>{String(d.created_at || "").replace("T", " ").slice(0, 19)}</TableCell>
+                    <TableCell>
+                      {String(d.created_at || "").replace("T", " ").slice(0, 19)}
+                    </TableCell>
                     <TableCell>{d.remote_jid}</TableCell>
                     <TableCell>{d.intent || ""}</TableCell>
-                    <TableCell style={{ maxWidth: 520, whiteSpace: "pre-wrap" }}>
+                    <TableCell
+                      style={{ maxWidth: 520, whiteSpace: "pre-wrap" }}
+                    >
                       {JSON.stringify(d.data ?? {}, null, 0)}
                     </TableCell>
                   </TableRow>
@@ -555,18 +717,28 @@ const Bot = () => {
               placeholder="Ej: ¿dónde están? / ¿hacen envíos? / quiero financiación"
             />
             <Box mt={2}>
-              <Button color="primary" variant="contained" onClick={runPlayground}>Ejecutar</Button>
+              <Button color="primary" variant="contained" onClick={runPlayground}>
+                Ejecutar
+              </Button>
             </Box>
             {playgroundResult && (
               <Box mt={2}>
-                <Typography variant="subtitle2">Intent: {playgroundResult.intent}</Typography>
+                <Typography variant="subtitle2">
+                  Intent: {playgroundResult.intent}
+                </Typography>
                 <Typography variant="subtitle2">Fuentes:</Typography>
-                <Typography variant="body2" style={{ whiteSpace: "pre-wrap" }}>
+                <Typography
+                  variant="body2"
+                  style={{ whiteSpace: "pre-wrap" }}
+                >
                   {JSON.stringify(playgroundResult.sources || [], null, 2)}
                 </Typography>
                 <Divider style={{ margin: "12px 0" }} />
                 <Typography variant="subtitle2">Respuesta</Typography>
-                <Typography variant="body1" style={{ whiteSpace: "pre-wrap" }}>
+                <Typography
+                  variant="body1"
+                  style={{ whiteSpace: "pre-wrap" }}
+                >
                   {playgroundResult.reply}
                 </Typography>
               </Box>
@@ -577,17 +749,60 @@ const Bot = () => {
             <Typography variant="body2" gutterBottom>
               Suite básica: casos tipo "si el usuario escribe X, esperamos intent Y / fuente Z".
             </Typography>
-
             <Box className={classes.formRow}>
-              <TextField label="Nombre" variant="outlined" value={tcForm.name} onChange={(e) => setTcForm({ ...tcForm, name: e.target.value })} />
-              <TextField label="Expected intent" variant="outlined" value={tcForm.expected_intent} onChange={(e) => setTcForm({ ...tcForm, expected_intent: e.target.value })} placeholder="faq / policy / stock / none" />
-              <TextField className={classes.full} label="User text" variant="outlined" multiline rows={2} value={tcForm.user_text} onChange={(e) => setTcForm({ ...tcForm, user_text: e.target.value })} />
-              <TextField label="Expected source type" variant="outlined" value={tcForm.expected_source_type} onChange={(e) => setTcForm({ ...tcForm, expected_source_type: e.target.value })} placeholder="policy / faq / playbook" />
-              <TextField label="Expected source id" variant="outlined" value={tcForm.expected_source_id} onChange={(e) => setTcForm({ ...tcForm, expected_source_id: e.target.value })} />
-              <TextField className={classes.full} label="Expected contains (comma)" variant="outlined" value={tcForm.expected_contains} onChange={(e) => setTcForm({ ...tcForm, expected_contains: e.target.value })} />
+              <TextField
+                label="Nombre"
+                variant="outlined"
+                value={tcForm.name}
+                onChange={(e) => setTcForm({ ...tcForm, name: e.target.value })}
+              />
+              <TextField
+                label="Expected intent"
+                variant="outlined"
+                value={tcForm.expected_intent}
+                onChange={(e) => setTcForm({ ...tcForm, expected_intent: e.target.value })}
+                placeholder="faq / policy / stock / none"
+              />
+              <TextField
+                className={classes.full}
+                label="User text"
+                variant="outlined"
+                multiline
+                rows={2}
+                value={tcForm.user_text}
+                onChange={(e) => setTcForm({ ...tcForm, user_text: e.target.value })}
+              />
+              <TextField
+                label="Expected source type"
+                variant="outlined"
+                value={tcForm.expected_source_type}
+                onChange={(e) => setTcForm({ ...tcForm, expected_source_type: e.target.value })}
+                placeholder="policy / faq / playbook"
+              />
+              <TextField
+                label="Expected source id"
+                variant="outlined"
+                value={tcForm.expected_source_id}
+                onChange={(e) => setTcForm({ ...tcForm, expected_source_id: e.target.value })}
+              />
+              <TextField
+                className={classes.full}
+                label="Expected contains (comma)"
+                variant="outlined"
+                value={tcForm.expected_contains}
+                onChange={(e) => setTcForm({ ...tcForm, expected_contains: e.target.value })}
+              />
               <Box className={classes.full}>
-                <Button color="primary" variant="contained" onClick={createTestCaseRow}>Crear test case</Button>
-                <Button style={{ marginLeft: 8 }} variant="outlined" onClick={runTests}>Run suite</Button>
+                <Button color="primary" variant="contained" onClick={createTestCaseRow}>
+                  Crear test case
+                </Button>
+                <Button
+                  style={{ marginLeft: 8 }}
+                  variant="outlined"
+                  onClick={runTests}
+                >
+                  Run suite
+                </Button>
               </Box>
             </Box>
 
@@ -607,12 +822,36 @@ const Bot = () => {
                     <TableRow key={tc.id}>
                       <TableCell>{tc.id}</TableCell>
                       <TableCell>{tc.name}</TableCell>
-                      <TableCell style={{ maxWidth: 320, whiteSpace: "pre-wrap" }}>{tc.user_text}</TableCell>
-                      <TableCell style={{ maxWidth: 340, whiteSpace: "pre-wrap" }}>
-                        {JSON.stringify({ intent: tc.expected_intent, source: { type: tc.expected_source_type, id: tc.expected_source_id }, contains: tc.expected_contains }, null, 0)}
+                      <TableCell
+                        style={{ maxWidth: 320, whiteSpace: "pre-wrap" }}
+                      >
+                        {tc.user_text}
+                      </TableCell>
+                      <TableCell
+                        style={{ maxWidth: 340, whiteSpace: "pre-wrap" }}
+                      >
+                        {JSON.stringify(
+                          {
+                            intent: tc.expected_intent,
+                            source: {
+                              type: tc.expected_source_type,
+                              id: tc.expected_source_id,
+                            },
+                            contains: tc.expected_contains,
+                          },
+                          null,
+                          0
+                        )}
                       </TableCell>
                       <TableCell align="right">
-                        <Button size="small" variant="outlined" color="secondary" onClick={() => deleteTestCaseRow(tc.id)}>Eliminar</Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="secondary"
+                          onClick={() => deleteTestCaseRow(tc.id)}
+                        >
+                          Eliminar
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -640,10 +879,20 @@ const Bot = () => {
                         <TableRow key={r.id}>
                           <TableCell>{r.pass ? "✅" : "❌"}</TableCell>
                           <TableCell>{r.name}</TableCell>
-                          <TableCell style={{ maxWidth: 380, whiteSpace: "pre-wrap" }}>
-                            {JSON.stringify({ intent: r.actual_intent, sources: r.actual_sources }, null, 0)}
+                          <TableCell
+                            style={{ maxWidth: 380, whiteSpace: "pre-wrap" }}
+                          >
+                            {JSON.stringify(
+                              { intent: r.actual_intent, sources: r.actual_sources },
+                              null,
+                              0
+                            )}
                           </TableCell>
-                          <TableCell style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}>{(r.reasons || []).join("\n")}</TableCell>
+                          <TableCell
+                            style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}
+                          >
+                            {(r.reasons || []).join("\n")}
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

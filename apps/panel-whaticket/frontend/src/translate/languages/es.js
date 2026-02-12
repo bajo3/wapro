@@ -457,12 +457,12 @@ const messages = {
         resolveWithoutFarewell: "Resolver sin despedida",
         return: "Devolver",
         postpone: "Posponer",
-        selectMessages: "Seleccionar mensajes",
-        markAsUnread: "Marcar como no leído",
         contactDetails: "Detalles de contacto",
-        contactReason: "Motivos del contacto",
         keep: "Mantener conmigo",
+        // When the bot is currently on for a ticket, show this label to turn it off.
         turnOffBot: "Apagar Bot",
+        // When the bot is currently off for a ticket, show this label to turn it on.
+        turnOnBot: "Prender Bot",
         confirmationModal: {
           title: "¿Borrar ticket #",
           titleFrom: "del contacto ",

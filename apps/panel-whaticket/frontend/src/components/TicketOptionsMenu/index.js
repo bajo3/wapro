@@ -98,10 +98,20 @@ const TicketOptionsMenu = ({
     }
   };
 
-  const handleBotOff = async () => {
+  /**
+   * Toggles the bot mode for this ticket.  If the current mode is
+   * "OFF" then the bot will be turned on (botMode = "ON").
+   * Otherwise the bot will be turned off.  After toggling the bot
+   * state, the menu closes.  Any error will be surfaced via a toast.
+   */
+  const handleToggleBot = async () => {
     handleClose();
     try {
-      await api.put(`/tickets/${ticket.id}/bot-mode`, { botMode: "OFF" });
+      // Determine the next bot mode based on the current ticket.botMode.
+      // If it's off, switch on; otherwise turn off.  Default to ON when
+      // botMode is undefined to avoid always turning off.
+      const nextMode = ticket?.botMode === "OFF" ? "ON" : "OFF";
+      await api.put(`/tickets/${ticket.id}/bot-mode`, { botMode: nextMode });
     } catch (err) {
       toastError(err);
     }
@@ -140,8 +150,11 @@ const TicketOptionsMenu = ({
         <MenuItem onClick={handleKeepWithMe}>
           {i18n.t("ticketOptionsMenu.keep")}
         </MenuItem>
-        <MenuItem onClick={handleBotOff}>
-          {i18n.t("ticketOptionsMenu.turnOffBot")}
+        <MenuItem onClick={handleToggleBot}>
+          {/* Show "turn on" or "turn off" depending on the ticket's current botMode */}
+          {ticket?.botMode === "OFF"
+            ? i18n.t("ticketOptionsMenu.turnOnBot")
+            : i18n.t("ticketOptionsMenu.turnOffBot")}
         </MenuItem>
         <MenuItem onClick={handleOpenTransferModal}>
           {i18n.t("ticketOptionsMenu.transfer")}
