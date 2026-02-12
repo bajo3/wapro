@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useParams, useHistory } from "react-router-dom";
 
 import { toast } from "react-toastify";
@@ -89,6 +89,9 @@ const Ticket = () => {
   const [contact, setContact] = useState({});
   const [ticket, setTicket] = useState({});
 
+  // Keep track of previous bot mode so we can detect hand‑off events
+  const prevBotMode = useRef(null);
+
   useEffect(() => {
     setLoading(true);
     const delayDebounceFn = setTimeout(() => {
@@ -108,6 +111,24 @@ const Ticket = () => {
     }, 500);
     return () => clearTimeout(delayDebounceFn);
   }, [ticketId, history]);
+
+  // When the ticket's botMode changes from ON to HUMAN_ONLY or OFF, show
+  // a notification to the agent.  This helps agents know when the bot
+  // decided to hand the conversation over to a human or was disabled.
+  useEffect(() => {
+    if (!ticket || typeof ticket.botMode === "undefined") return;
+    const currentMode = String(ticket.botMode || "ON").toUpperCase();
+    const previous = prevBotMode.current;
+    // Don't notify on first render
+    if (previous && currentMode !== previous) {
+      if (currentMode === "HUMAN_ONLY") {
+        toast.info("El bot ha derivado la conversación a un asesor humano.");
+      } else if (currentMode === "OFF") {
+        toast.info("El bot está apagado para este ticket.");
+      }
+    }
+    prevBotMode.current = currentMode;
+  }, [ticket?.botMode]);
 
   useEffect(() => {
     const socket = openSocket();

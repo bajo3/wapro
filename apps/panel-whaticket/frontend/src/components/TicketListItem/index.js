@@ -133,21 +133,31 @@ const TicketListItem = ({ ticket }) => {
   }, []);
 
   // Accept the ticket and assign to current user
+  //
+  // Previously this method awaited the API request before navigating to the
+  // ticket page. That caused the UI to feel sluggish and sometimes appear
+  // frozen while waiting for the response.  To improve perceived
+  // performance, we immediately push the agent to the ticket page and let
+  // the API call complete in the background.  Any errors will be shown
+  // via toast notifications, but the agent can start reading the chat
+  // history without delay.
   const handleAcepptTicket = async id => {
     setLoading(true);
+    // Navigate first so the UI updates instantly
+    history.push(`/tickets/${id}`);
     try {
       await api.put(`/tickets/${id}`, {
         status: "open",
         userId: user?.id,
       });
     } catch (err) {
-      setLoading(false);
+      // Inform the user if something went wrong, but stay on the ticket page
       toastError(err);
+    } finally {
+      if (isMounted.current) {
+        setLoading(false);
+      }
     }
-    if (isMounted.current) {
-      setLoading(false);
-    }
-    history.push(`/tickets/${id}`);
   };
 
   const handleSelectTicket = id => {

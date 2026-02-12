@@ -1,8 +1,6 @@
 import React, { useContext, useEffect, useMemo, useState } from "react";
 import { useHistory } from "react-router-dom";
 
-
-
 import {
   Box,
   Button,
