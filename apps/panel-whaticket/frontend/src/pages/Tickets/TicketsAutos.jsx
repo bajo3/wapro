@@ -89,7 +89,7 @@ export default function TicketsAutos() {
 
   return (
     <div className="h-[calc(100%-48px)] w-full bg-auto-surface text-auto-text">
-      <div className="mx-auto flex h-full max-w-[1700px] gap-4 p-4">
+      <div className="mx-auto flex h-full max-w-[1800px] gap-3 p-3">
         {/* Sidebar (hide on mobile when a ticket is selected) */}
         {sidebarVisible && (
           <div
@@ -148,7 +148,7 @@ export default function TicketsAutos() {
 
           <div
             className={clsx(
-              "mt-4 flex min-h-0 flex-1 overflow-hidden rounded-auto-xl border border-auto-border bg-auto-panel shadow-auto-soft"
+              "mt-3 flex min-h-0 flex-1 overflow-hidden rounded-auto-xl border border-auto-border bg-auto-panel shadow-auto-soft"
             )}
           >
             <div className="min-w-0 flex flex-1">
