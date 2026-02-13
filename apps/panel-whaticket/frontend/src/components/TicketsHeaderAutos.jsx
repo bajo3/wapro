@@ -20,6 +20,11 @@ export default function TicketsHeaderAutos({
   filters,
   onClearFilters,
   onRefresh,
+  sidebarVisible,
+  onToggleSidebar,
+  canShowRight,
+  rightVisible,
+  onToggleRight,
 }) {
   const tabLabel = useMemo(() => {
     return statusTabs.find((t) => t.key === activeTab)?.label || "Tickets";
@@ -46,6 +51,28 @@ export default function TicketsHeaderAutos({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={onToggleSidebar}
+            className="hidden md:inline-flex h-9 items-center gap-2 rounded-auto-md border border-auto-border bg-auto-panel px-3 text-sm text-auto-text hover:bg-auto-panel2"
+            type="button"
+            title={sidebarVisible ? "Ocultar lista" : "Mostrar lista"}
+          >
+            <span className="text-auto-muted">≡</span>
+            <span>{sidebarVisible ? "Lista" : "Lista"}</span>
+          </button>
+
+          {canShowRight && (
+            <button
+              onClick={onToggleRight}
+              className="hidden lg:inline-flex h-9 items-center gap-2 rounded-auto-md border border-auto-border bg-auto-panel px-3 text-sm text-auto-text hover:bg-auto-panel2"
+              type="button"
+              title={rightVisible ? "Ocultar ficha" : "Mostrar ficha"}
+            >
+              <span className="text-auto-muted">▤</span>
+              <span>Ficha</span>
+            </button>
+          )}
+
           <button
             onClick={onRefresh}
             className="h-9 rounded-auto-md border border-auto-border bg-auto-panel px-3 text-sm text-auto-text hover:bg-auto-panel2"

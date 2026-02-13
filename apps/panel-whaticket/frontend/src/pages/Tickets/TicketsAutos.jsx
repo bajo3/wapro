@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useHistory, useParams } from "react-router-dom";
 import clsx from "clsx";
 
@@ -6,6 +6,7 @@ import TicketsSidebarAutos from "../../components/TicketsSidebarAutos";
 import TicketsHeaderAutos from "../../components/TicketsHeaderAutos";
 import Ticket from "../../components/Ticket";
 import LeadPanelAutos from "../../components/LeadPanelAutos";
+import SlideOver from "../../components/SlideOver";
 import api from "../../services/api";
 import toastError from "../../errors/toastError";
 
@@ -25,6 +26,24 @@ export default function TicketsAutos() {
   const [whatsappId, setWhatsappId] = useState("all");
   const [leadSource, setLeadSource] = useState("all");
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // Layout state
+  const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const v = Number(localStorage.getItem("ticketsAutos.sidebarWidth") || 340);
+    return Number.isFinite(v) ? v : 340;
+  });
+  const [rightVisible, setRightVisible] = useState(false); // dock on wide screens if user wants
+  const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
+  const dragRef = useRef({ dragging: false, startX: 0, startW: 340 });
+
+  // Determine when we can reasonably dock the right panel (keep chat roomy on laptops)
+  const [isXL, setIsXL] = useState(() => (typeof window !== "undefined" ? window.innerWidth >= 1536 : false));
+  useEffect(() => {
+    const onResize = () => setIsXL(window.innerWidth >= 1536);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   const activeStatus = useMemo(() => {
     return STATUS_TABS.find((t) => t.key === activeTab)?.status || "pending";
@@ -53,32 +72,75 @@ export default function TicketsAutos() {
 
   const numericTicketId = ticketId ? Number(ticketId) : null;
 
+  const canShowRight = Boolean(numericTicketId);
+
+  const startDrag = (e) => {
+    if (!sidebarVisible) return;
+    dragRef.current = { dragging: true, startX: e.clientX, startW: sidebarWidth };
+    document.body.style.userSelect = "none";
+  };
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!dragRef.current.dragging) return;
+      const dx = e.clientX - dragRef.current.startX;
+      const next = Math.min(520, Math.max(280, dragRef.current.startW + dx));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      if (!dragRef.current.dragging) return;
+      dragRef.current.dragging = false;
+      document.body.style.userSelect = "";
+      localStorage.setItem("ticketsAutos.sidebarWidth", String(sidebarWidth));
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [sidebarWidth]);
+
   return (
     <div className="h-[calc(100%-48px)] w-full bg-auto-surface text-auto-text">
-      <div className="mx-auto flex h-full max-w-[1600px] gap-4 p-4">
+      <div className="mx-auto flex h-full max-w-[1700px] gap-4 p-4">
         {/* Sidebar (hide on mobile when a ticket is selected) */}
-        <div
-          className={clsx(
-            "w-[380px] shrink-0",
-            numericTicketId ? "hidden md:block" : "block"
-          )}
-        >
-          <TicketsSidebarAutos
-            key={refreshKey}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            statusTabs={STATUS_TABS}
-            ticketId={numericTicketId}
-            filters={filters}
-            setSearch={setSearch}
-            setQueueId={setQueueId}
-            setWhatsappId={setWhatsappId}
-            setLeadSource={setLeadSource}
-            onSelectTicket={handleSelectTicket}
-            onAcceptTicket={handleAcceptTicket}
-            activeStatus={activeStatus}
+        {sidebarVisible && (
+          <div
+            className={clsx(
+              "shrink-0",
+              numericTicketId ? "hidden md:block" : "block"
+            )}
+            style={{ width: sidebarWidth }}
+          >
+            <TicketsSidebarAutos
+              key={refreshKey}
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              statusTabs={STATUS_TABS}
+              ticketId={numericTicketId}
+              filters={filters}
+              setSearch={setSearch}
+              setQueueId={setQueueId}
+              setWhatsappId={setWhatsappId}
+              setLeadSource={setLeadSource}
+              onSelectTicket={handleSelectTicket}
+              onAcceptTicket={handleAcceptTicket}
+              activeStatus={activeStatus}
+            />
+          </div>
+        )}
+
+        {/* Drag handle to resize sidebar */}
+        {sidebarVisible && (
+          <div
+            className="hidden md:block w-2 -ml-3 cursor-col-resize"
+            onMouseDown={startDrag}
+            title="Arrastrá para ajustar"
+            role="separator"
+            aria-orientation="vertical"
           />
-        </div>
+        )}
 
         {/* Main panel */}
         <div className="flex min-w-0 flex-1 flex-col">
@@ -94,6 +156,16 @@ export default function TicketsAutos() {
               setRefreshKey((k) => k + 1);
             }}
             onRefresh={onRefresh}
+            sidebarVisible={sidebarVisible}
+            onToggleSidebar={() => setSidebarVisible((v) => !v)}
+            canShowRight={canShowRight}
+            rightVisible={rightVisible}
+            onToggleRight={() => {
+              if (!canShowRight) return;
+              // Prefer drawer on most screens to keep chat wide
+              if (!isXL) return setRightDrawerOpen(true);
+              setRightVisible((v) => !v);
+            }}
           />
 
           <div
@@ -119,9 +191,9 @@ export default function TicketsAutos() {
                 )}
               </div>
 
-              {/* Right panel: lead/auto */}
-              {numericTicketId ? (
-                <div className="hidden lg:block w-[360px] border-l border-auto-border bg-auto-panel">
+              {/* Right panel: dock (XL only) */}
+              {canShowRight && isXL && rightVisible ? (
+                <div className="hidden xl:block w-[380px] border-l border-auto-border bg-auto-panel">
                   <LeadPanelAutos ticketId={numericTicketId} />
                 </div>
               ) : null}
@@ -129,6 +201,15 @@ export default function TicketsAutos() {
           </div>
         </div>
       </div>
+
+      {/* Right panel as drawer (default) */}
+      <SlideOver
+        open={canShowRight && rightDrawerOpen}
+        title="Ficha"
+        onClose={() => setRightDrawerOpen(false)}
+      >
+        {canShowRight ? <LeadPanelAutos ticketId={numericTicketId} /> : null}
+      </SlideOver>
     </div>
   );
 }
