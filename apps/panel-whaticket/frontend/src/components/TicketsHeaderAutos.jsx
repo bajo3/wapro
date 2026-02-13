@@ -22,9 +22,6 @@ export default function TicketsHeaderAutos({
   onRefresh,
   sidebarVisible,
   onToggleSidebar,
-  canShowRight,
-  rightVisible,
-  onToggleRight,
 }) {
   const tabLabel = useMemo(() => {
     return statusTabs.find((t) => t.key === activeTab)?.label || "Tickets";
@@ -40,14 +37,11 @@ export default function TicketsHeaderAutos({
   }, [filters]);
 
   return (
-    <div className="rounded-auto-xl border border-auto-border bg-auto-panel px-5 py-4 shadow-auto-soft">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="text-xs uppercase tracking-wide text-auto-muted">Panel</div>
-          <div className="mt-1 text-lg font-semibold text-auto-text">{tabLabel}</div>
-          <div className="mt-1 text-sm text-auto-muted">
-            Vista optimizada para concesionarias. Orden + velocidad.
-          </div>
+    <div className="rounded-auto-xl border border-auto-border bg-auto-panel px-4 py-3 shadow-auto-soft">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs uppercase tracking-wide text-auto-muted">Tickets</div>
+          <div className="truncate text-base font-semibold text-auto-text">{tabLabel}</div>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
@@ -58,20 +52,8 @@ export default function TicketsHeaderAutos({
             title={sidebarVisible ? "Ocultar lista" : "Mostrar lista"}
           >
             <span className="text-auto-muted">≡</span>
-            <span>{sidebarVisible ? "Lista" : "Lista"}</span>
+            <span>Lista</span>
           </button>
-
-          {canShowRight && (
-            <button
-              onClick={onToggleRight}
-              className="hidden lg:inline-flex h-9 items-center gap-2 rounded-auto-md border border-auto-border bg-auto-panel px-3 text-sm text-auto-text hover:bg-auto-panel2"
-              type="button"
-              title={rightVisible ? "Ocultar ficha" : "Mostrar ficha"}
-            >
-              <span className="text-auto-muted">▤</span>
-              <span>Ficha</span>
-            </button>
-          )}
 
           <button
             onClick={onRefresh}
@@ -85,7 +67,7 @@ export default function TicketsHeaderAutos({
             className="h-9 rounded-auto-md bg-auto-accent px-3 text-sm font-medium text-white hover:opacity-95"
             type="button"
           >
-            Limpiar filtros
+            Limpiar
           </button>
         </div>
       </div>

@@ -5,8 +5,6 @@ import clsx from "clsx";
 import TicketsSidebarAutos from "../../components/TicketsSidebarAutos";
 import TicketsHeaderAutos from "../../components/TicketsHeaderAutos";
 import Ticket from "../../components/Ticket";
-import LeadPanelAutos from "../../components/LeadPanelAutos";
-import SlideOver from "../../components/SlideOver";
 import api from "../../services/api";
 import toastError from "../../errors/toastError";
 
@@ -33,17 +31,7 @@ export default function TicketsAutos() {
     const v = Number(localStorage.getItem("ticketsAutos.sidebarWidth") || 340);
     return Number.isFinite(v) ? v : 340;
   });
-  const [rightVisible, setRightVisible] = useState(false); // dock on wide screens if user wants
-  const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
   const dragRef = useRef({ dragging: false, startX: 0, startW: 340 });
-
-  // Determine when we can reasonably dock the right panel (keep chat roomy on laptops)
-  const [isXL, setIsXL] = useState(() => (typeof window !== "undefined" ? window.innerWidth >= 1536 : false));
-  useEffect(() => {
-    const onResize = () => setIsXL(window.innerWidth >= 1536);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
 
   const activeStatus = useMemo(() => {
     return STATUS_TABS.find((t) => t.key === activeTab)?.status || "pending";
@@ -71,8 +59,6 @@ export default function TicketsAutos() {
   const onRefresh = () => setRefreshKey((k) => k + 1);
 
   const numericTicketId = ticketId ? Number(ticketId) : null;
-
-  const canShowRight = Boolean(numericTicketId);
 
   const startDrag = (e) => {
     if (!sidebarVisible) return;
@@ -158,14 +144,6 @@ export default function TicketsAutos() {
             onRefresh={onRefresh}
             sidebarVisible={sidebarVisible}
             onToggleSidebar={() => setSidebarVisible((v) => !v)}
-            canShowRight={canShowRight}
-            rightVisible={rightVisible}
-            onToggleRight={() => {
-              if (!canShowRight) return;
-              // Prefer drawer on most screens to keep chat wide
-              if (!isXL) return setRightDrawerOpen(true);
-              setRightVisible((v) => !v);
-            }}
           />
 
           <div
@@ -190,26 +168,11 @@ export default function TicketsAutos() {
                   </div>
                 )}
               </div>
-
-              {/* Right panel: dock (XL only) */}
-              {canShowRight && isXL && rightVisible ? (
-                <div className="hidden xl:block w-[380px] border-l border-auto-border bg-auto-panel">
-                  <LeadPanelAutos ticketId={numericTicketId} />
-                </div>
-              ) : null}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Right panel as drawer (default) */}
-      <SlideOver
-        open={canShowRight && rightDrawerOpen}
-        title="Ficha"
-        onClose={() => setRightDrawerOpen(false)}
-      >
-        {canShowRight ? <LeadPanelAutos ticketId={numericTicketId} /> : null}
-      </SlideOver>
     </div>
   );
 }
