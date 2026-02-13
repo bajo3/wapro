@@ -17,6 +17,7 @@ interface Request {
   userId: string;
   withUnreadMessages?: string;
   queueIds: number[];
+  whatsappIds?: number[];
 }
 
 interface Response {
@@ -29,6 +30,7 @@ const ListTicketsService = async ({
   searchParam = "",
   pageNumber = "1",
   queueIds,
+  whatsappIds,
   status,
   date,
   showAll,
@@ -46,6 +48,7 @@ const ListTicketsService = async ({
   };
 
   const queueWhere = buildQueueWhere(queueIds);
+  const whatsappWhere = whatsappIds && whatsappIds.length > 0 ? { [Op.in]: whatsappIds } : undefined;
 
   let whereCondition: Filterable["where"] = {
     [Op.or]: [{ userId }, { status: "pending" }],
@@ -72,13 +75,23 @@ const ListTicketsService = async ({
   ];
 
   if (showAll === "true") {
-    whereCondition = queueWhere ? { queueId: queueWhere } : {};
+    whereCondition = {
+      ...(queueWhere ? { queueId: queueWhere } : {}),
+      ...(whatsappWhere ? { whatsappId: whatsappWhere } : {})
+    };
   }
 
   if (status) {
     whereCondition = {
       ...whereCondition,
       status
+    };
+  }
+
+  if (whatsappWhere && showAll !== "true") {
+    whereCondition = {
+      ...whereCondition,
+      whatsappId: whatsappWhere
     };
   }
 

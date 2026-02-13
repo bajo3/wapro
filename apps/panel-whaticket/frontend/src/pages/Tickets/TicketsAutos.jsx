@@ -5,6 +5,7 @@ import clsx from "clsx";
 import TicketsSidebarAutos from "../../components/TicketsSidebarAutos";
 import TicketsHeaderAutos from "../../components/TicketsHeaderAutos";
 import Ticket from "../../components/Ticket";
+import LeadPanelAutos from "../../components/LeadPanelAutos";
 import api from "../../services/api";
 import toastError from "../../errors/toastError";
 
@@ -100,11 +101,12 @@ export default function TicketsAutos() {
               "mt-4 flex min-h-0 flex-1 overflow-hidden rounded-auto-xl border border-auto-border bg-auto-panel shadow-auto-soft"
             )}
           >
-            <div className="min-w-0 flex-1">
-              {numericTicketId ? (
-                <Ticket />
-              ) : (
-                <div className="flex h-full items-center justify-center p-8">
+            <div className="min-w-0 flex flex-1">
+              <div className="min-w-0 flex-1">
+                {numericTicketId ? (
+                  <Ticket />
+                ) : (
+                  <div className="flex h-full items-center justify-center p-8">
                   <div className="max-w-md text-center">
                     <div className="text-lg font-semibold text-auto-text">
                       Seleccioná un chat
@@ -113,8 +115,16 @@ export default function TicketsAutos() {
                       Usá la lista de la izquierda para abrir un ticket.
                     </div>
                   </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Right panel: lead/auto */}
+              {numericTicketId ? (
+                <div className="hidden lg:block w-[360px] border-l border-auto-border bg-auto-panel">
+                  <LeadPanelAutos ticketId={numericTicketId} />
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         </div>

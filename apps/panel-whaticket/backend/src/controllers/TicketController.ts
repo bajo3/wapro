@@ -19,6 +19,7 @@ type IndexQuery = {
   showAll: string;
   withUnreadMessages: string;
   queueIds: string;
+  whatsappIds: string;
 };
 
 interface TicketData {
@@ -36,12 +37,14 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
     searchParam,
     showAll,
     queueIds: queueIdsStringified,
+    whatsappIds: whatsappIdsStringified,
     withUnreadMessages
   } = req.query as IndexQuery;
 
   const userId = req.user.id;
 
   let queueIds: number[] = [];
+  let whatsappIds: number[] = [];
 
   if (queueIdsStringified) {
     try {
@@ -54,6 +57,15 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
     }
   }
 
+  if (whatsappIdsStringified) {
+    try {
+      whatsappIds = JSON.parse(whatsappIdsStringified);
+      if (!Array.isArray(whatsappIds)) whatsappIds = [];
+    } catch {
+      whatsappIds = [];
+    }
+  }
+
   const { tickets, count, hasMore } = await ListTicketsService({
     searchParam,
     pageNumber,
@@ -62,10 +74,46 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
     showAll,
     userId,
     queueIds,
+    whatsappIds,
     withUnreadMessages
   });
 
   return res.status(200).json({ tickets, count, hasMore });
+};
+
+export const counts = async (req: Request, res: Response): Promise<Response> => {
+  const {
+    showAll,
+    queueIds: queueIdsStringified,
+    whatsappIds: whatsappIdsStringified
+  } = req.query as any;
+
+  const userId = req.user.id;
+
+  let queueIds: number[] = [];
+  let whatsappIds: number[] = [];
+
+  if (queueIdsStringified) {
+    try {
+      queueIds = JSON.parse(queueIdsStringified);
+      if (!Array.isArray(queueIds)) queueIds = [];
+    } catch {
+      queueIds = [];
+    }
+  }
+
+  if (whatsappIdsStringified) {
+    try {
+      whatsappIds = JSON.parse(whatsappIdsStringified);
+      if (!Array.isArray(whatsappIds)) whatsappIds = [];
+    } catch {
+      whatsappIds = [];
+    }
+  }
+
+  const CountTicketsService = (await import("../services/TicketServices/CountTicketsService")).default;
+  const data = await CountTicketsService({ userId, queueIds, whatsappIds, showAll });
+  return res.status(200).json(data);
 };
 
 export const store = async (req: Request, res: Response): Promise<Response> => {

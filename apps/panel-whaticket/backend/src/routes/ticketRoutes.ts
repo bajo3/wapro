@@ -7,6 +7,9 @@ import * as TicketTagsController from "../controllers/TicketTagsController";
 
 const ticketRoutes = express.Router();
 
+// Small/fast endpoint used by the new Tickets UI to render counters.
+ticketRoutes.get("/tickets/counts", isAuth, TicketController.counts);
+
 ticketRoutes.get("/tickets", isAuth, TicketController.index);
 
 ticketRoutes.get("/tickets/:ticketId", isAuth, TicketController.show);

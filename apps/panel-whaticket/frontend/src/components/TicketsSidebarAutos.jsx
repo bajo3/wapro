@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from "react";
+import React, { useContext, useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 
 import api from "../services/api";
@@ -34,8 +34,19 @@ export default function TicketsSidebarAutos({
 
   const [loading, setLoading] = useState(true);
   const [tickets, setTickets] = useState([]);
+  const [counts, setCounts] = useState({ pending: 0, open: 0, closed: 0, total: 0 });
   const [queues, setQueues] = useState([]);
   const [whatsapps, setWhatsapps] = useState([]);
+
+  const queueIdsParam = useMemo(() => {
+    if (filters.queueId === "all") return JSON.stringify([]);
+    return JSON.stringify([Number(filters.queueId)]);
+  }, [filters.queueId]);
+
+  const whatsappIdsParam = useMemo(() => {
+    if (filters.whatsappId === "all") return JSON.stringify([]);
+    return JSON.stringify([Number(filters.whatsappId)]);
+  }, [filters.whatsappId]);
 
   // Metadata for selects
   useEffect(() => {
@@ -59,6 +70,36 @@ export default function TicketsSidebarAutos({
     };
   }, []);
 
+  // Tab counters
+  useEffect(() => {
+    let mounted = true;
+
+    const run = async () => {
+      try {
+        const { data } = await api.get("/tickets/counts", {
+          params: {
+            queueIds: queueIdsParam,
+            whatsappIds: whatsappIdsParam,
+          },
+        });
+        if (!mounted) return;
+        setCounts({
+          pending: Number(data?.pending || 0),
+          open: Number(data?.open || 0),
+          closed: Number(data?.closed || 0),
+          total: Number(data?.total || 0),
+        });
+      } catch (err) {
+        // counts are non-critical
+      }
+    };
+
+    run();
+    return () => {
+      mounted = false;
+    };
+  }, [queueIdsParam, whatsappIdsParam]);
+
   // Tickets list
   useEffect(() => {
     let mounted = true;
@@ -70,9 +111,8 @@ export default function TicketsSidebarAutos({
           params: {
             status: activeStatus,
             searchParam: filters.search || undefined,
-            queueIds: filters.queueId !== "all" ? [filters.queueId] : undefined,
-            whatsappIds:
-              filters.whatsappId !== "all" ? [filters.whatsappId] : undefined,
+            queueIds: queueIdsParam,
+            whatsappIds: whatsappIdsParam,
           },
         });
 
@@ -95,7 +135,16 @@ export default function TicketsSidebarAutos({
     return () => {
       mounted = false;
     };
-  }, [activeStatus, filters.search, filters.queueId, filters.whatsappId]);
+  }, [activeStatus, filters.search, queueIdsParam, whatsappIdsParam]);
+
+  const visibleTickets = useMemo(() => {
+    if (filters.leadSource === "all") return tickets;
+    const target = String(filters.leadSource).toUpperCase();
+    return tickets.filter((t) => {
+      const ls = String(t?.contact?.leadSource || "").toUpperCase();
+      return ls === target;
+    });
+  }, [tickets, filters.leadSource]);
 
   return (
     <div className="flex h-full flex-col rounded-auto-xl border border-auto-border bg-auto-panel shadow-auto-soft">
@@ -109,6 +158,7 @@ export default function TicketsSidebarAutos({
       <div className="grid grid-cols-3 gap-2 border-b border-auto-border p-3">
         {statusTabs.map((t) => {
           const isActive = t.key === activeTab;
+          const n = t.status === "pending" ? counts.pending : t.status === "open" ? counts.open : counts.closed;
           return (
             <button
               key={t.key}
@@ -121,7 +171,17 @@ export default function TicketsSidebarAutos({
               )}
               type="button"
             >
-              {t.label}
+              <span className="flex items-center justify-center gap-2">
+                <span>{t.label}</span>
+                <span
+                  className={clsx(
+                    "inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[11px]",
+                    isActive ? "bg-white/20 text-white" : "bg-auto-panel2 text-auto-muted"
+                  )}
+                >
+                  {n}
+                </span>
+              </span>
             </button>
           );
         })}
@@ -176,13 +236,13 @@ export default function TicketsSidebarAutos({
               />
             ))}
           </div>
-        ) : tickets.length === 0 ? (
+        ) : visibleTickets.length === 0 ? (
           <div className="p-6 text-center text-sm text-auto-muted">
             No hay tickets en esta vista.
           </div>
         ) : (
           <div className="space-y-2">
-            {tickets.map((t) => (
+            {visibleTickets.map((t) => (
               <TicketListItemTailwind
                 key={t.id}
                 ticket={t}
