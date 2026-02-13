@@ -1,0 +1,222 @@
+version: '3.8'
+
+services:
+  # Base de datos PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    container_name: wapro-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-wapro}
+      POSTGRES_USER: ${POSTGRES_USER:-wapro}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wapro123}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wapro}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wapro-network
+
+  # Redis para caching y rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: wapro-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wapro-network
+
+  # Evolution API
+  evolution-api:
+    build:
+      context: ./apps/evolution-api
+      dockerfile: Dockerfile
+    container_name: wapro-evolution-api
+    restart: unless-stopped
+    ports:
+      - "${EVOLUTION_PORT:-8080}:8080"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-wapro}:${POSTGRES_PASSWORD:-wapro123}@postgres:5432/${POSTGRES_DB:-wapro}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis123}@redis:6379
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
+      - PORT=8080
+    volumes:
+      - ./apps/evolution-api:/app
+      - evolution_instances:/app/instances
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - wapro-network
+
+  # Panel Backend
+  panel-backend:
+    build:
+      context: ./apps/panel-whaticket/backend
+      dockerfile: Dockerfile
+    container_name: wapro-panel-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=development
+      - DB_DIALECT=postgres
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=${POSTGRES_USER:-wapro}
+      - DB_PASS=${POSTGRES_PASSWORD:-wapro123}
+      - DB_NAME=${POSTGRES_DB:-wapro}
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-your-refresh-secret-change-in-production}
+      - BACKEND_URL=http://localhost:3000
+      - FRONTEND_URL=http://localhost:3001
+      - REDIS_URI=redis://:${REDIS_PASSWORD:-redis123}@redis:6379
+      - PORT=3000
+    volumes:
+      - ./apps/panel-whaticket/backend:/app
+      - panel_public:/app/public
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - wapro-network
+
+  # Panel Frontend
+  panel-frontend:
+    build:
+      context: ./apps/panel-whaticket/frontend
+      dockerfile: Dockerfile
+    container_name: wapro-panel-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3001}:80"
+    environment:
+      - REACT_APP_BACKEND_URL=http://localhost:3000
+      - REACT_APP_HOURS_CLOSE_TICKETS_AUTO=
+    volumes:
+      - ./apps/panel-whaticket/frontend:/app
+      - /app/node_modules
+    depends_on:
+      - panel-backend
+    networks:
+      - wapro-network
+
+  # Bot Service
+  bot:
+    build:
+      context: ./apps/bot
+      dockerfile: Dockerfile
+    container_name: wapro-bot
+    restart: unless-stopped
+    ports:
+      - "${BOT_PORT:-3002}:3002"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-wapro}:${POSTGRES_PASSWORD:-wapro123}@postgres:5432/${POSTGRES_DB:-wapro}
+      - EVOLUTION_API_URL=http://evolution-api:8080
+      - PORT=3002
+    volumes:
+      - ./apps/bot:/app
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      evolution-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - wapro-network
+
+  # Evolution Manager (opcional)
+  evolution-manager:
+    build:
+      context: ./apps/evolution-manager
+      dockerfile: Dockerfile
+    container_name: wapro-evolution-manager
+    restart: unless-stopped
+    ports:
+      - "${MANAGER_PORT:-3003}:3003"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-wapro}:${POSTGRES_PASSWORD:-wapro123}@postgres:5432/${POSTGRES_DB:-wapro}
+      - PORT=3003
+    volumes:
+      - ./apps/evolution-manager:/app
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - wapro-network
+
+  # Gateway Meta (opcional)
+  gateway-meta:
+    build:
+      context: ./apps/gateway-meta
+      dockerfile: Dockerfile
+    container_name: wapro-gateway-meta
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-3004}:3004"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-wapro}:${POSTGRES_PASSWORD:-wapro123}@postgres:5432/${POSTGRES_DB:-wapro}
+      - PORT=3004
+    volumes:
+      - ./apps/gateway-meta:/app
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - wapro-network
+
+networks:
+  wapro-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  evolution_instances:
+    driver: local
+  panel_public:
+    driver: local

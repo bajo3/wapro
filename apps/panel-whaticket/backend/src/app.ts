@@ -10,6 +10,7 @@ import "./database";
 import uploadConfig from "./config/upload";
 import AppError from "./errors/AppError";
 import routes from "./routes";
+import { generalLimiter } from "./middleware/rateLimiter";
 import { logger } from "./utils/logger";
 
 Sentry.init({ dsn: process.env.SENTRY_DSN });
@@ -44,6 +45,7 @@ app.use(
 );
 app.use(cookieParser());
 app.use(express.json());
+app.use(generalLimiter);
 app.use(Sentry.Handlers.requestHandler());
 app.use("/public", express.static(uploadConfig.directory));
 app.use(routes);
