@@ -1,125 +1,140 @@
 import React from "react";
+const cn = (...classes) => classes.filter(Boolean).join(" ");
 import { format, isSameDay, parseISO } from "date-fns";
 
 /**
- * A clean, tailwind‑only implementation of a ticket list item.  This
- * component eschews Material UI entirely in favour of semantic HTML
- * wrapped with utility classes.  It is designed with car dealerships
- * in mind: dark neutrals, spacious padding and bold accents.  The
- * vertical bar on the left reflects the queue colour; if none is
- * provided a default accent colour is used.
+ * Tailwind-only ticket list item (Autos theme).
  *
- * Props:
- *  - ticket: the ticket object with at least id, status, contact,
- *    lastMessage, unreadMessages, queue and updatedAt fields.
- *  - onSelect: callback when the ticket is selected (clicked) and the
- *    status is not pending.
- *  - onAccept: callback when the accept button is clicked; only
- *    displayed when ticket.status === 'pending'.
+ * Props
+ * - ticket: ticket object from backend
+ * - isSelected: boolean
+ * - onSelect(id)
+ * - onAccept(id)
  */
-const TicketListItemTailwind = ({ ticket, onSelect, onAccept }) => {
-  const handleClick = () => {
-    if (ticket.status === "pending") return;
-    onSelect?.(ticket.id);
-  };
-
-  const handleAccept = (e) => {
-    e.stopPropagation();
-    onAccept?.(ticket.id);
-  };
-
-  // Format the timestamp: if updated today show HH:mm, else show DD/MM/YYYY.
-  const updatedAt = ticket?.updatedAt ? parseISO(ticket.updatedAt) : null;
-  const formattedDate = updatedAt
-    ? isSameDay(updatedAt, new Date())
-      ? format(updatedAt, "HH:mm")
-      : format(updatedAt, "dd/MM/yyyy")
+export default function TicketListItemTailwind({
+  ticket,
+  isSelected,
+  onSelect,
+  onAccept,
+}) {
+  const lastAt = ticket?.updatedAt ? parseISO(ticket.updatedAt) : null;
+  const lastLabel = lastAt
+    ? isSameDay(lastAt, new Date())
+      ? format(lastAt, "HH:mm")
+      : format(lastAt, "dd/MM/yyyy")
     : "";
 
-  const queueColour = ticket?.queue?.color || undefined;
-  const leadSource = ticket?.contact?.leadSource;
-  const botMode = String(ticket?.botMode || "ON").toUpperCase();
+  const queueColor = ticket?.queue?.color || "#64748b";
+  const isPending = String(ticket?.status || "").toLowerCase() === "pending";
+  const unread = Number(ticket?.unreadMessages || 0);
+
+  const leadSource = ticket?.contact?.leadSource
+    ? String(ticket.contact.leadSource).toUpperCase()
+    : null;
+  const botHumanOnly =
+    String(ticket?.botMode || "ON").toUpperCase() === "HUMAN_ONLY";
+  const waName = ticket?.whatsapp?.name || null;
 
   return (
     <div
-      className={`relative flex items-start p-4 cursor-pointer rounded-lg border border-auto-background bg-auto-surface shadow-ticket-soft hover:shadow-ticket transition-shadow duration-150 ${
-        ticket.status === "pending" ? "opacity-80" : ""
-      }`}
-      onClick={handleClick}
+      className={cn(
+        "group relative overflow-hidden rounded-auto-lg border border-auto-border bg-auto-panel2",
+        "transition hover:bg-auto-panel",
+        isSelected && "ring-2 ring-auto-accent/40"
+      )}
     >
-      {/* Vertical coloured bar indicating the queue */}
+      {/* Queue color rail */}
       <span
-        className="absolute left-0 top-0 h-full w-1 rounded-l-lg"
-        style={{ backgroundColor: queueColour || "#ef4444" }}
-      ></span>
-      {/* Avatar */}
-      <img
-        src={ticket?.contact?.profilePicUrl || "/anon.png"}
-        alt={ticket?.contact?.name || "Sin nombre"}
-        className="mr-4 h-10 w-10 flex-shrink-0 rounded-full object-cover"
+        className="absolute left-0 top-0 h-full w-1.5"
+        style={{ backgroundColor: queueColor }}
+        aria-hidden="true"
       />
-      {/* Main content */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between">
-          <h3 className="truncate text-base font-medium text-auto-primary">
-            {ticket?.contact?.name || "Sin nombre"}
-          </h3>
-          {formattedDate && (
-            <span className="ml-2 whitespace-nowrap text-xs font-normal text-auto-secondary">
-              {formattedDate}
-            </span>
-          )}
+
+      <button
+        type="button"
+        onClick={() => !isPending && onSelect?.(ticket.id)}
+        className={cn(
+          "flex w-full gap-3 p-3 text-left",
+          isPending ? "cursor-default" : "cursor-pointer"
+        )}
+      >
+        {/* Avatar */}
+        <div className="shrink-0">
+          <div className="h-10 w-10 overflow-hidden rounded-full border border-auto-border bg-auto-panel">
+            {ticket?.contact?.profilePicUrl ? (
+              <img
+                src={ticket.contact.profilePicUrl}
+                alt={ticket?.contact?.name || "Contacto"}
+                className="h-full w-full object-cover"
+                loading="lazy"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-xs font-semibold text-auto-muted">
+                {(ticket?.contact?.name || "?")
+                  .trim()
+                  .slice(0, 2)
+                  .toUpperCase()}
+              </div>
+            )}
+          </div>
         </div>
-        <div className="mt-1 flex items-baseline justify-between space-x-2">
-          <p className="truncate text-sm text-auto-secondary flex-1">
-            {ticket?.lastMessage || <span className="italic text-auto-muted">(sin mensaje)</span>}
-          </p>
-          {/* Unread messages badge */}
-          {ticket?.unreadMessages > 0 && (
-            <span className="ml-2 inline-flex items-center justify-center rounded-full bg-auto-accent px-2 py-0.5 text-xs font-semibold text-auto-surface">
-              {ticket.unreadMessages}
-            </span>
-          )}
+
+        {/* Content */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-auto-text">
+                {ticket?.contact?.name || "(Sin nombre)"}
+              </div>
+              <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                {leadSource && (
+                  <span className="rounded-full border border-auto-border bg-auto-panel px-2 py-0.5 text-[11px] text-auto-text">
+                    {leadSource}
+                  </span>
+                )}
+                {botHumanOnly && (
+                  <span className="rounded-full border border-auto-border bg-auto-panel px-2 py-0.5 text-[11px] text-auto-text">
+                    HUMANO
+                  </span>
+                )}
+                {waName && (
+                  <span className="rounded-full border border-auto-border bg-auto-panel px-2 py-0.5 text-[11px] text-auto-muted">
+                    {waName}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="shrink-0 text-xs text-auto-muted">{lastLabel}</div>
+          </div>
+
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1 truncate text-sm text-auto-muted">
+              {ticket?.lastMessage || ""}
+            </div>
+
+            {unread > 0 && (
+              <div className="shrink-0 rounded-full bg-auto-open px-2 py-0.5 text-xs font-semibold text-black">
+                {unread}
+              </div>
+            )}
+          </div>
         </div>
-        {/* Additional badges for lead source, bot mode and whatsapp name */}
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {leadSource && (
-            <span
-              className="inline-block rounded-full border border-auto-background bg-auto-accent px-2 py-0.5 text-[10px] font-semibold uppercase text-auto-surface"
-              title="Lead source"
-            >
-              {String(leadSource).toUpperCase()}
-            </span>
-          )}
-          {botMode === "HUMAN_ONLY" && (
-            <span
-              className="inline-block rounded-full border border-auto-background bg-auto-accent px-2 py-0.5 text-[10px] font-semibold uppercase text-auto-surface"
-              title="Derivado a humano"
-            >
-              HUMANO
-            </span>
-          )}
-          {ticket?.whatsappId && (
-            <span
-              className="inline-block rounded-full border border-auto-background bg-auto-accent px-2 py-0.5 text-[10px] font-semibold uppercase text-auto-surface"
-              title="Conexión"
-            >
-              {ticket.whatsapp?.name || "WhatsApp"}
-            </span>
-          )}
+      </button>
+
+      {/* Accept button overlay (pending only) */}
+      {isPending && (
+        <div className="absolute inset-y-0 right-0 flex items-center pr-3">
+          <button
+            type="button"
+            onClick={() => onAccept?.(ticket.id)}
+            className="h-9 rounded-auto-md bg-auto-open px-3 text-sm font-semibold text-black hover:opacity-95"
+          >
+            Aceptar
+          </button>
         </div>
-      </div>
-      {/* Accept button for pending tickets */}
-      {ticket.status === "pending" && (
-        <button
-          onClick={handleAccept}
-          className="ml-4 self-center rounded-md bg-auto-open px-3 py-1 text-xs font-medium text-auto-surface shadow-sm hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
-        >
-          Aceptar
-        </button>
       )}
     </div>
   );
-};
-
-export default TicketListItemTailwind;
+}
