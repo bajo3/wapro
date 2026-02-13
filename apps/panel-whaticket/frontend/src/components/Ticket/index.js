@@ -14,6 +14,7 @@ import TicketInfo from "../TicketInfo";
 // NOTE: use our enhanced TicketActionButtons component that accepts onOpenContact
 import TicketActionButtons from "../TicketActionButtons";
 import MessagesList from "../MessagesList";
+import ImprovedTicketChat from "../ImprovedTicketChat";
 import api from "../../services/api";
 import { ReplyMessageProvider } from "../../context/ReplyingMessage/ReplyingMessageContext";
 import toastError from "../../errors/toastError";
@@ -85,6 +86,7 @@ const Ticket = () => {
   const classes = useStyles();
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [proView, setProView] = useState(true);
   const [loading, setLoading] = useState(true);
   const [contact, setContact] = useState({});
   const [ticket, setTicket] = useState({});
@@ -199,15 +201,41 @@ const Ticket = () => {
           </div>
           <div className={classes.ticketActionButtons}>
             {/* Provide handleDrawerOpen to TicketActionButtons via onOpenContact prop */}
-            <TicketActionButtons ticket={ticket} onOpenContact={handleDrawerOpen} />
+            <div style={{ display: "flex", gap: 8, alignItems: "center", width: "100%" }}>
+              <TicketActionButtons ticket={ticket} onOpenContact={handleDrawerOpen} />
+              <button
+                type="button"
+                onClick={() => setProView((v) => !v)}
+                style={{
+                  whiteSpace: "nowrap",
+                  border: "1px solid rgba(0,0,0,0.12)",
+                  borderRadius: 999,
+                  padding: "6px 10px",
+                  fontSize: 12,
+                  background: proView ? "#111827" : "#fff",
+                  color: proView ? "#fff" : "#111827",
+                }}
+                title="Alternar vista pro"
+              >
+                {proView ? "Vista pro" : "Vista clásica"}
+              </button>
+            </div>
           </div>
         </TicketHeader>
         <ReplyMessageProvider>
-          <MessagesList
-            ticketId={ticketId}
-            isGroup={ticket.isGroup}
-          ></MessagesList>
-          <MessageInput ticketStatus={ticket.status} />
+          {proView ? (
+            <ImprovedTicketChat
+              ticketId={ticketId}
+              ticket={ticket}
+              contact={contact}
+              onOpenContact={handleDrawerOpen}
+            />
+          ) : (
+            <>
+              <MessagesList ticketId={ticketId} isGroup={ticket.isGroup} />
+              <MessageInput ticketStatus={ticket.status} />
+            </>
+          )}
         </ReplyMessageProvider>
       </Paper>
       <ContactDrawer

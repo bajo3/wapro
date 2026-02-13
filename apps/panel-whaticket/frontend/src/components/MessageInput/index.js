@@ -226,6 +226,20 @@ const MessageInput = ({ ticketStatus }) => {
   const [typeBar, setTypeBar] = useState(false);
   const inputRef = useRef();
   const [anchorEl, setAnchorEl] = useState(null);
+
+  // Allow other components (e.g. ImprovedTicketChat quick replies) to prefill the input
+  useEffect(() => {
+    const onPrefill = (e) => {
+      const text = e?.detail?.text;
+      if (typeof text === "string" && text.length) {
+        setInputMessage(text);
+        // keep focus for fast sending
+        setTimeout(() => inputRef.current?.focus?.(), 0);
+      }
+    };
+    window.addEventListener("tickets:prefill", onPrefill);
+    return () => window.removeEventListener("tickets:prefill", onPrefill);
+  }, []);
   const { setReplyingMessage, replyingMessage } =
     useContext(ReplyMessageContext);
   const { user } = useContext(AuthContext);

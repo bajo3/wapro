@@ -16,6 +16,7 @@
     "formik": "^2.2.0",
     "i18next": "^19.8.2",
     "i18next-browser-languagedetector": "^6.0.1",
+    "lucide-react": "^0.536.0",
     "markdown-to-jsx": "^7.1.0",
     "mic-recorder-to-mp3": "^2.2.2",
     "qrcode.react": "^1.0.0",
