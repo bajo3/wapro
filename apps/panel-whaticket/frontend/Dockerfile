@@ -4,6 +4,8 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 RUN npm install
 COPY .env* ./
+COPY tailwind.config.js ./
+COPY postcss.config.js ./
 COPY src/ ./src/
 COPY public/ ./public/
 COPY index.html ./
