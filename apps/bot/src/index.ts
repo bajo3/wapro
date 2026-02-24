@@ -17,6 +17,7 @@ import { getSocket } from "./services/socket.js";
 import { setState } from "./services/state.js";
 import { getConversationRule } from "./services/rules.js";
 import { getContactRule } from "./services/contacts.js";
+import { scanRecentVehiclesForDemandMatches, runRecontactJob } from "./services/demands.js";
 
 async function main() {
   await migrate();
@@ -139,6 +140,35 @@ async function main() {
       console.error('Failed follow-up job', err);
     }
   }, 60 * 60 * 1000);
+
+  // Vehicle demand scan: match recent stock updates against saved demands.
+  // Default: every 5 minutes, scan vehicles updated in the last 10 minutes.
+  const DEMAND_SCAN_MS = Number(process.env.DEMAND_SCAN_MS ?? String(5 * 60 * 1000));
+  const DEMAND_SCAN_LOOKBACK_MIN = Number(process.env.DEMAND_SCAN_LOOKBACK_MIN ?? '10');
+  const DEMAND_MATCH_THRESHOLD = Number(process.env.DEMAND_MATCH_THRESHOLD ?? '0.62');
+
+  setInterval(async () => {
+    try {
+      const since = new Date(Date.now() - Math.max(1, DEMAND_SCAN_LOOKBACK_MIN) * 60_000);
+      const result = await scanRecentVehiclesForDemandMatches({ since, threshold: DEMAND_MATCH_THRESHOLD });
+      const io = getSocket();
+      io?.emit('vehicle_demand_scan', { ok: true, since: since.toISOString(), ...result });
+    } catch (e) {
+      console.error('Failed vehicle demand scan', e);
+    }
+  }, Math.max(60_000, DEMAND_SCAN_MS));
+
+  // Recontact job: ping clients periodically while demand is open.
+  const RECONTACT_SCAN_MS = Number(process.env.RECONTACT_SCAN_MS ?? String(10 * 60 * 1000));
+  setInterval(async () => {
+    try {
+      const r = await runRecontactJob();
+      const io = getSocket();
+      io?.emit('vehicle_demand_recontact', { ok: true, ...r });
+    } catch (e) {
+      console.error('Failed recontact job', e);
+    }
+  }, Math.max(60_000, RECONTACT_SCAN_MS));
 }
 
 main().catch((e) => {

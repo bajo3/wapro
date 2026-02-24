@@ -11,6 +11,7 @@ import Connections from "../pages/Connections/";
 import Settings from "../pages/Settings/";
 import Users from "../pages/Users";
 import Contacts from "../pages/Contacts/";
+import Demands from "../pages/Contacts/Demands";
 import QuickAnswers from "../pages/QuickAnswers/";
 import Bot from "../pages/Bot/";
 import Queues from "../pages/Queues/";
@@ -36,6 +37,7 @@ const Routes = () => {
                 <Route exact path="/tickets/:ticketId?" component={Tickets} isPrivate />
                 <Route exact path="/connections" component={Connections} isPrivate />
                 <Route exact path="/contacts" component={Contacts} isPrivate />
+                <Route exact path="/contacts/demands" component={Demands} isPrivate />
                 <Route exact path="/users" component={Users} isPrivate />
                 <Route exact path="/quickAnswers" component={QuickAnswers} isPrivate />
                 <Route exact path="/bot" component={Bot} isPrivate />

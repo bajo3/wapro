@@ -13,6 +13,7 @@ import SyncAltIcon from "@material-ui/icons/SyncAlt";
 import SettingsOutlinedIcon from "@material-ui/icons/SettingsOutlined";
 import PeopleAltOutlinedIcon from "@material-ui/icons/PeopleAltOutlined";
 import ContactPhoneOutlinedIcon from "@material-ui/icons/ContactPhoneOutlined";
+import PlaylistAddCheckOutlinedIcon from "@material-ui/icons/PlaylistAddCheckOutlined";
 import AccountTreeOutlinedIcon from "@material-ui/icons/AccountTreeOutlined";
 import QuestionAnswerOutlinedIcon from "@material-ui/icons/QuestionAnswerOutlined";
 import DescriptionOutlinedIcon from "@material-ui/icons/DescriptionOutlined";
@@ -101,6 +102,17 @@ const MainListItems = (props) => {
         to="/contacts"
         primary={i18n.t("mainDrawer.listItems.contacts")}
         icon={<ContactPhoneOutlinedIcon />}
+      />
+      <Can
+        role={user.profile}
+        perform="drawer-admin-items:view"
+        yes={() => (
+          <ListItemLink
+            to="/contacts/demands"
+            primary="Demandas"
+            icon={<PlaylistAddCheckOutlinedIcon />}
+          />
+        )}
       />
       <ListItemLink
         to="/quickAnswers"

@@ -49,6 +49,16 @@ import { runPlayground } from '../services/playground.js';
 import { listTestCases, createTestCase, deleteTestCase } from '../services/intelligence.js';
 import { runTestSuite } from '../services/tests.js';
 
+import {
+  createVehicleDemand,
+  listVehicleDemands,
+  updateVehicleDemand,
+  closeVehicleDemand,
+  listDemandMatches,
+  scanRecentVehiclesForDemandMatches,
+  runRecontactJob
+} from '../services/demands.js';
+
 export const adminRouter = Router();
 
 function requireAdmin(req: any, res: any, next: any) {
@@ -221,6 +231,112 @@ adminRouter.delete('/conversation-rules/:instance/:remoteJid', async (req, res) 
   try {
     await deleteConversationRule(instance, remoteJid);
     return res.json({ ok: true });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+/**
+ * Vehicle Demands ("avisame si entra algo parecido")
+ */
+
+adminRouter.get('/vehicle-demands', async (req, res) => {
+  try {
+    const status = String(req.query.status ?? 'open') as any;
+    const limit = Number(req.query.limit ?? 100);
+    const demands = await listVehicleDemands({ status, limit });
+    return res.json({ ok: true, demands });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.post('/vehicle-demands', async (req, res) => {
+  const query = String(req.body?.query ?? '').trim();
+  if (!query) return res.status(400).json({ ok: false, message: 'query required' });
+  try {
+    const demand = await createVehicleDemand({
+      instance: req.body?.instance,
+      remoteJid: req.body?.remoteJid,
+      contactName: req.body?.contactName,
+      phone: req.body?.phone,
+      query,
+      brand: req.body?.brand,
+      model: req.body?.model,
+      year: req.body?.year,
+      minYear: req.body?.minYear,
+      maxYear: req.body?.maxYear,
+      maxPrice: req.body?.maxPrice,
+      currency: req.body?.currency,
+      transmission: req.body?.transmission,
+      notifyOnMatch: req.body?.notifyOnMatch,
+      notifyMinScore: req.body?.notifyMinScore,
+      notifyCooldownMin: req.body?.notifyCooldownMin,
+      matchTemplate: req.body?.matchTemplate,
+      recontactEnabled: req.body?.recontactEnabled,
+      recontactEveryDays: req.body?.recontactEveryDays,
+      recontactMax: req.body?.recontactMax,
+      recontactTemplate: req.body?.recontactTemplate
+    });
+    return res.json({ ok: true, demand });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// Update a demand (automation settings, ranges, etc.)
+adminRouter.put('/vehicle-demands/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ ok: false, message: 'id invalid' });
+  try {
+    const demand = await updateVehicleDemand(id, req.body ?? {});
+    return res.json({ ok: true, demand });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.post('/vehicle-demands/:id/close', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ ok: false, message: 'id invalid' });
+  try {
+    await closeVehicleDemand(id);
+    return res.json({ ok: true });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.get('/vehicle-demands/:id/matches', async (req, res) => {
+  const id = Number(req.params.id);
+  const limit = Number(req.query.limit ?? 20);
+  if (!Number.isFinite(id)) return res.status(400).json({ ok: false, message: 'id invalid' });
+  try {
+    const matches = await listDemandMatches(id, limit);
+    return res.json({ ok: true, matches });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// Manual scan endpoint (useful for testing)
+adminRouter.post('/vehicle-demands/scan', async (req, res) => {
+  try {
+    const sinceMinutes = Number(req.body?.sinceMinutes ?? 60);
+    const threshold = Number(req.body?.threshold ?? 0.62);
+    const since = new Date(Date.now() - Math.max(1, sinceMinutes) * 60_000);
+    const result = await scanRecentVehiclesForDemandMatches({ since, threshold });
+    return res.json({ ok: true, since: since.toISOString(), ...result });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// Manual recontact run (testing)
+adminRouter.post('/vehicle-demands/recontact/run', async (_req, res) => {
+  try {
+    const result = await runRecontactJob();
+    return res.json({ ok: true, ...result });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
   }
