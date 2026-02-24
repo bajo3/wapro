@@ -52,6 +52,7 @@ El bot implementa:
 - `DEMAND_SCAN_LOOKBACK_MIN` (default 10): ventana de vehículos a comparar.
 - `DEMAND_MATCH_THRESHOLD` (default 0.62): umbral mínimo de match.
 - `RECONTACT_SCAN_MS` (default 10 min): frecuencia del job de recontacto.
+- `RECONTACT_MAX_DEFAULT` (default 3): máximo de recontactos por demanda (default global, se puede sobrescribir por demanda).
 
 ### Templates
 

@@ -45,7 +45,17 @@ export type DemandMatch = {
   reasons?: any;
   createdAt: string;
   notifiedAt?: string | null;
+  lastSharedAt?: string | null;
   vehicle?: any;
+};
+
+export type DemandRecontact = {
+  id: number;
+  demandId: number;
+  attempt: number;
+  message: string;
+  matchVehicleIds: string[];
+  sentAt: string;
 };
 
 function norm(s: any) {
@@ -61,6 +71,31 @@ function norm(s: any) {
 function tokenSet(s: string) {
   const toks = norm(s).split(' ').filter(Boolean);
   return new Set(toks);
+}
+
+// Lightweight synonyms to improve recall without adding dependencies.
+// Keep this list small and high-signal.
+const SYNONYMS: Record<string, string[]> = {
+  suv: ['camioneta', 'crossover', 'utilitario'],
+  camioneta: ['suv', 'crossover', 'utilitario'],
+  automatico: ['automatica', 'at', 'tiptronic', 'dsg', 'cvt'],
+  automatica: ['automatico', 'at', 'tiptronic', 'dsg', 'cvt'],
+  manual: ['mt', 'caja', 'caja manual'],
+  '4x4': ['4wd', 'awd'],
+  nafta: ['gasolina'],
+  gasolina: ['nafta']
+};
+
+function expandTokens(set: Set<string>): Set<string> {
+  const out = new Set<string>(set);
+  for (const t of set) {
+    const syns = SYNONYMS[t];
+    if (!syns) continue;
+    for (const s of syns) {
+      for (const tt of tokenSet(s)) out.add(tt);
+    }
+  }
+  return out;
 }
 
 function jaccard(a: Set<string>, b: Set<string>) {
@@ -109,6 +144,24 @@ function mapDemandRow(row: any): VehicleDemand {
   };
 }
 
+function mapRecontactRow(row: any): DemandRecontact {
+  let ids: string[] = [];
+  try {
+    if (Array.isArray(row.match_vehicle_ids)) ids = row.match_vehicle_ids.map(String);
+    else if (typeof row.match_vehicle_ids === 'string' && row.match_vehicle_ids.trim()) ids = JSON.parse(row.match_vehicle_ids);
+  } catch {
+    ids = [];
+  }
+  return {
+    id: Number(row.id),
+    demandId: Number(row.demand_id),
+    attempt: Number(row.attempt ?? 0),
+    message: String(row.message ?? ''),
+    matchVehicleIds: ids,
+    sentAt: row.sent_at?.toISOString?.() ?? String(row.sent_at)
+  };
+}
+
 export async function createVehicleDemand(input: any): Promise<VehicleDemand> {
   const instance = String(input.instance ?? env.instanceName ?? '').trim() || env.instanceName;
   const remoteJid = input.remoteJid ? String(input.remoteJid).trim() : null;
@@ -133,7 +186,10 @@ export async function createVehicleDemand(input: any): Promise<VehicleDemand> {
 
   const recontactEnabled = input.recontactEnabled !== undefined ? Boolean(input.recontactEnabled) : false;
   const recontactEveryDays = Number.isFinite(Number(input.recontactEveryDays)) ? Number(input.recontactEveryDays) : 7;
-  const recontactMax = Number.isFinite(Number(input.recontactMax)) ? Number(input.recontactMax) : 5;
+  const recontactMaxDefault = Number(process.env.RECONTACT_MAX_DEFAULT ?? '3');
+  const recontactMax = Number.isFinite(Number(input.recontactMax))
+    ? Number(input.recontactMax)
+    : (Number.isFinite(recontactMaxDefault) && recontactMaxDefault > 0 ? recontactMaxDefault : 5);
   const recontactTemplate = typeof input.recontactTemplate === 'string' ? input.recontactTemplate : null;
 
   const recontactNextAt = recontactEnabled
@@ -282,9 +338,19 @@ export async function listDemandMatches(demandId: number, limit = 20) {
       reasons: row.reasons,
       createdAt: row.created_at?.toISOString?.() ?? String(row.created_at),
       notifiedAt: row.notified_at?.toISOString?.() ?? (row.notified_at ? String(row.notified_at) : null),
+      lastSharedAt: row.last_shared_at?.toISOString?.() ?? (row.last_shared_at ? String(row.last_shared_at) : null),
       vehicle
     } as DemandMatch;
   });
+}
+
+export async function listDemandRecontacts(demandId: number, limit = 50): Promise<DemandRecontact[]> {
+  const lim = Math.max(1, Math.min(200, Number(limit)));
+  const r = await pool.query(
+    `select * from vehicle_demand_recontacts where demand_id=$1 order by sent_at desc limit $2`,
+    [demandId, lim]
+  );
+  return r.rows.map(mapRecontactRow);
 }
 
 function buildMatchMessage(demand: VehicleDemand, vehicle: any, score: number) {
@@ -345,7 +411,10 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
 
   for (const d of demands) {
     const demandText = `${d.query} ${d.brand ?? ''} ${d.model ?? ''}`;
-    const dSet = tokenSet(demandText);
+    const dSet = expandTokens(tokenSet(demandText));
+
+    // Collect candidates so we can cap notifications (anti-spam): max 3 per demand per scan.
+    const candidates: { matchId: number; vehicle: any; score: number }[] = [];
 
     for (const v of vehicles) {
       const reasons: any = {};
@@ -424,20 +493,39 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
         score >= clamp01(d.notifyMinScore) &&
         !alreadyNotified
       ) {
-        const last = d.lastNotifiedAt ? new Date(d.lastNotifiedAt).getTime() : 0;
-        const cooldownMs = Math.max(0, d.notifyCooldownMin) * 60_000;
-        if (!last || Date.now() - last >= cooldownMs) {
-          try {
-            const number = String(d.remoteJid).split('@')[0];
-            const msg = buildMatchMessage(d, v, score);
-            await evolutionSendText(d.instance, number, msg);
-            notificationsSent += 1;
-            await pool.query(`update vehicle_demand_matches set notified_at = now() where id = $1`, [matchRow.id]);
-            await pool.query(`update vehicle_demands set last_notified_at = now(), updated_at=now() where id = $1`, [d.id]);
-            d.lastNotifiedAt = new Date().toISOString();
-          } catch (e) {
-            console.error('Demand notify failed', e);
-          }
+        candidates.push({ matchId: Number(matchRow.id), vehicle: v, score });
+      }
+    }
+
+    // Send at most 3 matches per scan per demand, respecting cooldown.
+    if (candidates.length > 0 && d.remoteJid && d.instance && d.notifyOnMatch) {
+      const last = d.lastNotifiedAt ? new Date(d.lastNotifiedAt).getTime() : 0;
+      const cooldownMs = Math.max(0, d.notifyCooldownMin) * 60_000;
+      if (!last || Date.now() - last >= cooldownMs) {
+        const top = candidates.sort((a, b) => b.score - a.score).slice(0, 3);
+        try {
+          const number = String(d.remoteJid).split('@')[0];
+          const header = `Tengo ${top.length} opción(es) que matchean con *${d.query}*:`;
+          const lines = top.map((c, idx) => {
+            const title = c.vehicle?.title ?? `${c.vehicle?.brand ?? ''} ${c.vehicle?.model ?? ''}`.trim();
+            const year = c.vehicle?.year ? ` (${c.vehicle.year})` : '';
+            const price = c.vehicle?.price ? ` - ${c.vehicle.currency ?? ''} ${c.vehicle.price}` : '';
+            const url = c.vehicle?.permalink || (c.vehicle?.slug ? String(c.vehicle.slug) : '');
+            const scoreTxt = `${Math.round(c.score * 100)}%`;
+            return `${idx + 1}) ${title}${year}${price}${url ? `\n${url}` : ''}\nScore: ${scoreTxt}`;
+          });
+
+          await evolutionSendText(d.instance, number, `${header}\n\n${lines.join('\n\n')}`);
+          notificationsSent += 1;
+
+          await pool.query(
+            `update vehicle_demand_matches set notified_at = now() where id = any($1::bigint[])`,
+            [top.map((x) => x.matchId)]
+          );
+          await pool.query(`update vehicle_demands set last_notified_at = now(), updated_at=now() where id = $1`, [d.id]);
+          d.lastNotifiedAt = new Date().toISOString();
+        } catch (e) {
+          console.error('Demand notify failed', e);
         }
       }
     }
@@ -469,16 +557,75 @@ export async function runRecontactJob() {
     const d = mapDemandRow(row);
     try {
       const number = String(d.remoteJid!).split('@')[0];
+
+      // Fetch new matches since the last recontact (top 3 by score)
+      const lastR = await pool.query(
+        `select sent_at from vehicle_demand_recontacts where demand_id=$1 order by sent_at desc limit 1`,
+        [d.id]
+      );
+      const lastSentAt = lastR.rows?.[0]?.sent_at
+        ? new Date(lastR.rows[0].sent_at).toISOString()
+        : '1970-01-01T00:00:00.000Z';
+
+      const mr = await pool.query(
+        `
+          select m.vehicle_id, m.score, v.title, v.brand, v.model, v.year, v.price, v.currency,
+                 coalesce(v.permalink, v.slug) as url
+          from vehicle_demand_matches m
+          left join public.vehicles v on v.id::text = m.vehicle_id
+          where m.demand_id=$1 and m.created_at > $2
+          order by m.score desc
+          limit 3
+        `,
+        [d.id, lastSentAt]
+      );
+      const newMatches = mr.rows ?? [];
+      const matchBlock = newMatches.length
+        ? `\n\nEncontré estas opciones nuevas que se acercan:\n\n${newMatches
+            .map((m: any, i: number) => {
+              const title = m.title ?? `${m.brand ?? ''} ${m.model ?? ''}`.trim() || m.vehicle_id;
+              const year = m.year ? ` (${m.year})` : '';
+              const price = m.price ? ` - ${m.currency ?? ''} ${m.price}` : '';
+              const url = m.url ? `\n${m.url}` : '';
+              const scoreTxt = `${Math.round(Number(m.score) * 100)}%`;
+              return `${i + 1}) ${title}${year}${price}${url}\nScore: ${scoreTxt}`;
+            })
+            .join('\n\n')}`
+        : '';
+
       const tpl = (d.recontactTemplate ?? '').trim();
-      const msg = tpl
+      let msg = tpl
         ? tpl
             .replaceAll('{name}', d.contactName ?? '')
             .replaceAll('{query}', d.query)
             .replaceAll('{count}', String(d.recontactCount + 1))
+            .replaceAll('{match}', matchBlock.trim())
         : `Hola${d.contactName ? ' ' + d.contactName : ''}! 👋\nSigo atento por lo de: ${d.query}.\nSi querés, decime presupuesto y forma de pago así te filtro mejores opciones.`;
+
+      // If template doesn't include {match}, append the block.
+      if (matchBlock && !tpl.includes('{match}')) {
+        msg = `${msg}${matchBlock}`;
+      }
 
       await evolutionSendText(d.instance!, number, msg);
       sent += 1;
+
+      // Save history for UI/metrics (best-effort)
+      try {
+        await pool.query(
+          `insert into vehicle_demand_recontacts (demand_id, attempt, message, match_vehicle_ids) values ($1,$2,$3,$4)`,
+          [d.id, d.recontactCount + 1, msg, JSON.stringify(newMatches.map((m: any) => String(m.vehicle_id)))]
+        );
+        // Mark shared matches
+        if (newMatches.length) {
+          await pool.query(
+            `update vehicle_demand_matches set last_shared_at = now() where demand_id=$1 and vehicle_id = any($2::text[])`,
+            [d.id, newMatches.map((m: any) => String(m.vehicle_id))]
+          );
+        }
+      } catch {
+        // ignore
+      }
 
       const next = new Date(Date.now() + Math.max(1, d.recontactEveryDays) * 24 * 60 * 60 * 1000).toISOString();
       await pool.query(

@@ -97,6 +97,14 @@ botDemandsRoutes.get("/bot/demands/:id/matches", async (req, res) => {
   return res.status(r.status).json(r.data);
 });
 
+// Recontact history
+botDemandsRoutes.get("/bot/demands/:id/recontacts", async (req, res) => {
+  const id = encodeURIComponent(String(req.params.id));
+  const limit = String(req.query.limit ?? "50");
+  const r = await forward(req, `/admin/vehicle-demands/${id}/recontacts?limit=${encodeURIComponent(limit)}`);
+  return res.status(r.status).json(r.data);
+});
+
 // Manual scan
 botDemandsRoutes.post("/bot/demands/scan", async (req, res) => {
   const r = await forward(req, "/admin/vehicle-demands/scan");

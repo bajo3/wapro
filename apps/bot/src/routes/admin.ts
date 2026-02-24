@@ -55,6 +55,7 @@ import {
   updateVehicleDemand,
   closeVehicleDemand,
   listDemandMatches,
+  listDemandRecontacts,
   scanRecentVehiclesForDemandMatches,
   runRecontactJob
 } from '../services/demands.js';
@@ -314,6 +315,19 @@ adminRouter.get('/vehicle-demands/:id/matches', async (req, res) => {
   try {
     const matches = await listDemandMatches(id, limit);
     return res.json({ ok: true, matches });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// Recontact history
+adminRouter.get('/vehicle-demands/:id/recontacts', async (req, res) => {
+  const id = Number(req.params.id);
+  const limit = Number(req.query.limit ?? 50);
+  if (!Number.isFinite(id)) return res.status(400).json({ ok: false, message: 'id invalid' });
+  try {
+    const recontacts = await listDemandRecontacts(id, limit);
+    return res.json({ ok: true, recontacts });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
   }

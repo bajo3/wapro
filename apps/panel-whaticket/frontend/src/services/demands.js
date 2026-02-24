@@ -25,6 +25,11 @@ export async function listDemandMatches(id, { limit = 20 } = {}) {
   return data;
 }
 
+export async function listDemandRecontacts(id, { limit = 50 } = {}) {
+  const { data } = await api.get(`/bot/demands/${id}/recontacts`, { params: { limit } });
+  return data;
+}
+
 export async function runDemandScan(payload = {}) {
   const { data } = await api.post("/bot/demands/scan", payload);
   return data;

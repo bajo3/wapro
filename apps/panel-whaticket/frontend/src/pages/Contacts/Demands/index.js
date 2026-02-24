@@ -43,6 +43,7 @@ import {
   closeDemand,
   createDemand,
   listDemandMatches,
+  listDemandRecontacts,
   listDemands,
   runDemandScan,
   runRecontact,
@@ -68,7 +69,7 @@ const defaultForm = {
   matchTemplate: "",
   recontactEnabled: false,
   recontactEveryDays: 7,
-  recontactMax: 5,
+  recontactMax: 3,
   recontactTemplate: ""
 };
 
@@ -93,6 +94,7 @@ export default function Demands() {
   const [demands, setDemands] = useState([]);
   const [expanded, setExpanded] = useState({});
   const [matches, setMatches] = useState({}); // demandId -> matches[]
+  const [recontacts, setRecontacts] = useState({}); // demandId -> recontacts[]
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -149,6 +151,8 @@ export default function Demands() {
       try {
         const r = await listDemandMatches(id, { limit: 30 });
         setMatches((p) => ({ ...p, [id]: r?.matches || [] }));
+        const rr = await listDemandRecontacts(id, { limit: 30 });
+        setRecontacts((p) => ({ ...p, [id]: rr?.recontacts || [] }));
       } catch (e) {
         toastError(e);
       }
@@ -183,7 +187,7 @@ export default function Demands() {
       matchTemplate: d.matchTemplate || "",
       recontactEnabled: !!d.recontactEnabled,
       recontactEveryDays: Number(d.recontactEveryDays ?? 7),
-      recontactMax: Number(d.recontactMax ?? 5),
+      recontactMax: Number(d.recontactMax ?? 3),
       recontactTemplate: d.recontactTemplate || ""
     });
     setModalOpen(true);
@@ -360,18 +364,23 @@ export default function Demands() {
                   <TableCell>
                     <Tooltip title={`Cada ${d.recontactEveryDays} días · ${d.recontactCount}/${d.recontactMax} · Próx: ${d.recontactNextAt ? fmtDate(d.recontactNextAt) : "—"}`}>
                       <span>
-                        <Switch
-                          checked={!!d.recontactEnabled}
-                          onChange={async (e) => {
-                            try {
-                              await updateDemand(d.id, { recontactEnabled: e.target.checked });
-                              load();
-                            } catch (err) {
-                              toastError(err);
-                            }
-                          }}
-                          color="primary"
-                        />
+                        <Box display="flex" alignItems="center" gridGap={8}>
+                          <Switch
+                            checked={!!d.recontactEnabled}
+                            onChange={async (e) => {
+                              try {
+                                await updateDemand(d.id, { recontactEnabled: e.target.checked });
+                                load();
+                              } catch (err) {
+                                toastError(err);
+                              }
+                            }}
+                            color="primary"
+                          />
+                          <Typography variant="caption" color="textSecondary">
+                            {`${Number(d.recontactCount || 0)}/${Number(d.recontactMax || 0)} · quedan ${Math.max(0, Number(d.recontactMax || 0) - Number(d.recontactCount || 0))}`}
+                          </Typography>
+                        </Box>
                       </span>
                     </Tooltip>
                   </TableCell>
@@ -434,6 +443,46 @@ export default function Demands() {
                             )}
                           </TableBody>
                         </Table>
+
+                        <Box mt={2}>
+                          <Typography variant="subtitle2" gutterBottom>
+                            Historial de recontactos (últimos 30)
+                          </Typography>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>Fecha</TableCell>
+                                <TableCell>Intento</TableCell>
+                                <TableCell>Incluyó matches</TableCell>
+                                <TableCell>Mensaje</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {(recontacts[d.id] || []).map((rc) => (
+                                <TableRow key={rc.id}>
+                                  <TableCell>{fmtDate(rc.sentAt)}</TableCell>
+                                  <TableCell>{rc.attempt}</TableCell>
+                                  <TableCell>{Array.isArray(rc.matchVehicleIds) && rc.matchVehicleIds.length ? rc.matchVehicleIds.length : 0}</TableCell>
+                                  <TableCell>
+                                    <Typography variant="caption" style={{ whiteSpace: "pre-wrap" }}>
+                                      {String(rc.message || "").slice(0, 300)}
+                                      {String(rc.message || "").length > 300 ? "…" : ""}
+                                    </Typography>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                              {!recontacts[d.id]?.length && (
+                                <TableRow>
+                                  <TableCell colSpan={4}>
+                                    <Typography variant="caption" color="textSecondary">
+                                      Sin recontactos aún.
+                                    </Typography>
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </TableBody>
+                          </Table>
+                        </Box>
                       </Box>
                     </Collapse>
                   </TableCell>
