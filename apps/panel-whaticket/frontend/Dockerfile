@@ -1,5 +1,5 @@
 # Vite/Rollup + modern deps behave better on Node 18+ (and avoids npm@6 engine warnings).
-FROM node:18-alpine as build-deps
+FROM node:18-alpine AS build-deps
 WORKDIR /usr/src/app
 COPY package*.json ./
 RUN npm install
@@ -15,7 +15,7 @@ RUN npm run build
 FROM nginx:alpine
 RUN apk add --no-cache jq openssl
 
-ENV DOCKERIZE_VERSION v0.6.1
+ENV DOCKERIZE_VERSION=v0.6.1
 RUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz \
     && tar -C /usr/local/bin -xzvf dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz \
     && rm dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz

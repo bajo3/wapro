@@ -17,14 +17,29 @@ async function forward(req: any, path: string) {
   const url = `${BOT_URL}${path}`;
   const method = req.method;
   const body = method === "GET" || method === "HEAD" ? undefined : JSON.stringify(req.body ?? {});
-  const r = await fetch(url, {
-    method,
-    headers: {
-      "content-type": "application/json",
-      "x-admin-token": BOT_ADMIN_TOKEN
-    } as any,
-    body
-  });
+  const timeoutMs = Number(process.env.BOT_HTTP_TIMEOUT_MS ?? "15000");
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
+
+  let r: any;
+  try {
+    r = await fetch(url, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        "x-admin-token": BOT_ADMIN_TOKEN
+      } as any,
+      body,
+      signal: controller.signal as any
+    } as any);
+  } catch (err: any) {
+    if (String(err?.name) === "AbortError") {
+      throw new AppError("ERR_BOT_TIMEOUT", 504);
+    }
+    throw err;
+  } finally {
+    clearTimeout(t);
+  }
 
   const text = await r.text();
   let data: any = null;

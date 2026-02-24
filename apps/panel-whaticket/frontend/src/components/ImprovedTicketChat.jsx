@@ -4,8 +4,15 @@ import clsx from "clsx";
 import { Calendar, FileText, Info, PhoneCall, Sparkles } from "lucide-react";
 
 // Reuse existing chat plumbing (no behavior fork)
-import MessagesList from "../MessagesList";
-import MessageInput from "../MessageInput";
+// NOTE: ImprovedTicketChat lives alongside MessagesList and MessageInput in the
+// components directory. The original imports incorrectly navigated up one
+// directory ("../"), which resolved to a non-existent path (src/MessagesList
+// instead of src/components/MessagesList). This caused Rollup to throw
+// "Could not resolve '../MessagesList'" during the build. We fix the paths
+// here by referencing the sibling modules directly with "./".  See
+// logs.1771906134855.json for the original error.
+import MessagesList from "./MessagesList";
+import MessageInput from "./MessageInput";
 
 /**
  * ImprovedTicketChat

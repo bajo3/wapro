@@ -11,11 +11,17 @@ import uploadConfig from "./config/upload";
 import AppError from "./errors/AppError";
 import routes from "./routes";
 import { generalLimiter } from "./middleware/rateLimiter";
+import { securityHeaders } from "./middleware/securityHeaders";
+import { sanitizeInputs } from "./middleware/sanitizeInputs";
+import { csrfGuard } from "./middleware/csrfGuard";
 import { logger } from "./utils/logger";
 
 Sentry.init({ dsn: process.env.SENTRY_DSN });
 
 const app = express();
+
+// Reduce fingerprinting.
+app.disable("x-powered-by");
 
 // Needed when running behind proxies (Railway, Nginx, etc.) so secure cookies
 // and other proxy-aware features behave correctly.
@@ -43,8 +49,11 @@ app.use(
     }
   })
 );
+app.use(securityHeaders);
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
+app.use(sanitizeInputs);
+app.use(csrfGuard);
 app.use(generalLimiter);
 app.use(Sentry.Handlers.requestHandler());
 app.use("/public", express.static(uploadConfig.directory));

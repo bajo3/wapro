@@ -81,53 +81,63 @@ const TicketListItem = ({ ticket }) => {
         <ListItemText
           disableTypography
           primary={
-            <span className="flex justify-between">
+            <span className="flex items-center justify-between gap-2">
               <Typography noWrap component="span" variant="body2" color="textPrimary">
                 {ticket.contact.name}
               </Typography>
 
-              {ticket?.contact?.leadSource && (
-                <div
-                  className="absolute bottom-[5px] right-[5px] rounded-full border border-[#CCC] bg-ticket-accent px-1.5 py-[1px] text-[0.9em] text-white"
-                  title="Lead source"
-                >
-                  {String(ticket.contact.leadSource).toUpperCase()}
-                </div>
-              )}
-
-              {String(ticket?.botMode || "ON").toUpperCase() === "HUMAN_ONLY" && (
-                <div
-                  className="absolute bottom-[5px] right-[5px] rounded-full border border-[#CCC] bg-ticket-accent px-1.5 py-[1px] text-[0.9em] text-white"
-                  title="Derivado a humano"
-                >
-                  HUMANO
-                </div>
-              )}
-              {ticket.status === "closed" && (
-                <Badge className="ml-auto mr-8 self-center" badgeContent={"closed"} color="primary" />
-              )}
-              {ticket.lastMessage && (
-                <Typography
-                  className="justify-self-end text-ticket-muted"
-                  component="span"
-                  variant="body2"
-                  color="textSecondary"
-                >
-                  {isSameDay(parseISO(ticket.updatedAt), new Date()) ? (
-                    <>{format(parseISO(ticket.updatedAt), "HH:mm")}</>
-                  ) : (
-                    <>{format(parseISO(ticket.updatedAt), "dd/MM/yyyy")}</>
+              <span className="ml-auto flex items-center gap-2">
+                {/* Right-side meta chips (no absolute overlap) */}
+                <span className="hidden sm:flex items-center gap-1">
+                  {ticket?.contact?.leadSource && (
+                    <span
+                      className="inline-flex items-center rounded-full bg-ticket-accent px-2 py-0.5 text-[10px] font-semibold text-white"
+                      title="Lead source"
+                    >
+                      {String(ticket.contact.leadSource).toUpperCase()}
+                    </span>
                   )}
-                </Typography>
-              )}
-              {ticket.whatsappId && (
-                <div
-                  className="absolute bottom-[5px] right-[5px] rounded-full border border-[#CCC] bg-ticket-accent px-1.5 py-[1px] text-[0.9em] text-white"
-                  title={i18n.t("ticketsList.connectionTitle")}
-                >
-                  {ticket.whatsapp?.name}
-                </div>
-              )}
+
+                  {String(ticket?.botMode || "ON").toUpperCase() === "HUMAN_ONLY" && (
+                    <span
+                      className="inline-flex items-center rounded-full bg-ticket-pending px-2 py-0.5 text-[10px] font-semibold text-white"
+                      title="Derivado a humano"
+                    >
+                      HUMANO
+                    </span>
+                  )}
+
+                  {ticket.whatsappId && (
+                    <span
+                      className="inline-flex items-center rounded-full border border-ticket-border bg-ticket-panel px-2 py-0.5 text-[10px] font-semibold text-ticket-muted"
+                      title={i18n.t("ticketsList.connectionTitle")}
+                    >
+                      {ticket.whatsapp?.name}
+                    </span>
+                  )}
+
+                  {ticket.status === "closed" && (
+                    <span className="inline-flex items-center rounded-full border border-ticket-border bg-ticket-surface px-2 py-0.5 text-[10px] font-semibold text-ticket-muted">
+                      CERRADO
+                    </span>
+                  )}
+                </span>
+
+                {ticket.lastMessage && (
+                  <Typography
+                    className="justify-self-end text-ticket-muted"
+                    component="span"
+                    variant="body2"
+                    color="textSecondary"
+                  >
+                    {isSameDay(parseISO(ticket.updatedAt), new Date()) ? (
+                      <>{format(parseISO(ticket.updatedAt), "HH:mm")}</>
+                    ) : (
+                      <>{format(parseISO(ticket.updatedAt), "dd/MM/yyyy")}</>
+                    )}
+                  </Typography>
+                )}
+              </span>
             </span>
           }
           secondary={
@@ -171,4 +181,4 @@ const TicketListItem = ({ ticket }) => {
   );
 };
 
-export default TicketListItem;
+export default React.memo(TicketListItem);

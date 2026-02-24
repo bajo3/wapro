@@ -441,11 +441,10 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 								<TextField
 									size="small"
 									variant="outlined"
-									InputProps={{ style: { color: "#e5e7eb" } }}
 									placeholder={i18n.t("contactDrawer.ticket.tagsPlaceholder")}
 									value={tagInput}
 									onChange={(e) => setTagInput(e.target.value)}
-								InputProps={{ style: { color: "#e5e7eb" } }}
+									InputProps={{ style: { color: "#e5e7eb" } }}
 									onKeyDown={(e) => {
 										if (e.key === "Enter") handleAddTag();
 									}}
@@ -473,7 +472,6 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 								multiline
 								minRows={3}
 								variant="outlined"
-								InputProps={{ style: { color: "#e5e7eb" } }}
 								placeholder={i18n.t("contactDrawer.ticket.notesPlaceholder")}
 								value={noteInput}
 								onChange={(e) => setNoteInput(e.target.value)}

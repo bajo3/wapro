@@ -65,9 +65,11 @@ const defaultForm = {
   notifyOnMatch: true,
   notifyMinScore: 0.72,
   notifyCooldownMin: 240,
+  matchTemplate: "",
   recontactEnabled: false,
   recontactEveryDays: 7,
-  recontactMax: 5
+  recontactMax: 5,
+  recontactTemplate: ""
 };
 
 function fmtDate(iso) {
@@ -178,9 +180,11 @@ export default function Demands() {
       notifyOnMatch: !!d.notifyOnMatch,
       notifyMinScore: Number(d.notifyMinScore ?? 0.72),
       notifyCooldownMin: Number(d.notifyCooldownMin ?? 240),
+      matchTemplate: d.matchTemplate || "",
       recontactEnabled: !!d.recontactEnabled,
       recontactEveryDays: Number(d.recontactEveryDays ?? 7),
-      recontactMax: Number(d.recontactMax ?? 5)
+      recontactMax: Number(d.recontactMax ?? 5),
+      recontactTemplate: d.recontactTemplate || ""
     });
     setModalOpen(true);
   };
@@ -203,8 +207,10 @@ export default function Demands() {
         instance: String(form.instance || "").trim() || undefined,
         notifyMinScore: Number(form.notifyMinScore),
         notifyCooldownMin: Number(form.notifyCooldownMin),
+        matchTemplate: String(form.matchTemplate || "").trim() || undefined,
         recontactEveryDays: Number(form.recontactEveryDays),
-        recontactMax: Number(form.recontactMax)
+        recontactMax: Number(form.recontactMax),
+        recontactTemplate: String(form.recontactTemplate || "").trim() || undefined
       };
 
       if (editing?.id) {
@@ -584,6 +590,17 @@ export default function Demands() {
               style={{ width: 180 }}
             />
 
+          <TextField
+            label="Plantilla de mensaje (match) — opcional"
+            value={form.matchTemplate}
+            onChange={(e) => setForm((p) => ({ ...p, matchTemplate: e.target.value }))}
+            variant="outlined"
+            fullWidth
+            multiline
+            minRows={3}
+            helperText="Variables: {name} {query} {title} {year} {price} {currency} {score} {url}"
+          />
+
             <FormControlLabel
               control={
                 <Switch
@@ -610,6 +627,17 @@ export default function Demands() {
               variant="outlined"
               style={{ width: 140 }}
             />
+
+          <TextField
+            label="Plantilla de recontacto — opcional"
+            value={form.recontactTemplate}
+            onChange={(e) => setForm((p) => ({ ...p, recontactTemplate: e.target.value }))}
+            variant="outlined"
+            fullWidth
+            multiline
+            minRows={3}
+            helperText="Variables: {name} {query} {count}"
+          />
           </Box>
         </DialogContent>
         <DialogActions>
