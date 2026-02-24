@@ -17,6 +17,8 @@ import Message from "./Message";
 import Queue from "./Queue";
 import User from "./User";
 import Whatsapp from "./Whatsapp";
+import PipelineStage from "./PipelineStage";
+import TicketStageHistory from "./TicketStageHistory";
 
 @Table
 class Ticket extends Model<Ticket> {
@@ -36,6 +38,23 @@ class Ticket extends Model<Ticket> {
 
   @Column
   botMode: string;
+
+  // Pipeline / Kanban
+  @ForeignKey(() => PipelineStage)
+  @Column
+  pipelineStageId: number;
+
+  @BelongsTo(() => PipelineStage)
+  pipelineStage: PipelineStage;
+
+  @Column
+  stageChangedAt: Date;
+
+  @Column
+  dealValue: number;
+
+  @Column({ defaultValue: "ARS" })
+  dealCurrency: string;
 
   @Default(false)
   @Column
@@ -77,6 +96,9 @@ class Ticket extends Model<Ticket> {
 
   @HasMany(() => Message)
   messages: Message[];
+
+  @HasMany(() => TicketStageHistory)
+  stageHistory: TicketStageHistory[];
 }
 
 export default Ticket;

@@ -99,6 +99,12 @@ const MainListItems = (props) => {
       />
 
       <ListItemLink
+        to="/pipeline"
+        primary="Pipeline"
+        icon={<AccountTreeOutlinedIcon />}
+      />
+
+      <ListItemLink
         to="/contacts"
         primary={i18n.t("mainDrawer.listItems.contacts")}
         icon={<ContactPhoneOutlinedIcon />}

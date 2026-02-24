@@ -20,6 +20,7 @@ const Queues = lazy(() => import("../pages/Queues/"));
 const Campaigns = lazy(() => import("../pages/Campaigns"));
 const TrainingMessages = lazy(() => import("../pages/TrainingMessages"));
 const Quotations = lazy(() => import("../pages/Quotations"));
+const Pipeline = lazy(() => import("../pages/Pipeline"));
 import { AuthProvider } from "../context/Auth/AuthContext";
 import { WhatsAppsProvider } from "../context/WhatsApp/WhatsAppsContext";
 import { ThemeProvider } from "../context/DarkMode";
@@ -37,6 +38,7 @@ const Routes = () => {
               <LoggedInLayout>
                 <Route exact path="/" component={Dashboard} isPrivate />
                 <Route exact path="/tickets/:ticketId?" component={Tickets} isPrivate />
+                <Route exact path="/pipeline" component={Pipeline} isPrivate />
                 <Route exact path="/connections" component={Connections} isPrivate />
                 <Route exact path="/contacts" component={Contacts} isPrivate />
                 <Route exact path="/contacts/demands" component={Demands} isPrivate />

@@ -15,6 +15,7 @@ import evolutionWebhookRoutes from "./evolutionWebhookRoutes";
 import metaWebhookRoutes from "./metaWebhookRoutes";
 import botIntelligenceRoutes from "./botIntelligenceRoutes";
 import botDemandsRoutes from "./botDemandsRoutes";
+import pipelineRoutes from "./pipelineRoutes";
 import scheduledMessageRoutes from "./scheduledMessageRoutes";
 import trainingMessageRoutes from "./trainingMessageRoutes";
 import campaignRoutes from "./campaignRoutes";
@@ -61,5 +62,6 @@ routes.use(campaignRoutes);
 routes.use("/api/messages", apiRoutes);
 routes.use(botIntelligenceRoutes);
 routes.use(botDemandsRoutes);
+routes.use(pipelineRoutes);
 
 export default routes;

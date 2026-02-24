@@ -60,6 +60,38 @@ En el panel (CRM → Demandas) podés editar templates:
 - **Match template**: `Variables: {name} {query} {title} {year} {price} {currency} {score} {url}`
 - **Recontact template**: `Variables: {name} {query} {count}`
 
+## Pipeline Kanban (Ventas)
+
+En el panel tenés una vista Kanban para manejar el estado comercial del lead/ticket.
+
+- Ruta: **/pipeline**
+- Drag & drop de tickets entre etapas
+- Métricas por etapa: cantidad, **tiempo promedio en etapa** (según `stageChangedAt`), **valor potencial** separado por ARS/USD (suma de `dealValue`)
+- Edición rápida por ticket: `dealValue` + `dealCurrency`
+
+### API (backend panel)
+
+- `GET /pipeline/board` (por defecto trae últimos 120 días para performance)
+- `GET /pipeline/stages`
+- `POST /pipeline/stages`
+- `PUT /pipeline/stages/:id`
+- `DELETE /pipeline/stages/:id`
+- `PATCH /pipeline/tickets/:ticketId/stage`
+- `PATCH /pipeline/tickets/:ticketId/value`
+
+### DB
+
+Migraciones agregadas:
+
+- Tabla `PipelineStages`
+- Tabla `TicketStageHistories`
+- Columnas en `Tickets`: `pipelineStageId`, `stageChangedAt`, `dealValue`, `dealCurrency`
+
+Regla de negocio aplicada:
+
+- Si el ticket se mueve a una etapa `WON` o `LOST` → `status` pasa a `closed`.
+- Si se mueve a una etapa `OPEN` y estaba cerrado → vuelve a `open`.
+
 ## Optimización de rendimiento (Frontend)
 
 - **Code-splitting** por rutas con `React.lazy`.

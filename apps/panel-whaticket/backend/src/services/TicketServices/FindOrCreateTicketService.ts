@@ -3,6 +3,7 @@ import { Op } from "sequelize";
 import Contact from "../../models/Contact";
 import Ticket from "../../models/Ticket";
 import ShowTicketService from "./ShowTicketService";
+import GetDefaultPipelineStage from "../../helpers/GetDefaultPipelineStage";
 
 const FindOrCreateTicketService = async (
   contact: Contact,
@@ -62,12 +63,16 @@ const FindOrCreateTicketService = async (
   }
 
   if (!ticket) {
+    const def = await GetDefaultPipelineStage();
     ticket = await Ticket.create({
       contactId: groupContact ? groupContact.id : contact.id,
       status: "pending",
       isGroup: !!groupContact,
       unreadMessages,
-      whatsappId
+      whatsappId,
+      pipelineStageId: def?.id || null,
+      stageChangedAt: new Date(),
+      dealCurrency: "ARS"
     });
   }
 
