@@ -130,9 +130,22 @@ export const updateTicketStage = async (req: Request, res: Response) => {
 export const updateTicketValue = async (req: Request, res: Response) => {
   const { ticketId } = req.params;
   const { dealValue, dealCurrency } = req.body || {};
+
+  // Normalize dealValue coming from JSON (it can be a string from inputs)
+  let normalizedValue: number | null | undefined;
+  if (dealValue === undefined) {
+    normalizedValue = undefined;
+  } else if (dealValue === null || dealValue === "") {
+    normalizedValue = null;
+  } else {
+    const n = Number(dealValue);
+    if (!Number.isFinite(n)) throw new AppError("Invalid dealValue", 400);
+    normalizedValue = n;
+  }
+
   const ticket = await UpdateTicketDealValueService({
     ticketId,
-    dealValue: dealValue === "" ? null : dealValue,
+    dealValue: normalizedValue,
     dealCurrency
   });
   return res.json({ ticket });
