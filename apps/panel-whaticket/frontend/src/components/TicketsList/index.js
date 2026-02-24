@@ -135,10 +135,13 @@ const TicketsList = (props) => {
       (ticket) =>
         !searchParam &&
         (!ticket.userId || ticket.userId === user?.id || showAll) &&
-        (!ticket.queueId || selectedQueueIds.indexOf(ticket.queueId) > -1);
+        // When no queues are selected, treat as "all queues".
+        (!ticket.queueId || selectedQueueIds.length === 0 || selectedQueueIds.indexOf(ticket.queueId) > -1);
 
     const notBelongsToUserQueues =
-      (ticket) => ticket.queueId && selectedQueueIds.indexOf(ticket.queueId) === -1;
+      (ticket) =>
+        // When no queues are selected, do not exclude anything.
+        selectedQueueIds.length > 0 && ticket.queueId && selectedQueueIds.indexOf(ticket.queueId) === -1;
 
     if (socket.connected) joinRooms();
     socket.on("connect", joinRooms);

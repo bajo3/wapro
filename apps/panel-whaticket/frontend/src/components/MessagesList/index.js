@@ -361,7 +361,11 @@ const MessagesList = ({ ticketId, isGroup }) => {
   useEffect(() => {
     const socket = openSocket();
 
-    socket.on("connect", () => socket.emit("joinChatBox", ticketId));
+    const join = () => socket.emit("joinChatBox", ticketId);
+    // If the socket is already connected, the "connect" event won't fire.
+    // Join immediately to receive real-time messages without requiring a refresh.
+    if (socket.connected) join();
+    socket.on("connect", join);
 
     socket.on("appMessage", (data) => {
       if (data.action === "create") {
@@ -376,6 +380,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
 
     return () => {
       socket.emit("leaveChatBox", ticketId);
+      socket.off("connect", join);
       socket.off("appMessage");
     };
   }, [ticketId]);
