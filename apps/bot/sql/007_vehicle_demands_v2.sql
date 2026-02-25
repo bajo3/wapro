@@ -40,7 +40,11 @@ alter table if exists vehicle_demand_matches
   add column if not exists reasons jsonb not null default '{}'::jsonb;
 
 -- Backward-compat: if the old column name exists, copy into reasons once.
-DO $$
+-- IMPORTANT: avoid using plain $$ as the DO delimiter because this script contains
+-- literal "$$" in comments/strings. If we use $$, it would prematurely terminate
+-- the DO body and Postgres would parse the remaining text as SQL ("syntax error at
+-- or near \"dollar\"").
+DO $vehdem$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -51,7 +55,7 @@ BEGIN
       || 'set reasons = coalesce(reasons, ''{}''::jsonb) || coalesce(reason, ''{}''::jsonb) '
       || 'where reason is not null';
   END IF;
-END $$;
+END $vehdem$;
 
 alter table if exists vehicle_demand_matches
   add column if not exists notified_at timestamptz;
