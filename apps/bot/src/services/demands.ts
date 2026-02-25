@@ -163,7 +163,8 @@ function mapRecontactRow(row: any): DemandRecontact {
 }
 
 export async function createVehicleDemand(input: any): Promise<VehicleDemand> {
-  const instance = String(input.instance ?? env.instanceName ?? '').trim() || env.instanceName;
+  // TS5076: avoid mixing ?? and || without parentheses
+  const instance = (String(input.instance ?? env.instanceName ?? '').trim()) || env.instanceName;
   const remoteJid = input.remoteJid ? String(input.remoteJid).trim() : null;
   const contactName = typeof input.contactName === 'string' ? input.contactName.trim() : null;
   const phone = typeof input.phone === 'string' ? input.phone.trim() : null;
@@ -583,7 +584,8 @@ export async function runRecontactJob() {
       const matchBlock = newMatches.length
         ? `\n\nEncontré estas opciones nuevas que se acercan:\n\n${newMatches
             .map((m: any, i: number) => {
-              const title = m.title ?? `${m.brand ?? ''} ${m.model ?? ''}`.trim() || m.vehicle_id;
+              // TS5076: avoid mixing ?? and || without parentheses
+              const title = (m.title ?? `${m.brand ?? ''} ${m.model ?? ''}`.trim()) || m.vehicle_id;
               const year = m.year ? ` (${m.year})` : '';
               const price = m.price ? ` - ${m.currency ?? ''} ${m.price}` : '';
               const url = m.url ? `\n${m.url}` : '';

@@ -130,17 +130,13 @@ const messages = {
         confirmationModal: {
           deleteTitle: "Deletar ",
           importTitlte: "Importar contatos",
-          importFromConversationsTitle: "Sincronizar contatos",
           deleteMessage:
             "Tem certeza que deseja deletar este contato? Todos os tickets relacionados serão perdidos.",
           importMessage: "Deseja importas todos os contatos do telefone?",
-          importFromConversationsMessage:
-            "Isso não importa a agenda do seu telefone. Sincroniza/repara contatos a partir de tickets e conversas já existentes no sistema. Continuar?",
         },
         buttons: {
           import: "Importar Contatos",
           importCsv: "Importar CSV",
-          importFromConversations: "Sincronizar de conversas",
           add: "Adicionar Contato",
         },
         table: {

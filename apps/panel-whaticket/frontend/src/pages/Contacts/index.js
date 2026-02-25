@@ -16,7 +16,6 @@ import WhatsAppIcon from "@material-ui/icons/WhatsApp";
 import SearchIcon from "@material-ui/icons/Search";
 import TextField from "@material-ui/core/TextField";
 import InputAdornment from "@material-ui/core/InputAdornment";
-import Typography from "@material-ui/core/Typography";
 
 import IconButton from "@material-ui/core/IconButton";
 import DeleteOutlineIcon from "@material-ui/icons/DeleteOutline";
@@ -149,9 +148,7 @@ const Contacts = () => {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [canImportPhoneContacts, setCanImportPhoneContacts] = useState(true);
-  const [provider, setProvider] = useState("WWEBJS");
   const [csvImporting, setCsvImporting] = useState(false);
-  const [confirmImportFromConversationsOpen, setConfirmImportFromConversationsOpen] = useState(false);
   const fileInputId = "contacts-csv-file";
 
   useEffect(() => {
@@ -161,7 +158,6 @@ const Contacts = () => {
       try {
         const { data } = await api.get("/health");
         const provider = String(data?.provider || "").toUpperCase();
-        setProvider(provider || "WWEBJS");
         setCanImportPhoneContacts(provider !== "EVOLUTION");
       } catch {
         // if we can't fetch, keep enabled to avoid blocking the UI
@@ -269,19 +265,6 @@ const Contacts = () => {
     }
   };
 
-  const handleImportFromConversations = async () => {
-    try {
-      const { data } = await api.post("/contacts/import/conversations");
-      toast.success(
-        i18n.t("contacts.toasts.imported") +
-          ` (${data?.scanned || 0} scanned, ${data?.updatedNames || 0} names, ${data?.updatedLeadSource || 0} source)`
-      );
-      history.go(0);
-    } catch (err) {
-      toastError(err);
-    }
-  };
-
   const handleCsvFile = async (file) => {
     if (!file) return;
     setCsvImporting(true);
@@ -340,15 +323,6 @@ const Contacts = () => {
           ? `${i18n.t("contacts.confirmationModal.deleteMessage")}`
           : `${i18n.t("contacts.confirmationModal.importMessage")}`}
       </ConfirmationModal>
-
-      <ConfirmationModal
-        title={i18n.t("contacts.confirmationModal.importFromConversationsTitle")}
-        open={confirmImportFromConversationsOpen}
-        onClose={setConfirmImportFromConversationsOpen}
-        onConfirm={() => handleImportFromConversations()}
-      >
-        {i18n.t("contacts.confirmationModal.importFromConversationsMessage")}
-      </ConfirmationModal>
       <MainHeader>
         <Title>{i18n.t("contacts.title")}</Title>
         <MainHeaderButtonsWrapper>
@@ -387,29 +361,20 @@ const Contacts = () => {
           >
             {i18n.t("contacts.buttons.importCsv")}
           </Button>
-
-          {canImportPhoneContacts ? (
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={() => setConfirmOpen(true)}
-            >
-              {i18n.t("contacts.buttons.import")}
-            </Button>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <Button
-                variant="outlined"
-                color="primary"
-                onClick={() => setConfirmImportFromConversationsOpen(true)}
-              >
-                {i18n.t("contacts.buttons.importFromConversations")}
-              </Button>
-              <Typography variant="caption" style={{ maxWidth: 260, opacity: 0.8 }}>
-                {i18n.t("backendErrors.ERR_CONTACTS_IMPORT_UNSUPPORTED_PROVIDER")} ({provider})
-              </Typography>
-            </div>
-          )}
+          <Button
+            variant="contained"
+            color="primary"
+            disabled={!canImportPhoneContacts}
+            onClick={(e) => {
+              if (!canImportPhoneContacts) {
+                toast.info(i18n.t("backendErrors.ERR_CONTACTS_IMPORT_UNSUPPORTED_PROVIDER"));
+                return;
+              }
+              setConfirmOpen(true);
+            }}
+          >
+            {i18n.t("contacts.buttons.import")}
+          </Button>
           <Button
             variant="contained"
             color="primary"

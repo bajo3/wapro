@@ -82,11 +82,7 @@ const NotificationsPopOver = () => {
 	useEffect(() => {
 		const socket = openSocket();
 
-		const join = () => socket.emit("joinNotification");
-		// If the socket is already connected, the "connect" event won't fire.
-		// Join immediately to avoid missing notifications until a refresh.
-		if (socket.connected) join();
-		socket.on("connect", join);
+		socket.on("connect", () => socket.emit("joinNotification"));
 
 		socket.on("ticket", data => {
 			if (data.action === "updateUnread" || data.action === "delete") {
@@ -142,9 +138,7 @@ const NotificationsPopOver = () => {
 
 		return () => {
 			socket.emit("leaveNotification");
-			socket.off("connect", join);
-			socket.off("ticket");
-			socket.off("appMessage");
+			socket.off("notification");
 		};
 	}, [user]);
 
