@@ -117,12 +117,16 @@ export const updateTicketStage = async (req: Request, res: Response) => {
   const { ticketId } = req.params;
   const { toStageId } = req.body || {};
   if (!toStageId) throw new AppError("toStageId is required", 400);
+  // In some setups `req.user.id` can be a string. Normalize to number to satisfy service types.
   // @ts-ignore
-  const userId = req.user?.id;
+  const rawUserId = req.user?.id;
+  const userId = rawUserId !== undefined && rawUserId !== null && String(rawUserId).trim() !== ""
+    ? Number(rawUserId)
+    : undefined;
   const ticket = await UpdateTicketPipelineStageService({
     ticketId,
     toStageId: Number(toStageId),
-    userId
+    userId: Number.isFinite(userId as any) ? (userId as number) : undefined
   });
   return res.json({ ticket });
 };

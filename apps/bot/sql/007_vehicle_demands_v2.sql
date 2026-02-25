@@ -46,7 +46,8 @@ BEGIN
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'vehicle_demand_matches' AND column_name = 'reason'
   ) THEN
-    EXECUTE $$update vehicle_demand_matches set reasons = coalesce(reasons,'{}'::jsonb) || coalesce(reason,'{}'::jsonb) where reason is not null$$;
+    -- NOTE: avoid nesting the same $$ delimiter inside the DO block.
+    EXECUTE 'update vehicle_demand_matches set reasons = coalesce(reasons,''{}''::jsonb) || coalesce(reason,''{}''::jsonb) where reason is not null';
   END IF;
 END $$;
 
