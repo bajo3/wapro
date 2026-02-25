@@ -24,6 +24,14 @@ Este zip está preparado para **WhatsApp vía Evolution API** (QR + estado dentr
 - Si Evolution adjunta `message.mediaUrl` (S3/MinIO), se muestra directo.
 - Si no, activá `EVOLUTION_WEBHOOK_BASE64=true` y el backend decodifica el base64 y lo guarda en `/public`.
 
+### Cotizaciones (MVP actual)
+
+La pantalla **Cotizaciones** está operativa en modo MVP:
+
+- **Clientes** y **Vehículos** se cargan desde la misma pantalla (botones "Agregar cliente" / "Agregar vehículo").
+- Se guardan en el navegador (localStorage) para destrabar el uso inmediato sin DB.
+- Próximo paso recomendado (pendiente): persistir en **Postgres** y exponer API (Quotes + Customers + Vehicles) para multiusuario y auditoría.
+
 ---
 
 

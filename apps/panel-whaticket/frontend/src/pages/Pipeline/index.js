@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -50,6 +50,10 @@ function avgHours(ms) {
 export default function Pipeline() {
   const [loading, setLoading] = useState(false);
   const [board, setBoard] = useState({ stages: [], ticketsByStage: {}, lookbackDays: 120 });
+
+  // Horizontal navigation helpers ("Vendido/Perdido" ends up far to the right)
+  const boardScrollRef = useRef(null);
+  const stageRefs = useRef({});
 
   // Stages modal
   const [stagesOpen, setStagesOpen] = useState(false);
@@ -220,6 +224,41 @@ export default function Pipeline() {
         <MainHeaderButtonsWrapper>
           <Button
             variant="outlined"
+            onClick={() => {
+              const s = (board.stages || []).find((x) => String(x.category).toUpperCase() === "WON");
+              if (s && stageRefs.current?.[s.id]) {
+                stageRefs.current[s.id].scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+              }
+            }}
+            style={{ marginRight: 8 }}
+          >
+            Ir a Vendido
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={() => {
+              const s = (board.stages || []).find((x) => String(x.category).toUpperCase() === "LOST");
+              if (s && stageRefs.current?.[s.id]) {
+                stageRefs.current[s.id].scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+              }
+            }}
+            style={{ marginRight: 8 }}
+          >
+            Ir a Perdido
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={() => {
+              const el = boardScrollRef.current;
+              if (!el) return;
+              el.scrollTo({ left: el.scrollWidth, behavior: "smooth" });
+            }}
+            style={{ marginRight: 8 }}
+          >
+            Ir al final
+          </Button>
+          <Button
+            variant="outlined"
             onClick={loadBoard}
             disabled={loading}
             style={{ marginRight: 8 }}
@@ -236,13 +275,19 @@ export default function Pipeline() {
         </MainHeaderButtonsWrapper>
       </MainHeader>
 
-      <Box style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8 }}>
+      <Box
+        ref={boardScrollRef}
+        style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8, scrollBehavior: "smooth" }}
+      >
         {(board.stages || []).map((stage) => {
           const arr = board.ticketsByStage?.[String(stage.id)] || [];
           const m = metricsByStage?.[stage.id] || { count: 0, avgHours: 0, sumARS: 0, sumUSD: 0 };
           return (
             <Paper
               key={stage.id}
+              ref={(el) => {
+                if (el) stageRefs.current[stage.id] = el;
+              }}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => onDrop(e, stage.id)}
               style={{

@@ -40,8 +40,7 @@ alter table if exists vehicle_demand_matches
   add column if not exists reasons jsonb not null default '{}'::jsonb;
 
 -- Backward-compat: if the old column name exists, copy into reasons once.
--- Use a named dollar-quoting delimiter to avoid syntax errors when executing via Node.js.
-DO $do$
+DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -52,7 +51,7 @@ BEGIN
       || 'set reasons = coalesce(reasons, ''{}''::jsonb) || coalesce(reason, ''{}''::jsonb) '
       || 'where reason is not null';
   END IF;
-END $do$;
+END $$;
 
 alter table if exists vehicle_demand_matches
   add column if not exists notified_at timestamptz;

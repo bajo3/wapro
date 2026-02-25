@@ -691,16 +691,58 @@ const QuotationsManager = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
 
-  // Mock data
-  const mockVehicles = [
-    { id: 1, marca: 'Toyota', modelo: 'Corolla', version: 'XEi', precio: 35000 },
-    { id: 2, marca: 'Honda', modelo: 'Civic', version: 'EX-L', precio: 40000 },
-  ];
+  // Lightweight, self-contained data source (until the Quotes DB/API is implemented).
+  // This fixes the "no entiendo cómo se agregan clientes/vehículos" problem.
+  const [clients, setClients] = useState([]);
+  const [vehicles, setVehicles] = useState([]);
+  const [showClientForm, setShowClientForm] = useState(false);
+  const [showVehicleForm, setShowVehicleForm] = useState(false);
+  const [newClient, setNewClient] = useState({ name: '', phone: '' });
+  const [newVehicle, setNewVehicle] = useState({ marca: '', modelo: '', version: '', precio: '' });
 
-  const mockClients = [
-    { id: 1, name: 'Juan Pérez', phone: '+54 9 11 2345-6789' },
-    { id: 2, name: 'María López', phone: '+54 9 11 3456-7890' },
-  ];
+  const LS_CLIENTS = 'quotations.clients.v1';
+  const LS_VEHICLES = 'quotations.vehicles.v1';
+
+  const loadLocalList = (key, fallback = []) => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
+  const saveLocalList = (key, list) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(list));
+    } catch {}
+  };
+
+  useEffect(() => {
+    // Seed minimal demo data once, but keep it editable from the UI.
+    const seedVehicles = [
+      { id: 1, marca: 'Toyota', modelo: 'Corolla', version: 'XEi', precio: 35000 },
+      { id: 2, marca: 'Honda', modelo: 'Civic', version: 'EX-L', precio: 40000 },
+    ];
+
+    const seedClients = [
+      { id: 1, name: 'Juan Pérez', phone: '+54 9 11 2345-6789' },
+      { id: 2, name: 'María López', phone: '+54 9 11 3456-7890' },
+    ];
+
+    const c = loadLocalList(LS_CLIENTS, seedClients);
+    const v = loadLocalList(LS_VEHICLES, seedVehicles);
+
+    setClients(c);
+    setVehicles(v);
+
+    // persist seeds if missing
+    if (!localStorage.getItem(LS_CLIENTS)) saveLocalList(LS_CLIENTS, c);
+    if (!localStorage.getItem(LS_VEHICLES)) saveLocalList(LS_VEHICLES, v);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     fetchQuotations();
@@ -751,6 +793,32 @@ const QuotationsManager = () => {
     }
   };
 
+  const addClient = () => {
+    const name = String(newClient.name || '').trim();
+    const phone = String(newClient.phone || '').trim();
+    if (!name || !phone) return;
+    const nextId = (clients.reduce((m, c) => Math.max(m, Number(c.id) || 0), 0) || 0) + 1;
+    const next = [...clients, { id: nextId, name, phone }];
+    setClients(next);
+    saveLocalList(LS_CLIENTS, next);
+    setNewClient({ name: '', phone: '' });
+    setShowClientForm(false);
+  };
+
+  const addVehicle = () => {
+    const marca = String(newVehicle.marca || '').trim();
+    const modelo = String(newVehicle.modelo || '').trim();
+    const version = String(newVehicle.version || '').trim();
+    const precio = Number(newVehicle.precio);
+    if (!marca || !modelo || !Number.isFinite(precio) || precio <= 0) return;
+    const nextId = (vehicles.reduce((m, v) => Math.max(m, Number(v.id) || 0), 0) || 0) + 1;
+    const next = [...vehicles, { id: nextId, marca, modelo, version, precio }];
+    setVehicles(next);
+    saveLocalList(LS_VEHICLES, next);
+    setNewVehicle({ marca: '', modelo: '', version: '', precio: '' });
+    setShowVehicleForm(false);
+  };
+
   const applyFilters = () => {
     let filtered = [...quotations];
 
@@ -775,8 +843,8 @@ const QuotationsManager = () => {
       ...quotationData,
       id: quotations.length + 1,
       number: `2024-${String(quotations.length + 1).padStart(3, '0')}`,
-      clientName: mockClients.find(c => c.id === parseInt(quotationData.clientId))?.name,
-      vehicle: mockVehicles.find(v => v.id === parseInt(quotationData.vehicleId))?.modelo,
+      clientName: clients.find(c => c.id === parseInt(quotationData.clientId))?.name,
+      vehicle: vehicles.find(v => v.id === parseInt(quotationData.vehicleId))?.modelo,
       monthlyPayment: quotationData.financeData?.monthlyPayment
     };
 
@@ -805,8 +873,8 @@ const QuotationsManager = () => {
           </div>
           
           <QuotationForm
-            vehicles={mockVehicles}
-            clients={mockClients}
+            vehicles={vehicles}
+            clients={clients}
             onSubmit={handleCreateQuotation}
             onCancel={() => setShowForm(false)}
           />
@@ -818,6 +886,92 @@ const QuotationsManager = () => {
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
+        {/* Guidance banner (fixes "no entiendo cómo funciona" / "cómo se agregan") */}
+        <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-amber-900">Cotizaciones (modo MVP)</div>
+              <div className="mt-1 text-sm text-amber-800">
+                Clientes y vehículos se cargan desde esta pantalla y se guardan en tu navegador (localStorage).
+                Próximo paso recomendado: conectarlo a la DB/API.
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setShowClientForm((v) => !v); setShowVehicleForm(false); }}
+                className="rounded-lg bg-amber-900 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800"
+              >
+                Agregar cliente
+              </button>
+              <button
+                onClick={() => { setShowVehicleForm((v) => !v); setShowClientForm(false); }}
+                className="rounded-lg bg-amber-900 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800"
+              >
+                Agregar vehículo
+              </button>
+            </div>
+          </div>
+
+          {showClientForm && (
+            <div className="mt-4 grid gap-2 rounded-lg bg-white p-3 md:grid-cols-3">
+              <input
+                value={newClient.name}
+                onChange={(e) => setNewClient((p) => ({ ...p, name: e.target.value }))}
+                placeholder="Nombre"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+              <input
+                value={newClient.phone}
+                onChange={(e) => setNewClient((p) => ({ ...p, phone: e.target.value }))}
+                placeholder="Teléfono"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+              <button
+                onClick={addClient}
+                className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"
+              >
+                Guardar
+              </button>
+            </div>
+          )}
+
+          {showVehicleForm && (
+            <div className="mt-4 grid gap-2 rounded-lg bg-white p-3 md:grid-cols-5">
+              <input
+                value={newVehicle.marca}
+                onChange={(e) => setNewVehicle((p) => ({ ...p, marca: e.target.value }))}
+                placeholder="Marca"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+              <input
+                value={newVehicle.modelo}
+                onChange={(e) => setNewVehicle((p) => ({ ...p, modelo: e.target.value }))}
+                placeholder="Modelo"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+              <input
+                value={newVehicle.version}
+                onChange={(e) => setNewVehicle((p) => ({ ...p, version: e.target.value }))}
+                placeholder="Versión"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+              <input
+                value={newVehicle.precio}
+                onChange={(e) => setNewVehicle((p) => ({ ...p, precio: e.target.value }))}
+                placeholder="Precio"
+                inputMode="numeric"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+              <button
+                onClick={addVehicle}
+                className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"
+              >
+                Guardar
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Header */}
         <div className="mb-6 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">

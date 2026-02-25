@@ -104,6 +104,13 @@ const MainListItems = (props) => {
         icon={<AccountTreeOutlinedIcon />}
       />
 
+      {/* Cotizaciones is a core sales workflow (not admin-only). Keep it near Tickets/Pipeline. */}
+      <ListItemLink
+        to="/quotations"
+        primary="Cotizaciones"
+        icon={<DescriptionOutlinedIcon />}
+      />
+
       <ListItemLink
         to="/contacts"
         primary={i18n.t("mainDrawer.listItems.contacts")}
@@ -153,11 +160,6 @@ const MainListItems = (props) => {
               to="/bot"
               primary="Bot"
               icon={<AndroidOutlinedIcon />}
-            />
-            <ListItemLink
-              to="/quotations"
-              primary="Cotizaciones"
-              icon={<DescriptionOutlinedIcon />}
             />
             <ListItemLink
               to="/training"

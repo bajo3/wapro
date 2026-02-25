@@ -22,12 +22,15 @@ module.exports = {
 
         // Autos theme (neutral + confident accent)
         auto: {
-          surface: "#0b1220", // page background
-          panel: "#0f172a", // cards/panels
-          panel2: "#111c33", // secondary panels
-          border: "#23314a",
-          text: "#e5e7eb",
-          muted: "#9aa7bd",
+          // IMPORTANT: Keep the Tickets UI consistent with the rest of the panel.
+          // The panel defaults to light mode; previously Tickets used a dark palette,
+          // which made the UI look "split" (half dark / half light).
+          surface: "#f5f7fb", // page background
+          panel: "#ffffff", // cards/panels
+          panel2: "#ffffff", // secondary panels
+          border: "#d8deeb",
+          text: "#0f172a",
+          muted: "#6b7a90",
           accent: "#ef4444", // red accent (autos)
           open: "#22c55e",
           pending: "#f59e0b",
