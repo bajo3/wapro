@@ -3,6 +3,7 @@ import isAuth from "../middleware/isAuth";
 
 import * as ContactController from "../controllers/ContactController";
 import * as ImportPhoneContactsController from "../controllers/ImportPhoneContactsController";
+import * as ImportConversationContactsController from "../controllers/ImportConversationContactsController";
 import * as ContactsCsvImportController from "../controllers/ContactsCsvImportController";
 import * as ContactTicketsController from "../controllers/ContactTicketsController";
 
@@ -12,6 +13,13 @@ contactRoutes.post(
   "/contacts/import",
   isAuth,
   ImportPhoneContactsController.store
+);
+
+// Evolution-friendly alternative: rebuild/repair contacts from existing CRM data.
+contactRoutes.post(
+  "/contacts/import/conversations",
+  isAuth,
+  ImportConversationContactsController.store
 );
 
 // CSV import works with Evolution and whatsapp-web.js (provider-agnostic)

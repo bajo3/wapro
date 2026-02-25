@@ -5,8 +5,8 @@ import { logger } from "./utils/logger";
 import { StartAllWhatsAppsSessions } from "./services/WbotServices/StartAllWhatsAppsSessions";
 import { ProcessDueScheduledMessages } from "./services/ScheduledMessages/ProcessDueScheduledMessages";
 
-// Healthcheck para Railway / monitoreo
-app.get("/health", (_req, res) => res.status(200).json({ ok: true }));
+// Healthcheck is implemented in routes (/health) with DB + provider info.
+// Do not redefine it here (it would create confusing duplicates).
 
 // Hardening: evita crashes silenciosos
 process.on("unhandledRejection", (reason: any) => {
