@@ -19,6 +19,7 @@ import pipelineRoutes from "./pipelineRoutes";
 import scheduledMessageRoutes from "./scheduledMessageRoutes";
 import trainingMessageRoutes from "./trainingMessageRoutes";
 import campaignRoutes from "./campaignRoutes";
+import quotationRoutes from "./quotationRoutes";
 
 import sequelize from "../database";
 
@@ -59,6 +60,7 @@ routes.use(quickAnswerRoutes);
 routes.use(scheduledMessageRoutes);
 routes.use(trainingMessageRoutes);
 routes.use(campaignRoutes);
+routes.use(quotationRoutes);
 routes.use("/api/messages", apiRoutes);
 routes.use(botIntelligenceRoutes);
 routes.use(botDemandsRoutes);

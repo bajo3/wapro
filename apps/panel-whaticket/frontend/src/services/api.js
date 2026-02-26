@@ -45,6 +45,43 @@ if (!api.__authInterceptorsInstalled) {
       const originalRequest = error.config;
       const hasAccessToken = !!localStorage.getItem("token");
 
+      // --- Rate limit (429) backoff ---
+      // The Panel can fire bursts of GETs (mount + polling). If the backend rate-limits,
+      // do a short exponential backoff and retry a couple of times to avoid error loops.
+      try {
+        const status = error?.response?.status;
+        const url = String(originalRequest?.url || "");
+        const method = String(originalRequest?.method || "get").toLowerCase();
+
+        const shouldHandle429 =
+          status === 429 &&
+          !!originalRequest &&
+          method === "get" &&
+          !url.includes("/auth/login") &&
+          !url.includes("/auth/refresh_token");
+
+        if (shouldHandle429) {
+          originalRequest.__retry429Count = Number(originalRequest.__retry429Count || 0) + 1;
+          if (originalRequest.__retry429Count <= 2) {
+            const retryAfterRaw =
+              error?.response?.headers?.["retry-after"] || error?.response?.headers?.["Retry-After"];
+            const retryAfterSec = Number.parseInt(String(retryAfterRaw || ""), 10);
+
+            const base = 800; // ms
+            const exp = base * Math.pow(2, originalRequest.__retry429Count - 1);
+            const delayMs =
+              Number.isFinite(retryAfterSec) && retryAfterSec > 0
+                ? Math.min(5000, retryAfterSec * 1000)
+                : Math.min(4000, exp);
+
+            await new Promise((r) => setTimeout(r, delayMs));
+            return api(originalRequest);
+          }
+        }
+      } catch {
+        // ignore
+      }
+
       if (
         (error?.response?.status === 401 || error?.response?.status === 403) &&
         originalRequest &&

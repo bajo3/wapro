@@ -37,12 +37,29 @@ const storeIfRedis = (prefix: string) => {
 // Rate limiter general para toda la API
 export const generalLimiter: RateLimitRequestHandler = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  // The Panel UI performs many GETs (tickets, counts, queues, sessions, etc.).
+  // Keep a limiter for non-idempotent requests, but don't let normal UI usage
+  // self-DDoS the backend.
+  max: Number(process.env.RATE_LIMIT_GENERAL_MAX || 600),
   message: { error: "Demasiadas solicitudes desde esta IP, por favor intenta nuevamente más tarde." },
   standardHeaders: true,
   legacyHeaders: false,
   ...(storeIfRedis("rl:general:") ? { store: storeIfRedis("rl:general:") } : {}),
-  skip: (req: Request) => ["/health", "/metrics"].includes(req.path),
+  skip: (req: Request) => {
+    // Always allow health/metrics.
+    if (["/health", "/metrics"].includes(req.path)) return true;
+
+    // Avoid blocking Panel navigation/polling (GET endpoints).
+    if (String(req.method || "").toUpperCase() === "GET") return true;
+
+    // Auth has its own limiter.
+    if (String(req.path || "").startsWith("/auth")) return true;
+
+    // Webhooks have their own limiter.
+    if (String(req.path || "").startsWith("/webhooks")) return true;
+
+    return false;
+  },
 });
 
 // Rate limiter estricto para login

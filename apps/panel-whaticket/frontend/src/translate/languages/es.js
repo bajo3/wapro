@@ -526,6 +526,21 @@ const messages = {
           "El mensaje de saludo es obligatorio cuando hay más de una cola.",
         ERR_CONTACTS_IMPORT_UNSUPPORTED_PROVIDER:
           "Importar contactos del teléfono no está disponible con Evolution. Cargá contactos manualmente o por CSV.",
+
+        // Bot / Demandas
+        ERR_BOT_NOT_CONFIGURED:
+          "Bot no configurado. Falta BOT_URL o BOT_ADMIN_TOKEN en el backend.",
+        ERR_BOT_TIMEOUT:
+          "Timeout al conectar con el bot. Verificá BOT_URL y la disponibilidad del servicio.",
+
+        // Cotizaciones
+        ERR_QUOTATION_NOT_FOUND: "No se encontró la cotización.",
+        ERR_QUOTATION_CLIENT_REQUIRED: "La cotización requiere un cliente.",
+        ERR_QUOTATION_VEHICLE_REQUIRED: "La cotización requiere un vehículo.",
+        ERR_QUOTATION_PHONE_REQUIRED:
+          "La cotización no tiene teléfono para enviar por WhatsApp.",
+        ERR_QUOTATION_CREATE_FAILED:
+          "No se pudo crear la cotización. Intentalo nuevamente.",
       },
     },
   },
