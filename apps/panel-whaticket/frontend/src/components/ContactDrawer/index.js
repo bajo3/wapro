@@ -131,6 +131,13 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
   const [noteInput, setNoteInput] = useState("");
   const [historyTickets, setHistoryTickets] = useState([]);
 
+  // Recontacto por conversación (scheduled messages)
+  const [scheduledRows, setScheduledRows] = useState([]);
+  const [recontactDays, setRecontactDays] = useState(3);
+  const [recontactBody, setRecontactBody] = useState(
+    "Hola! ¿Cómo venimos? Si querés, decime presupuesto y qué estás buscando y te paso opciones disponibles 😊"
+  );
+
   const ticketId = ticket?.id;
   const contactId = contact?.id;
 
@@ -154,6 +161,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
     setHistoryTickets([]);
     setTagInput("");
     setNoteInput("");
+    setScheduledRows([]);
   }, [ticketId, contactId]);
 
   useEffect(() => {
@@ -166,6 +174,10 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
           ]);
           setTags(tagsRes.data?.tags || []);
           setNotes(notesRes.data?.notes || []);
+
+          // Recontactos agendados para este ticket
+          const smRes = await api.get(`/scheduled-messages`, { params: { ticketId, limit: 25 } });
+          setScheduledRows(smRes.data?.rows || []);
         }
       } catch (err) {
         toastError(err);
@@ -249,6 +261,39 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
     if (!ticketId) return;
     try {
       await api.put(`/tickets/${ticketId}/bot-mode`, { botMode: mode });
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const refreshScheduled = async () => {
+    if (!ticketId) return;
+    try {
+      const smRes = await api.get(`/scheduled-messages`, { params: { ticketId, limit: 25 } });
+      setScheduledRows(smRes.data?.rows || []);
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const createRecontact = async () => {
+    if (!ticketId || !contactId) return;
+    const days = Math.max(0, Number(recontactDays) || 0);
+    const body = String(recontactBody || "").trim();
+    if (!body) return;
+    const sendAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+    try {
+      await api.post(`/scheduled-messages`, { ticketId, contactId, body, sendAt });
+      await refreshScheduled();
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const cancelScheduled = async (id) => {
+    try {
+      await api.post(`/scheduled-messages/${id}/cancel`);
+      await refreshScheduled();
     } catch (err) {
       toastError(err);
     }
@@ -433,6 +478,69 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 									{i18n.t("contactDrawer.ticket.botMode.actions.off")}
 								</Button>
 							</div>
+
+							<Divider style={{ margin: "16px 0", borderColor: "rgba(255,255,255,0.08)" }} />
+
+							<Typography variant="subtitle2">Recontacto</Typography>
+							<Typography variant="body2" className={classes.muted} style={{ marginTop: 4 }}>
+								Agendá un mensaje automático para esta conversación.
+							</Typography>
+							<div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+								<div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 10, alignItems: "center" }}>
+									<TextField
+										label="Días"
+										variant="outlined"
+										size="small"
+										type="number"
+										value={recontactDays}
+										onChange={(e) => setRecontactDays(e.target.value)}
+										InputProps={{ style: { color: "#e5e7eb" } }}
+									/>
+									<Button size="small" variant="contained" color="primary" onClick={createRecontact}>
+										Agendar
+									</Button>
+								</div>
+								<TextField
+									label="Mensaje"
+									variant="outlined"
+									multiline
+									minRows={3}
+									value={recontactBody}
+									onChange={(e) => setRecontactBody(e.target.value)}
+									InputProps={{ style: { color: "#e5e7eb" } }}
+									fullWidth
+								/>
+							</div>
+
+							<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+								<Typography variant="caption" className={classes.muted}>
+									Próximos envíos (este ticket)
+								</Typography>
+								<Button size="small" variant="outlined" onClick={refreshScheduled}>
+									Refrescar
+								</Button>
+							</div>
+
+							<List dense>
+								{(scheduledRows || []).map((r) => (
+									<ListItem key={r.id} divider>
+										<ListItemText
+											primary={`#${r.id} • ${r.status}`}
+											secondary={`Enviar: ${new Date(r.sendAt).toLocaleString()} • ${String(r.body || "").slice(0, 80)}${String(r.body || "").length > 80 ? "…" : ""}`}
+										/>
+										{r.status === "PENDING" ? (
+											<Button size="small" variant="outlined" onClick={() => cancelScheduled(r.id)}>
+												Cancelar
+											</Button>
+										) : null}
+									</ListItem>
+								))}
+								{!(scheduledRows || []).length && (
+									<Typography variant="body2" color="textSecondary" style={{ marginTop: 8 }}>
+										No hay recontactos agendados.
+									</Typography>
+								)}
+							</List>
 
 							<Divider style={{ margin: "16px 0", borderColor: "rgba(255,255,255,0.08)" }} />
 

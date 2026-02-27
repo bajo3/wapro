@@ -75,6 +75,14 @@ type AggregatorEntry = {
   msgIds: string[];
   /** last N raw texts (kept in order) */
   texts: string[];
+  /** last media seen within the aggregation window (best-effort) */
+  lastMedia?: {
+    kind: 'image' | 'video' | 'document' | 'audio' | 'sticker' | 'unknown';
+    caption?: string;
+    url?: string;
+    mimetype?: string;
+    fileLength?: number;
+  } | null;
   /** timestamp of the first message in the window */
   firstAt: number;
   /** timestamp of the last message in the window */
@@ -182,6 +190,98 @@ function extractOptionNumber(text: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function extractMedia(msg: any): AggregatorEntry['lastMedia'] {
+  const m = msg?.message || {};
+  const pickUrl = (obj: any) => {
+    const u = obj?.url || obj?.imageUrl || obj?.mediaUrl;
+    return typeof u === 'string' && u.trim() ? u.trim() : undefined;
+  };
+
+  if (m.imageMessage) {
+    return {
+      kind: 'image',
+      caption: typeof m.imageMessage.caption === 'string' ? m.imageMessage.caption : undefined,
+      url: pickUrl(m.imageMessage),
+      mimetype: typeof m.imageMessage.mimetype === 'string' ? m.imageMessage.mimetype : undefined,
+      fileLength: Number(m.imageMessage.fileLength ?? 0) || undefined
+    };
+  }
+  if (m.videoMessage) {
+    return {
+      kind: 'video',
+      caption: typeof m.videoMessage.caption === 'string' ? m.videoMessage.caption : undefined,
+      url: pickUrl(m.videoMessage),
+      mimetype: typeof m.videoMessage.mimetype === 'string' ? m.videoMessage.mimetype : undefined,
+      fileLength: Number(m.videoMessage.fileLength ?? 0) || undefined
+    };
+  }
+  if (m.documentMessage) {
+    return {
+      kind: 'document',
+      caption: typeof m.documentMessage.caption === 'string' ? m.documentMessage.caption : undefined,
+      url: pickUrl(m.documentMessage),
+      mimetype: typeof m.documentMessage.mimetype === 'string' ? m.documentMessage.mimetype : undefined,
+      fileLength: Number(m.documentMessage.fileLength ?? 0) || undefined
+    };
+  }
+  if (m.audioMessage) {
+    return {
+      kind: 'audio',
+      url: pickUrl(m.audioMessage),
+      mimetype: typeof m.audioMessage.mimetype === 'string' ? m.audioMessage.mimetype : undefined,
+      fileLength: Number(m.audioMessage.fileLength ?? 0) || undefined
+    };
+  }
+  if (m.stickerMessage) {
+    return { kind: 'sticker', url: pickUrl(m.stickerMessage) };
+  }
+  return null;
+}
+
+function detectNeedProfile(rawText: string) {
+  const t = normalize(rawText);
+  const wantsRemis = /(remis|taxi|uber|cabify)/i.test(rawText);
+  const wantsPickup = /(camioneta|pickup|pick\s*up|4x4|doble\s*cabina|hilux|amarok|ranger|s10|frontier)/i.test(rawText);
+  const wantsTruck = /(camion\b|camioneta\s*grande|camion\s*chico|furgon|utilitario)/i.test(rawText);
+  const wantsSuv = /(suv|crossover)/i.test(rawText);
+  const wantsSmall = wantsRemis || /(sedan|sed\u00e1n|hatch|compacto|economico|econ\u00f3mico)/i.test(rawText);
+  return { wantsRemis, wantsPickup, wantsTruck, wantsSuv, wantsSmall, t };
+}
+
+function isVehicleItem(it: any): boolean {
+  return !!(it && (it.year || it.brand || it.model || (it.category && /auto|autos|veh|car/i.test(String(it.category)) )));
+}
+
+function isTruckishName(name: string): boolean {
+  const n = normalize(name);
+  return /(camion\b|truck\b|furgon|utilitario|pickup|pick\s*up|hilux|amarok|ranger|s10|frontier|sprinter|ducato|master)/.test(n);
+}
+
+function isSedanHatchName(name: string): boolean {
+  const n = normalize(name);
+  return /(sedan|hatch|onix|gol\b|polo\b|corolla|cronos|fiesta|focus|civic|sentra|versa|etios|logan|clio|208\b|206\b)/.test(n);
+}
+
+function applyVehicleGuardrails(rawText: string, hits: any[]): { hits: any[]; changed: boolean } {
+  const prof = detectNeedProfile(rawText);
+  if (!hits?.length) return { hits: hits || [], changed: false };
+  if (!hits.some(isVehicleItem)) return { hits, changed: false };
+
+  // If user asks for remis/taxi/uber: exclude truck/pickup unless explicitly requested.
+  if (prof.wantsRemis && !prof.wantsPickup && !prof.wantsTruck) {
+    const filtered = hits.filter((it) => !isTruckishName(String(it.name || it.id || '')));
+    return { hits: filtered.length ? filtered : hits, changed: filtered.length ? true : false };
+  }
+
+  // If user asks explicitly for pickup/camioneta/suv/truck: don't propose sedans/hatch.
+  if ((prof.wantsPickup || prof.wantsTruck || prof.wantsSuv) && !prof.wantsSmall) {
+    const filtered = hits.filter((it) => !isSedanHatchName(String(it.name || it.id || '')));
+    return { hits: filtered.length ? filtered : hits, changed: filtered.length ? true : false };
+  }
+
+  return { hits, changed: false };
+}
+
 /**
  * Handle an aggregated message. This function runs outside of the
  * HTTP request/response cycle. It reads the current conversation
@@ -263,6 +363,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       if (e?.sendTimer) clearTimeout(e.sendTimer);
       aggregators.delete(key);
     };
+
+    const lastMedia = (aggEntry as any)?.lastMedia ?? null;
 
     const scheduleReply = (reply: string, nextState: any, imageUrl?: string) => {
       const delayMs = computeHumanDelay(reply);
@@ -440,12 +542,14 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     let reply = '';
     // Start newState from previous state so we don't drop unrelated keys
-    let newState: ConvState = { ...state, stage: 'idle', lastBotAt: nowIso, extracted } as any;
+    // Persist media context (best-effort) so later turns can reference it.
+    let newState: ConvState = { ...state, stage: 'idle', lastBotAt: nowIso, extracted, last_media: lastMedia } as any;
     let isFallback = false;
 
     // If awaiting a query from previous greeting/price intent
     if (state.stage === 'awaiting_query') {
-      const hits = searchCatalog(catalog, rawText, 6);
+      const baseHits = searchCatalog(catalog, rawText, 6);
+      const { hits } = applyVehicleGuardrails(rawText, baseHits);
       if (hits.length) {
         // If there is exactly one match, send an image + details directly and skip listing.
         if (hits.length === 1) {
@@ -482,7 +586,12 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           'No me aparece ese modelo. ¿Tenés presupuesto aproximado?',
           'No lo veo en el catálogo ahora. ¿Qué uso le das y rango de precio?'
         ];
-        reply = pickOne(noMatchVariants);
+        // If user sent media-only or looks like they referenced an image, ask for a minimal detail.
+        if (lastMedia && !String(rawText || '').trim()) {
+          reply = 'Te vi la imagen 👍 ¿qué modelo/marca estás buscando o cuál es tu presupuesto aproximado?';
+        } else {
+          reply = pickOne(noMatchVariants);
+        }
         newState.last_intent = 'no_match';
         newState.last_query = rawText;
         isFallback = true;
@@ -523,7 +632,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         newState.stage = 'awaiting_query';
         newState.last_intent = 'price_request';
       } else if (shouldSearch) {
-        const hits = searchCatalog(catalog, rawText, 6);
+        const baseHits = searchCatalog(catalog, rawText, 6);
+        const { hits } = applyVehicleGuardrails(rawText, baseHits);
         if (hits.length) {
           // If exactly one hit, send image + details directly and return early
           if (hits.length === 1) {
@@ -558,7 +668,11 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             'No me aparece ese modelo. ¿Tenés presupuesto aproximado?',
             'No lo veo en el catálogo ahora. ¿Qué uso le das y rango de precio?'
           ];
-          reply = pickOne(noMatchVariants);
+          if (lastMedia && !String(rawText || '').trim()) {
+            reply = 'Te vi la imagen 👍 ¿qué modelo/marca es o qué rango de precio buscás?';
+          } else {
+            reply = pickOne(noMatchVariants);
+          }
           newState.last_intent = 'no_match';
           newState.last_query = rawText;
           newState.stage = 'awaiting_query';
@@ -674,8 +788,11 @@ webhookRouter.post('/evolution', async (req: Request, res: Response) => {
     await markDedupe(msgId, instance, remoteJid, fromMe ? 'OUT' : 'IN');
 
     const rawText = getText(msg);
+    const media = extractMedia(msg);
     const text = normalize(rawText);
-    if (!text) return res.status(200).json({ ok: true, ignored: true, reason: 'empty_text' });
+    // Accept media-only messages (no caption). We'll aggregate them so the bot
+    // can wait for the full context (text + image/catalog) before replying.
+    if (!text && !media) return res.status(200).json({ ok: true, ignored: true, reason: 'empty_text' });
 
     // Emit an event for inbound messages so the manager UI can update in real time.
     try {
@@ -707,11 +824,12 @@ webhookRouter.post('/evolution', async (req: Request, res: Response) => {
         clearTimeout(existing.sendTimer);
         existing.sendTimer = null;
       }
-      existing.texts.push(rawText);
+      if (rawText) existing.texts.push(rawText);
       existing.msgIds.push(msgId);
       // Keep only the last few to avoid unbounded growth
       if (existing.texts.length > 6) existing.texts = existing.texts.slice(-6);
       if (existing.msgIds.length > 6) existing.msgIds = existing.msgIds.slice(-6);
+      if (media) existing.lastMedia = media;
       existing.count += 1;
       existing.lastAt = nowMs;
       entry = existing;
@@ -722,12 +840,13 @@ webhookRouter.post('/evolution', async (req: Request, res: Response) => {
         remoteJid,
         fromMe,
         msgIds: [msgId],
-        texts: [rawText],
+        texts: rawText ? [rawText] : [],
         firstAt: nowMs,
         lastAt: nowMs,
         count: 1,
         timer: null,
-        sendTimer: null
+        sendTimer: null,
+        lastMedia: media
       };
     }
 

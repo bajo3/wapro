@@ -50,7 +50,11 @@ import {
   updateDemand
 } from "../../../services/demands";
 
-const defaultForm = {
+// IMPORTANT:
+// Always create a *fresh* form object when opening the modal.
+// Reusing the same object reference can lead to subtle controlled-input bugs
+// (e.g. characters "disappearing" when state gets overwritten by a stale reference).
+const makeDefaultForm = () => ({
   query: "",
   brand: "",
   model: "",
@@ -71,7 +75,7 @@ const defaultForm = {
   recontactEveryDays: 7,
   recontactMax: 3,
   recontactTemplate: ""
-};
+});
 
 function fmtDate(iso) {
   try {
@@ -98,7 +102,7 @@ export default function Demands() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState(defaultForm);
+  const [form, setForm] = useState(() => makeDefaultForm());
 
   const canSave = useMemo(() => String(form.query || "").trim().length > 0, [form.query]);
 
@@ -161,14 +165,14 @@ export default function Demands() {
 
   const openNew = () => {
     setEditing(null);
-    setForm(defaultForm);
+    setForm(makeDefaultForm());
     setModalOpen(true);
   };
 
   const openEdit = (d) => {
     setEditing(d);
     setForm({
-      ...defaultForm,
+      ...makeDefaultForm(),
       query: d.query || "",
       brand: d.brand || "",
       model: d.model || "",

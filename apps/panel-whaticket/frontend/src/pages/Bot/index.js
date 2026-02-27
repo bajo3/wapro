@@ -1,5 +1,5 @@
 import React, { useContext, useEffect, useMemo, useState } from "react";
-import { useHistory } from "react-router-dom";
+import { useHistory, useLocation } from "react-router-dom";
 
 import {
   Box,
@@ -31,6 +31,9 @@ import { AuthContext } from "../../context/Auth/AuthContext";
 // Import the global bot toggle component. This button allows admins
 // to turn the bot on or off for all tickets directly from the Bot page.
 import BotGeneralToggle from "./BotGeneralToggle";
+
+// Training is now part of the Bot section (tab).
+import TrainingMessages from "../TrainingMessages";
 
 const useStyles = makeStyles((theme) => ({
   mainPaper: {
@@ -72,6 +75,7 @@ function parseCsvTriggers(s) {
 const Bot = () => {
   const classes = useStyles();
   const history = useHistory();
+  const location = useLocation();
   const { user } = useContext(AuthContext);
 
   useEffect(() => {
@@ -80,7 +84,22 @@ const Bot = () => {
     }
   }, [user, history]);
 
-  const [tab, setTab] = useState(0);
+  // Tabs: keep stable indices.
+  // 0=general, 1=policies, 2=faqs, 3=playbooks, 4=training, 5=playground, 6=tests, 7=decisions
+  const TAB_KEYS = ["general", "policies", "faqs", "playbooks", "training", "playground", "tests", "decisions"];
+
+  const parseTabFromUrl = () => {
+    try {
+      const params = new URLSearchParams(location.search || "");
+      const key = String(params.get("tab") || "").toLowerCase();
+      const idx = TAB_KEYS.indexOf(key);
+      return idx >= 0 ? idx : 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  const [tab, setTab] = useState(parseTabFromUrl);
   const [loading, setLoading] = useState(false);
 
   // Settings
@@ -221,6 +240,24 @@ const Bot = () => {
     if (user?.profile === "admin") loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.profile]);
+
+  // Keep URL in sync with selected tab for deep-links and /training redirect.
+  useEffect(() => {
+    const key = TAB_KEYS[tab] || "intelligence";
+    const params = new URLSearchParams(location.search || "");
+    if (params.get("tab") !== key) {
+      params.set("tab", key);
+      history.replace({ pathname: "/bot", search: params.toString() });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  // If user manually changes the URL (?tab=training), update the UI.
+  useEffect(() => {
+    const idx = parseTabFromUrl();
+    if (idx !== tab) setTab(idx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
 
   const saveSettings = async () => {
     try {
@@ -370,6 +407,82 @@ const Bot = () => {
               >
                 Guardar settings
               </Button>
+            </Box>
+
+            <Divider style={{ margin: "20px 0" }} />
+
+            <Typography variant="subtitle1" gutterBottom>
+              Ejemplos
+            </Typography>
+            <Typography variant="body2" color="textSecondary" gutterBottom>
+              Documentá respuestas ideales por intent (útil para ajustar la inteligencia y futuras mejoras).
+            </Typography>
+
+            <Box className={classes.formRow}>
+              <TextField
+                label="Intent"
+                variant="outlined"
+                value={exForm.intent}
+                onChange={(e) => setExForm({ ...exForm, intent: e.target.value })}
+              />
+              <TextField
+                label="Notas"
+                variant="outlined"
+                value={exForm.notes}
+                onChange={(e) => setExForm({ ...exForm, notes: e.target.value })}
+              />
+              <TextField
+                className={classes.full}
+                label="User text"
+                variant="outlined"
+                multiline
+                rows={3}
+                value={exForm.user_text}
+                onChange={(e) => setExForm({ ...exForm, user_text: e.target.value })}
+              />
+              <TextField
+                className={classes.full}
+                label="Ideal answer"
+                variant="outlined"
+                multiline
+                rows={4}
+                value={exForm.ideal_answer}
+                onChange={(e) => setExForm({ ...exForm, ideal_answer: e.target.value })}
+              />
+              <Box className={classes.full}>
+                <Button color="primary" variant="contained" onClick={createExampleRow}>
+                  Guardar ejemplo
+                </Button>
+              </Box>
+            </Box>
+
+            <Box mt={2}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>ID</TableCell>
+                    <TableCell>Intent</TableCell>
+                    <TableCell>User</TableCell>
+                    <TableCell>Ideal</TableCell>
+                    <TableCell align="right">Acciones</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {examples.map((x) => (
+                    <TableRow key={x.id}>
+                      <TableCell>{x.id}</TableCell>
+                      <TableCell>{x.intent}</TableCell>
+                      <TableCell style={{ maxWidth: 280, whiteSpace: "pre-wrap" }}>{x.user_text}</TableCell>
+                      <TableCell style={{ maxWidth: 320, whiteSpace: "pre-wrap" }}>{x.ideal_answer}</TableCell>
+                      <TableCell align="right">
+                        <Button size="small" variant="outlined" color="secondary" onClick={() => deleteExampleRow(x.id)}>
+                          Borrar
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </Box>
           </TabPanel>
 
@@ -587,88 +700,7 @@ const Bot = () => {
           </TabPanel>
 
           <TabPanel value={tab} index={4}>
-            <Typography variant="body2" gutterBottom>
-              Ejemplos: sirven como base para futuros upgrades (LLM), y hoy te dejan documentar respuestas ideales por intent.
-            </Typography>
-            <Box className={classes.formRow}>
-              <TextField
-                label="Intent"
-                variant="outlined"
-                value={exForm.intent}
-                onChange={(e) => setExForm({ ...exForm, intent: e.target.value })}
-              />
-              <TextField
-                label="Notas"
-                variant="outlined"
-                value={exForm.notes}
-                onChange={(e) => setExForm({ ...exForm, notes: e.target.value })}
-              />
-              <TextField
-                className={classes.full}
-                label="User text"
-                variant="outlined"
-                multiline
-                rows={3}
-                value={exForm.user_text}
-                onChange={(e) => setExForm({ ...exForm, user_text: e.target.value })}
-              />
-              <TextField
-                className={classes.full}
-                label="Ideal answer"
-                variant="outlined"
-                multiline
-                rows={4}
-                value={exForm.ideal_answer}
-                onChange={(e) => setExForm({ ...exForm, ideal_answer: e.target.value })}
-              />
-              <Box className={classes.full}>
-                <Button color="primary" variant="contained" onClick={createExampleRow}>
-                  Guardar ejemplo
-                </Button>
-              </Box>
-            </Box>
-
-            <Box mt={2}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>ID</TableCell>
-                    <TableCell>Intent</TableCell>
-                    <TableCell>User</TableCell>
-                    <TableCell>Ideal</TableCell>
-                    <TableCell align="right">Acciones</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {examples.map((x) => (
-                    <TableRow key={x.id}>
-                      <TableCell>{x.id}</TableCell>
-                      <TableCell>{x.intent}</TableCell>
-                      <TableCell
-                        style={{ maxWidth: 280, whiteSpace: "pre-wrap" }}
-                      >
-                        {x.user_text}
-                      </TableCell>
-                      <TableCell
-                        style={{ maxWidth: 320, whiteSpace: "pre-wrap" }}
-                      >
-                        {x.ideal_answer}
-                      </TableCell>
-                      <TableCell align="right">
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          color="secondary"
-                          onClick={() => deleteExampleRow(x.id)}
-                        >
-                          Eliminar
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Box>
+            <TrainingMessages />
           </TabPanel>
 
           <TabPanel value={tab} index={7}>

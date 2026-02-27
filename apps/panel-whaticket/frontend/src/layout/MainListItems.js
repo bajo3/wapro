@@ -162,11 +162,6 @@ const MainListItems = (props) => {
               icon={<AndroidOutlinedIcon />}
             />
             <ListItemLink
-              to="/training"
-              primary="Training"
-              icon={<AccountTreeOutlinedIcon />}
-            />
-            <ListItemLink
               to="/campaigns"
               primary="Campañas"
               icon={<PeopleAltOutlinedIcon />}

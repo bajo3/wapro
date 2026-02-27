@@ -1,63 +1,222 @@
 import { Request, Response } from "express";
 import sequelize from "../database";
 
-// Best-effort catalog endpoint.
-// Reads from public.vehicles (same Postgres DB as the panel backend).
-// If the table does not exist, returns an empty list.
+// Robust best-effort catalog endpoint.
+// Goal: keep the frontend contract stable:
+//   { vehicles: [{ id, marca, modelo, version, precio, currency, year }] }
+// while autodetecting the underlying table/columns without adding new ENV.
 
 type Query = {
   q?: string;
   limit?: string;
 };
 
+type ColumnMap = {
+  id: string;
+  brand?: string;
+  model?: string;
+  version?: string;
+  title?: string;
+  price?: string;
+  currency?: string;
+  year?: string;
+};
+
+type CatalogSource = {
+  schema: string;
+  table: string;
+  columns: string[];
+  map: ColumnMap;
+};
+
+const CANDIDATE_TABLES = [
+  "vehicles",
+  "Vehicles",
+  "vehicle",
+  "autos",
+  "cars",
+  "car_stock",
+  "stock_vehicles",
+  "catalog",
+  "vehiculos",
+];
+
+const COL_SYNONYMS: Record<keyof Omit<ColumnMap, "id">, string[]> = {
+  brand: ["brand", "marca", "make"],
+  model: ["model", "modelo"],
+  version: ["version", "trim", "variant", "versi\u00f3n", "version_name"],
+  title: ["title", "nombre", "name", "descripcion", "description"],
+  price: ["price", "precio", "valor", "amount"],
+  currency: ["currency", "moneda", "currency_code"],
+  year: ["year", "anio", "a\u00f1o", "model_year"],
+};
+
+const ID_SYNONYMS = ["id", "vehicle_id", "uuid", "uid"]; // prefer stable identifiers
+
+let cache: { at: number; source: CatalogSource | null } = { at: 0, source: null };
+const CACHE_TTL_MS = 60_000;
+
+function pickFirstPresent(columns: string[], synonyms: string[]): string | undefined {
+  const set = new Set(columns.map((c) => c.toLowerCase()));
+  for (const s of synonyms) {
+    if (set.has(s.toLowerCase())) {
+      // return original case column name if possible
+      const original = columns.find((c) => c.toLowerCase() === s.toLowerCase());
+      return original || s;
+    }
+  }
+  return undefined;
+}
+
+async function detectSource(): Promise<CatalogSource | null> {
+  const now = Date.now();
+  if (cache.source && now - cache.at < CACHE_TTL_MS) return cache.source;
+
+  try {
+    // List candidate tables in public schema
+    const [rows] = await sequelize.query(
+      `
+      SELECT table_schema, table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_type = 'BASE TABLE'
+        AND table_name = ANY(:names)
+      ORDER BY array_position(:names, table_name) ASC NULLS LAST, table_name ASC
+    `,
+      { replacements: { names: CANDIDATE_TABLES } }
+    );
+
+    const tables = (Array.isArray(rows) ? rows : []) as Array<{ table_schema: string; table_name: string }>;
+
+    // Also attempt the canonical table first (public.vehicles) even if not in candidates
+    const preferred = [{ table_schema: "public", table_name: "vehicles" }, ...tables];
+
+    for (const t of preferred) {
+      const schema = String(t.table_schema || "public");
+      const table = String(t.table_name || "");
+      if (!table) continue;
+
+      const [cRows] = await sequelize.query(
+        `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = :schema AND table_name = :table
+      `,
+        { replacements: { schema, table } }
+      );
+      const cols = (Array.isArray(cRows) ? cRows : [])
+        .map((r: any) => String(r.column_name))
+        .filter(Boolean);
+      if (!cols.length) continue;
+
+      const idCol = pickFirstPresent(cols, ID_SYNONYMS);
+      if (!idCol) continue;
+
+      const map: ColumnMap = {
+        id: idCol,
+        brand: pickFirstPresent(cols, COL_SYNONYMS.brand),
+        model: pickFirstPresent(cols, COL_SYNONYMS.model),
+        version: pickFirstPresent(cols, COL_SYNONYMS.version),
+        title: pickFirstPresent(cols, COL_SYNONYMS.title),
+        price: pickFirstPresent(cols, COL_SYNONYMS.price),
+        currency: pickFirstPresent(cols, COL_SYNONYMS.currency),
+        year: pickFirstPresent(cols, COL_SYNONYMS.year),
+      };
+
+      // Heuristic: require *at least* (brand+model) OR title so it isn't some unrelated table.
+      const looksLikeVehicles = !!(map.title || (map.brand && map.model));
+      if (!looksLikeVehicles) continue;
+
+      const source: CatalogSource = { schema, table, columns: cols, map };
+      cache = { at: now, source };
+      return source;
+    }
+  } catch {
+    // ignore
+  }
+
+  cache = { at: now, source: null };
+  return null;
+}
+
+function qi(ident: string): string {
+  // Quote identifiers defensively (handles case-sensitive columns/tables).
+  return `"${String(ident).replace(/"/g, '""')}"`;
+}
+
 export const index = async (req: Request, res: Response): Promise<Response> => {
   const { q = "", limit = "200" } = req.query as Query;
   const lim = Math.min(Math.max(parseInt(String(limit), 10) || 200, 1), 1000);
   const term = String(q || "").trim();
 
-  // IMPORTANT:
-  // We keep this query defensive because not every DB will have the catalog.
-  // It must never crash the panel.
-
-  const where = term
-    ? `WHERE (title ILIKE :term OR brand ILIKE :term OR model ILIKE :term OR version ILIKE :term)`
-    : "";
-
-  const sql = `
-    SELECT
-      id,
-      COALESCE(brand, marca, '') as brand,
-      COALESCE(model, modelo, '') as model,
-      COALESCE(version, trim, title, '') as title,
-      COALESCE(price, precio, 0) as price,
-      COALESCE(currency, moneda, 'USD') as currency,
-      year
-    FROM public.vehicles
-    ${where}
-    ORDER BY year DESC NULLS LAST, id DESC
-    LIMIT :lim
-  `;
-
   try {
+    const source = await detectSource();
+    if (!source) return res.json({ vehicles: [] });
+
+    const { schema, table, map } = source;
+
+    // Build SELECT with best-effort fallbacks.
+    const brandExpr = map.brand ? qi(map.brand) : "''";
+    const modelExpr = map.model ? qi(map.model) : "''";
+
+    // Prefer title if it exists, otherwise version, otherwise concat brand+model.
+    const titleExpr = map.title
+      ? qi(map.title)
+      : map.version
+        ? qi(map.version)
+        : `TRIM(CONCAT(${brandExpr}, ' ', ${modelExpr}))`;
+
+    const priceExpr = map.price ? `COALESCE(${qi(map.price)}, 0)` : "0";
+    const currencyExpr = map.currency ? `COALESCE(${qi(map.currency)}, 'USD')` : `'USD'`;
+    const yearExpr = map.year ? qi(map.year) : "NULL";
+
+    const whereParts: string[] = [];
+    if (term) {
+      const orParts: string[] = [];
+      if (map.title) orParts.push(`${qi(map.title)} ILIKE :term`);
+      if (map.brand) orParts.push(`${qi(map.brand)} ILIKE :term`);
+      if (map.model) orParts.push(`${qi(map.model)} ILIKE :term`);
+      if (map.version) orParts.push(`${qi(map.version)} ILIKE :term`);
+      if (orParts.length) whereParts.push(`(${orParts.join(" OR ")})`);
+    }
+
+    const whereSql = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
+
+    const sql = `
+      SELECT
+        ${qi(map.id)} as id,
+        ${brandExpr} as brand,
+        ${modelExpr} as model,
+        ${titleExpr} as title,
+        ${priceExpr} as price,
+        ${currencyExpr} as currency,
+        ${yearExpr} as year
+      FROM ${qi(schema)}.${qi(table)}
+      ${whereSql}
+      ORDER BY ${map.year ? `${qi(map.year)} DESC NULLS LAST,` : ""} ${qi(map.id)} DESC
+      LIMIT :lim
+    `;
+
     const [rows] = await sequelize.query(sql, {
       replacements: {
         term: `%${term}%`,
-        lim
-      }
+        lim,
+      },
     });
 
     const vehicles = (Array.isArray(rows) ? rows : []).map((v: any) => ({
       id: v.id,
-      marca: v.brand,
-      modelo: v.model,
-      version: v.title,
+      marca: String(v.brand || "").trim(),
+      modelo: String(v.model || "").trim(),
+      version: String(v.title || "").trim(),
       precio: Number(v.price) || 0,
       currency: String(v.currency || "USD").toUpperCase(),
-      year: v.year ?? null
+      year: v.year ?? null,
     }));
 
     return res.json({ vehicles });
   } catch {
+    // Best-effort: never crash the panel.
     return res.json({ vehicles: [] });
   }
 };

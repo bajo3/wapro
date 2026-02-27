@@ -5,8 +5,12 @@ export const index = async (req: Request, res: Response) => {
   const page = Math.max(1, Number(req.query.page ?? 1));
   const limit = Math.min(100, Math.max(10, Number(req.query.limit ?? 25)));
   const status = req.query.status ? String(req.query.status) : undefined;
+  const ticketId = req.query.ticketId ? Number(req.query.ticketId) : undefined;
+  const contactId = req.query.contactId ? Number(req.query.contactId) : undefined;
   const where: any = {};
   if (status) where.status = status;
+  if (Number.isFinite(ticketId as any)) where.ticketId = ticketId;
+  if (Number.isFinite(contactId as any)) where.contactId = contactId;
 
   const { rows, count } = await ScheduledMessage.findAndCountAll({
     where,

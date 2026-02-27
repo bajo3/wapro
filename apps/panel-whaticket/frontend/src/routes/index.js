@@ -1,5 +1,6 @@
 import React, { lazy } from "react";
 import { BrowserRouter, Switch } from "react-router-dom";
+import { Redirect } from "react-router-dom";
 import { ToastContainer } from "react-toastify";
 
 import LoggedInLayout from "../layout";
@@ -18,7 +19,6 @@ const QuickAnswers = lazy(() => import("../pages/QuickAnswers/"));
 const Bot = lazy(() => import("../pages/Bot/"));
 const Queues = lazy(() => import("../pages/Queues/"));
 const Campaigns = lazy(() => import("../pages/Campaigns"));
-const TrainingMessages = lazy(() => import("../pages/TrainingMessages"));
 const Quotations = lazy(() => import("../pages/Quotations"));
 const Pipeline = lazy(() => import("../pages/Pipeline"));
 import { AuthProvider } from "../context/Auth/AuthContext";
@@ -27,6 +27,8 @@ import { ThemeProvider } from "../context/DarkMode";
 import Route from "./Route";
 
 const Routes = () => {
+  const TrainingRedirect = () => <Redirect to="/bot?tab=training" />;
+
   return (
     <BrowserRouter>
       <AuthProvider>
@@ -46,7 +48,8 @@ const Routes = () => {
                 <Route exact path="/quickAnswers" component={QuickAnswers} isPrivate />
                 <Route exact path="/bot" component={Bot} isPrivate />
                 <Route exact path="/campaigns" component={Campaigns} isPrivate />
-                <Route exact path="/training" component={TrainingMessages} isPrivate />
+                {/* Backwards compatibility: /training now lives inside /bot as a tab */}
+                <Route exact path="/training" component={TrainingRedirect} isPrivate />
                 <Route exact path="/quotations" component={Quotations} isPrivate />
                 <Route exact path="/Settings" component={Settings} isPrivate />
                 <Route exact path="/Queues" component={Queues} isPrivate />
