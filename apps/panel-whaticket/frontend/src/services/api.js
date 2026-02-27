@@ -28,6 +28,17 @@ if (!api.__authInterceptorsInstalled) {
         token = raw;
       }
 
+      // Some deployments store `{ token: "..." }` or similar.
+      // Normalize aggressively to avoid sending `Bearer [object Object]`.
+      if (token && typeof token === "object") {
+        token = token.token || token.accessToken || token.jwt || token.value;
+      }
+
+      if (typeof token === "string") {
+        // strip accidental quotes
+        token = token.replace(/^\"|\"$/g, "").trim();
+      }
+
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       } else if (config?.headers) {

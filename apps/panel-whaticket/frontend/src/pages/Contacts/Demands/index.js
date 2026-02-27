@@ -642,18 +642,6 @@ export default function Demands() {
               variant="outlined"
               style={{ width: 180 }}
             />
-
-          <TextField
-            label="Plantilla de mensaje (match) — opcional"
-            value={form.matchTemplate}
-            onChange={(e) => setForm((p) => ({ ...p, matchTemplate: e?.target?.value ?? "" }))}
-            variant="outlined"
-            fullWidth
-            multiline
-            minRows={3}
-            helperText="Variables: {name} {query} {title} {year} {price} {currency} {score} {url}"
-          />
-
             <FormControlLabel
               control={
                 <Switch
@@ -680,6 +668,19 @@ export default function Demands() {
               variant="outlined"
               style={{ width: 140 }}
             />
+          </Box>
+
+          <TextField
+            label="Plantilla de mensaje (match) — opcional"
+            value={form.matchTemplate}
+            onChange={(e) => setForm((p) => ({ ...p, matchTemplate: e?.target?.value ?? "" }))}
+            variant="outlined"
+            fullWidth
+            multiline
+            minRows={3}
+            helperText="Variables: {name} {query} {title} {year} {price} {currency} {score} {url}"
+            style={{ marginTop: 12 }}
+          />
 
           <TextField
             label="Plantilla de recontacto — opcional"
@@ -690,8 +691,8 @@ export default function Demands() {
             multiline
             minRows={3}
             helperText="Variables: {name} {query} {count}"
+            style={{ marginTop: 12 }}
           />
-          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setModalOpen(false)}>Cancelar</Button>

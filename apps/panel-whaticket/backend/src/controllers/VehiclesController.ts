@@ -73,15 +73,20 @@ async function detectSource(): Promise<CatalogSource | null> {
   if (cache.source && now - cache.at < CACHE_TTL_MS) return cache.source;
 
   try {
-    // List candidate tables in public schema
+    // List candidate tables across *any* non-system schema.
+    // Some installs use custom schemas (e.g. "public", "app", "crm").
     const [rows] = await sequelize.query(
       `
       SELECT table_schema, table_name
       FROM information_schema.tables
-      WHERE table_schema = 'public'
-        AND table_type = 'BASE TABLE'
+      WHERE table_type = 'BASE TABLE'
+        AND table_schema NOT IN ('pg_catalog','information_schema')
         AND table_name = ANY(:names)
-      ORDER BY array_position(:names, table_name) ASC NULLS LAST, table_name ASC
+      ORDER BY
+        CASE WHEN table_schema = 'public' THEN 0 ELSE 1 END,
+        array_position(:names, table_name) ASC NULLS LAST,
+        table_schema ASC,
+        table_name ASC
     `,
       { replacements: { names: CANDIDATE_TABLES } }
     );
@@ -130,6 +135,53 @@ async function detectSource(): Promise<CatalogSource | null> {
       const source: CatalogSource = { schema, table, columns: cols, map };
       cache = { at: now, source };
       return source;
+    }
+
+    // Fallback: scan for any table that looks like a vehicles catalog.
+    // We only do this if candidates were not found.
+    if (!tables.length) {
+      const [maybe] = await sequelize.query(
+        `
+        SELECT c.table_schema, c.table_name,
+               array_agg(c.column_name) as columns
+        FROM information_schema.columns c
+        JOIN information_schema.tables t
+          ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+        WHERE t.table_type = 'BASE TABLE'
+          AND c.table_schema NOT IN ('pg_catalog','information_schema')
+        GROUP BY c.table_schema, c.table_name
+      `
+      );
+
+      const all = (Array.isArray(maybe) ? maybe : []) as Array<{ table_schema: string; table_name: string; columns: string[] }>;
+      for (const t of all) {
+        const schema = String(t.table_schema || "public");
+        const table = String(t.table_name || "");
+        const cols = (Array.isArray(t.columns) ? t.columns : []).map(String).filter(Boolean);
+        if (!cols.length) continue;
+
+        const idCol = pickFirstPresent(cols, ID_SYNONYMS);
+        if (!idCol) continue;
+
+        const map: ColumnMap = {
+          id: idCol,
+          brand: pickFirstPresent(cols, COL_SYNONYMS.brand),
+          model: pickFirstPresent(cols, COL_SYNONYMS.model),
+          version: pickFirstPresent(cols, COL_SYNONYMS.version),
+          title: pickFirstPresent(cols, COL_SYNONYMS.title),
+          price: pickFirstPresent(cols, COL_SYNONYMS.price),
+          currency: pickFirstPresent(cols, COL_SYNONYMS.currency),
+          year: pickFirstPresent(cols, COL_SYNONYMS.year),
+        };
+
+        const looksLikeVehicles = !!(map.title || (map.brand && map.model));
+        const hasPriceOrYear = !!(map.price || map.year);
+        if (!looksLikeVehicles || !hasPriceOrYear) continue;
+
+        const source: CatalogSource = { schema, table, columns: cols, map };
+        cache = { at: now, source };
+        return source;
+      }
     }
   } catch {
     // ignore
