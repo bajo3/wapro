@@ -1,0 +1,29 @@
+name: Sync vehicles (Supabase -> Railway)
+
+on:
+  schedule:
+    # GitHub Actions uses UTC. Argentina is UTC-3.
+    # 06:10 UTC ~= 03:10 America/Argentina/Buenos_Aires
+    - cron: "10 6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps (backend)
+        working-directory: apps/panel-whaticket/backend
+        run: npm ci
+
+      - name: Run sync
+        working-directory: apps/panel-whaticket/backend
+        env:
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+          RAILWAY_DATABASE_URL: ${{ secrets.RAILWAY_DATABASE_URL }}
+        run: node scripts/syncVehicles.mjs
