@@ -20,7 +20,7 @@ function str(v) {
 }
 
 function has(colSet, name) {
-  return colSet.has(name.toLowerCase());
+  return colSet.has(String(name).toLowerCase());
 }
 
 function firstExisting(colSet, candidates) {
@@ -49,10 +49,12 @@ function firstExisting(colSet, candidates) {
 
   // Detect available columns in Supabase public.vehicles to avoid selecting non-existent columns.
   const colsRes = await src.query(
-    `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='vehicles'`
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='vehicles'`
   );
-  const colSet = new Set(colsRes.rows.map((r) => String(r.column_name).toLowerCase()));
 
+  const colSet = new Set(colsRes.rows.map((r) => String(r.column_name).toLowerCase()));
   if (!colSet.size) {
     console.error("Supabase table public.vehicles not found (no columns returned)");
     process.exit(2);
@@ -62,7 +64,7 @@ function firstExisting(colSet, candidates) {
   const marcaCol = firstExisting(colSet, ["marca", "brand", "make", "manufacturer"]);
   const modeloCol = firstExisting(colSet, ["modelo", "model"]);
   const versionCol = firstExisting(colSet, ["version", "version_name", "trim", "variant"]);
-  const yearCol = firstExisting(colSet, ["year", "ano", "anio"]) ;
+  const yearCol = firstExisting(colSet, ["year", "ano", "anio"]);
   const precioCol = firstExisting(colSet, ["precio", "price", "amount"]);
   const currencyCol = firstExisting(colSet, ["currency", "moneda", "curr"]);
 

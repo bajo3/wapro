@@ -21,7 +21,11 @@ jobs:
         working-directory: apps/panel-whaticket/backend
         run: npm install --no-audit --no-fund
 
-      - name: Run sync
+      - name: Ensure pg is available (job-local)
+        working-directory: apps/panel-whaticket/backend
+        run: npm install pg --no-audit --no-fund
+
+      - name: Run sync vehicles
         working-directory: apps/panel-whaticket/backend
         env:
           SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
