@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install deps (backend)
+      - name: Install deps (backend) - npm install (no lockfile)
         working-directory: apps/panel-whaticket/backend
         run: npm install --no-audit --no-fund
 
