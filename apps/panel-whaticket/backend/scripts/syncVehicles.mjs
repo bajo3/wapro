@@ -1,6 +1,6 @@
-import pg from "pg";
+import pkg from "pg";
 
-const { Client } = pg;
+const { Client } = pkg;
 
 const SRC = process.env.SUPABASE_DATABASE_URL; // Supabase Postgres connection string
 const DST = process.env.RAILWAY_DATABASE_URL;  // Railway Postgres connection string
@@ -11,8 +11,13 @@ if (!SRC || !DST) {
 }
 
 // Supabase pooler generally requires SSL.
-const src = new Client({ connectionString: SRC, ssl: { rejectUnauthorized: false } });
-const dst = new Client({ connectionString: DST, ssl: { rejectUnauthorized: false } });
+const src = new Client({
+  connectionString: SRC,
+  ssl: { rejectUnauthorized: false },
+});
+
+// Railway sometimes works without SSL depending on config; fallback if needed.
+let dst = new Client({ connectionString: DST });
 
 function str(v) {
   if (v === null || v === undefined) return null;
@@ -30,9 +35,22 @@ function firstExisting(colSet, candidates) {
   return null;
 }
 
+async function connectDstWithFallback() {
+  try {
+    await dst.connect();
+  } catch (e) {
+    console.warn("DST connect without SSL failed, retrying with SSL...");
+    dst = new Client({
+      connectionString: DST,
+      ssl: { rejectUnauthorized: false },
+    });
+    await dst.connect();
+  }
+}
+
 (async () => {
   await src.connect();
-  await dst.connect();
+  await connectDstWithFallback();
 
   // Destination table (minimum contract the panel expects)
   await dst.query(`
@@ -68,7 +86,8 @@ function firstExisting(colSet, candidates) {
   const precioCol = firstExisting(colSet, ["precio", "price", "amount"]);
   const currencyCol = firstExisting(colSet, ["currency", "moneda", "curr"]);
 
-  // Build safe SELECT using only detected columns
+  // Build safe SELECT using only detected columns.
+  // NOTE: identifiers are quoted; we trust information_schema output.
   const selectParts = [
     `"${idCol}" AS id`,
     marcaCol ? `"${marcaCol}" AS marca` : `NULL::text AS marca`,
