@@ -19,7 +19,7 @@ jobs:
 
       - name: Install deps (backend)
         working-directory: apps/panel-whaticket/backend
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Run sync
         working-directory: apps/panel-whaticket/backend
