@@ -9,45 +9,45 @@ if (!SRC_RAW || !DST_RAW) {
   process.exit(1);
 }
 
-// Strip ssl-related query params that can override pg ssl options (sslmode, etc.)
-function stripSslParams(conn) {
-  try {
-    const u = new URL(conn);
-    const toDelete = [
-      "sslmode",
-      "ssl",
-      "sslrootcert",
-      "sslcert",
-      "sslkey",
-      "sslpassword",
-      "sslfactory",
-      "sslcertmode",
-      "sslcompression",
-      "uselibpqcompat",
-    ];
-    for (const k of toDelete) u.searchParams.delete(k);
-    return u.toString();
-  } catch {
-    // if it's not a URL (edge cases), return as-is
-    return conn;
+function clientConfigFromUrl(conn, { forceSslNoVerify }) {
+  const u = new URL(conn);
+
+  // remove params that can influence ssl semantics in some parsers
+  const toDelete = [
+    "sslmode",
+    "ssl",
+    "sslrootcert",
+    "sslcert",
+    "sslkey",
+    "sslpassword",
+    "uselibpqcompat",
+  ];
+  for (const k of toDelete) u.searchParams.delete(k);
+
+  const cfg = {
+    host: u.hostname,
+    port: u.port ? Number(u.port) : 5432,
+    user: decodeURIComponent(u.username || ""),
+    password: decodeURIComponent(u.password || ""),
+    database: u.pathname?.replace(/^\//, "") || "",
+  };
+
+  if (forceSslNoVerify) {
+    cfg.ssl = { rejectUnauthorized: false };
   }
+
+  return cfg;
 }
 
-const SRC = stripSslParams(SRC_RAW);
-const DST = stripSslParams(DST_RAW);
+// Supabase: SSL sí (pooler)
+const src = new Client(
+  clientConfigFromUrl(SRC_RAW, { forceSslNoVerify: true })
+);
 
-// Force SSL without certificate validation (fixes SELF_SIGNED_CERT_IN_CHAIN)
-const sslNoVerify = { rejectUnauthorized: false };
-
-const src = new Client({
-  connectionString: SRC,
-  ssl: sslNoVerify,
-});
-
-const dst = new Client({
-  connectionString: DST,
-  ssl: sslNoVerify,
-});
+// Railway: también forzamos SSL sin validar (evita SELF_SIGNED_CERT_IN_CHAIN)
+const dst = new Client(
+  clientConfigFromUrl(DST_RAW, { forceSslNoVerify: true })
+);
 
 function str(v) {
   if (v === null || v === undefined) return null;
@@ -66,6 +66,8 @@ function firstExisting(colSet, candidates) {
 }
 
 (async () => {
+  console.log("syncVehicles.mjs: url-parsed ssl-no-verify");
+
   await src.connect();
   await dst.connect();
 
