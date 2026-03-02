@@ -44,11 +44,11 @@ const CANDIDATE_TABLES = [
 const COL_SYNONYMS: Record<keyof Omit<ColumnMap, "id">, string[]> = {
   brand: ["brand", "marca", "make"],
   model: ["model", "modelo"],
-  version: ["version", "trim", "variant", "versi\u00f3n", "version_name"],
+  version: ["version", "trim", "variant", "versión", "version_name"],
   title: ["title", "nombre", "name", "descripcion", "description"],
   price: ["price", "precio", "valor", "amount"],
   currency: ["currency", "moneda", "currency_code"],
-  year: ["year", "anio", "a\u00f1o", "model_year"],
+  year: ["year", "anio", "año", "model_year"],
 };
 
 const ID_SYNONYMS = ["id", "vehicle_id", "uuid", "uid"]; // prefer stable identifiers
@@ -81,10 +81,9 @@ async function detectSource(): Promise<CatalogSource | null> {
       FROM information_schema.tables
       WHERE table_type = 'BASE TABLE'
         AND table_schema NOT IN ('pg_catalog','information_schema')
-        AND table_name = ANY(:names)
+        AND table_name IN (:names)
       ORDER BY
         CASE WHEN table_schema = 'public' THEN 0 ELSE 1 END,
-        array_position(:names, table_name) ASC NULLS LAST,
         table_schema ASC,
         table_name ASC
     `,
@@ -109,6 +108,7 @@ async function detectSource(): Promise<CatalogSource | null> {
       `,
         { replacements: { schema, table } }
       );
+
       const cols = (Array.isArray(cRows) ? cRows : [])
         .map((r: any) => String(r.column_name))
         .filter(Boolean);
