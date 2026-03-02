@@ -1,25 +1,52 @@
 import pkg from "pg";
-
 const { Client } = pkg;
 
-const SRC = process.env.SUPABASE_DATABASE_URL; // Supabase Postgres connection string
-const DST = process.env.RAILWAY_DATABASE_URL;  // Railway Postgres connection string
+const SRC_RAW = process.env.SUPABASE_DATABASE_URL;
+const DST_RAW = process.env.RAILWAY_DATABASE_URL;
 
-if (!SRC || !DST) {
+if (!SRC_RAW || !DST_RAW) {
   console.error("Missing SUPABASE_DATABASE_URL or RAILWAY_DATABASE_URL");
   process.exit(1);
 }
 
-// Supabase pooler generally requires SSL (and can present cert chains that fail strict validation)
+// Strip ssl-related query params that can override pg ssl options (sslmode, etc.)
+function stripSslParams(conn) {
+  try {
+    const u = new URL(conn);
+    const toDelete = [
+      "sslmode",
+      "ssl",
+      "sslrootcert",
+      "sslcert",
+      "sslkey",
+      "sslpassword",
+      "sslfactory",
+      "sslcertmode",
+      "sslcompression",
+      "uselibpqcompat",
+    ];
+    for (const k of toDelete) u.searchParams.delete(k);
+    return u.toString();
+  } catch {
+    // if it's not a URL (edge cases), return as-is
+    return conn;
+  }
+}
+
+const SRC = stripSslParams(SRC_RAW);
+const DST = stripSslParams(DST_RAW);
+
+// Force SSL without certificate validation (fixes SELF_SIGNED_CERT_IN_CHAIN)
+const sslNoVerify = { rejectUnauthorized: false };
+
 const src = new Client({
   connectionString: SRC,
-  ssl: { rejectUnauthorized: false },
+  ssl: sslNoVerify,
 });
 
-// Railway: force SSL and disable chain validation to avoid SELF_SIGNED_CERT_IN_CHAIN
 const dst = new Client({
   connectionString: DST,
-  ssl: { rejectUnauthorized: false },
+  ssl: sslNoVerify,
 });
 
 function str(v) {
@@ -42,7 +69,6 @@ function firstExisting(colSet, candidates) {
   await src.connect();
   await dst.connect();
 
-  // Destination table (minimum contract the panel expects)
   await dst.query(`
     CREATE TABLE IF NOT EXISTS public.vehicles (
       id       text PRIMARY KEY,
@@ -55,7 +81,6 @@ function firstExisting(colSet, candidates) {
     )
   `);
 
-  // Detect available columns in Supabase public.vehicles to avoid selecting non-existent columns.
   const colsRes = await src.query(
     `SELECT column_name
      FROM information_schema.columns
@@ -76,7 +101,6 @@ function firstExisting(colSet, candidates) {
   const precioCol = firstExisting(colSet, ["precio", "price", "amount"]);
   const currencyCol = firstExisting(colSet, ["currency", "moneda", "curr"]);
 
-  // Build safe SELECT using only detected columns.
   const selectParts = [
     `"${idCol}" AS id`,
     marcaCol ? `"${marcaCol}" AS marca` : `NULL::text AS marca`,
