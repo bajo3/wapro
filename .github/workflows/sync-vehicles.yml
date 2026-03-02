@@ -39,6 +39,7 @@ jobs:
       - name: Run sync vehicles
         working-directory: apps/panel-whaticket/backend
         env:
+          NODE_TLS_REJECT_UNAUTHORIZED: "0"
           SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
           RAILWAY_DATABASE_URL: ${{ secrets.RAILWAY_DATABASE_URL }}
           NODE_ENV: production
