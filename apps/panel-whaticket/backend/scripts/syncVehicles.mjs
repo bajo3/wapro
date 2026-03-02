@@ -10,14 +10,17 @@ if (!SRC || !DST) {
   process.exit(1);
 }
 
-// Supabase pooler generally requires SSL.
+// Supabase pooler generally requires SSL (and can present cert chains that fail strict validation)
 const src = new Client({
   connectionString: SRC,
   ssl: { rejectUnauthorized: false },
 });
 
-// Railway sometimes works without SSL depending on config; fallback if needed.
-let dst = new Client({ connectionString: DST });
+// Railway: force SSL and disable chain validation to avoid SELF_SIGNED_CERT_IN_CHAIN
+const dst = new Client({
+  connectionString: DST,
+  ssl: { rejectUnauthorized: false },
+});
 
 function str(v) {
   if (v === null || v === undefined) return null;
@@ -35,22 +38,9 @@ function firstExisting(colSet, candidates) {
   return null;
 }
 
-async function connectDstWithFallback() {
-  try {
-    await dst.connect();
-  } catch (e) {
-    console.warn("DST connect without SSL failed, retrying with SSL...");
-    dst = new Client({
-      connectionString: DST,
-      ssl: { rejectUnauthorized: false },
-    });
-    await dst.connect();
-  }
-}
-
 (async () => {
   await src.connect();
-  await connectDstWithFallback();
+  await dst.connect();
 
   // Destination table (minimum contract the panel expects)
   await dst.query(`
@@ -87,7 +77,6 @@ async function connectDstWithFallback() {
   const currencyCol = firstExisting(colSet, ["currency", "moneda", "curr"]);
 
   // Build safe SELECT using only detected columns.
-  // NOTE: identifiers are quoted; we trust information_schema output.
   const selectParts = [
     `"${idCol}" AS id`,
     marcaCol ? `"${marcaCol}" AS marca` : `NULL::text AS marca`,
