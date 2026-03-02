@@ -271,4 +271,4 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
     // Best-effort: never crash the panel.
     return res.json({ vehicles: [] });
   }
-};
+};    
