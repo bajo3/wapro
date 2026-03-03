@@ -418,6 +418,7 @@ const QuotationForm = ({ onSubmit, onCancel, vehicles = [], clients = [], initia
 
   useEffect(() => {
     if (formData.vehicleId && vehicles.length > 0) {
+<<<<<<< HEAD
       const vehicle = vehicles.find(v => String(v.id) === String(formData.vehicleId)); setSelectedVehicle(vehicle);
       setFormData(prev => ({ ...prev, basePrice: prev.basePrimport React, { useState, useEffect } from 'react';
 import {
@@ -801,6 +802,8 @@ const QuotationForm = ({ onSubmit, onCancel, vehicles = [], clients = [], initia
 
   useEffect(() => {
     if (formData.vehicleId && vehicles.length > 0) {
+=======
+>>>>>>> b5efe7a (fix(panel): arregla cotizaciones (archivo corrupto))
       const vehicle = vehicles.find(v => String(v.id) === String(formData.vehicleId));
       setSelectedVehicle(vehicle);
       setFormData(prev => ({ ...prev, basePrice: prev.basePrice || vehicle?.precio || 0 }));
