@@ -10,6 +10,8 @@ import { es } from 'date-fns/locale';
 import { toast } from 'react-toastify';
 import toastError from '../../errors/toastError';
 
+const MS_DAY = 24 * 60 * 60 * 1000;
+
 import {
   listQuotations,
   createQuotation,
@@ -391,10 +393,9 @@ const QuotationCard = ({ quotation, onView, onEdit, onDelete, onSend, onDownload
 // Formulario de Nueva Cotización
 const QuotationForm = ({ onSubmit, onCancel, vehicles = [], clients = [], initialData = null }) => {
   const [formData, setFormData] = useState(() => {
-    const msDay = 24 * 60 * 60 * 1000;
-    const validUntil = initialData?.validUntil ? new Date(initialData.validUntil) : null;
+        const validUntil = initialData?.validUntil ? new Date(initialData.validUntil) : null;
     const validDays = validUntil && Number.isFinite(validUntil.getTime())
-      ? Math.max(1, Math.ceil((validUntil.getTime() - Date.now()) / msDay))
+      ? Math.max(1, Math.ceil((validUntil.getTime() - Date.now()) / MS_DAY))
       : 7;
 
     return {

@@ -104,6 +104,17 @@ export default function Demands() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(() => makeDefaultForm());
 
+  // Avoid using e.target inside setState updater (can cause truncated input in some builds).
+  const onFieldChange = (field) => (e) => {
+    const value = e?.target?.value ?? "";
+    setForm((p) => ({ ...p, [field]: value }));
+  };
+
+  const onFieldCheck = (field) => (e) => {
+    const checked = !!(e?.target?.checked);
+    setForm((p) => ({ ...p, [field]: checked }));
+  };
+
   const canSave = useMemo(() => String(form.query || "").trim().length > 0, [form.query]);
 
   const load = async () => {
@@ -513,45 +524,45 @@ export default function Demands() {
           <Box display="flex" gridGap={12} flexWrap="wrap">
             <TextField
               label="Pedido (texto)"
-              value={form.query}
-              onChange={(e) => setForm((p) => ({ ...p, query: e?.target?.value ?? "" }))}
+              value={String(form.query ?? "")}
+              onChange={onFieldChange("query")}
               variant="outlined"
               fullWidth
             />
             <TextField
               label="Marca"
-              value={form.brand}
-              onChange={(e) => setForm((p) => ({ ...p, brand: e?.target?.value ?? "" }))}
+              value={String(form.brand ?? "")}
+              onChange={onFieldChange("brand")}
               variant="outlined"
               style={{ width: 200 }}
             />
             <TextField
               label="Modelo"
-              value={form.model}
-              onChange={(e) => setForm((p) => ({ ...p, model: e?.target?.value ?? "" }))}
+              value={String(form.model ?? "")}
+              onChange={onFieldChange("model")}
               variant="outlined"
               style={{ width: 200 }}
             />
             <TextField
               label="Año min"
-              value={form.minYear}
-              onChange={(e) => setForm((p) => ({ ...p, minYear: e?.target?.value ?? "" }))}
+              value={String(form.minYear ?? "")}
+              onChange={onFieldChange("minYear")}
               variant="outlined"
               style={{ width: 120 }}
               type="number"
             />
             <TextField
               label="Año max"
-              value={form.maxYear}
-              onChange={(e) => setForm((p) => ({ ...p, maxYear: e?.target?.value ?? "" }))}
+              value={String(form.maxYear ?? "")}
+              onChange={onFieldChange("maxYear")}
               variant="outlined"
               style={{ width: 120 }}
               type="number"
             />
             <TextField
               label="Presupuesto max"
-              value={form.maxPrice}
-              onChange={(e) => setForm((p) => ({ ...p, maxPrice: e?.target?.value ?? "" }))}
+              value={String(form.maxPrice ?? "")}
+              onChange={onFieldChange("maxPrice")}
               variant="outlined"
               style={{ width: 200 }}
               type="number"
@@ -559,8 +570,8 @@ export default function Demands() {
             <TextField
               select
               label="Moneda"
-              value={form.currency}
-              onChange={(e) => setForm((p) => ({ ...p, currency: e?.target?.value ?? "" }))}
+              value={String(form.currency ?? "ARS")}
+              onChange={onFieldChange("currency")}
               variant="outlined"
               style={{ width: 120 }}
             >
@@ -569,8 +580,8 @@ export default function Demands() {
             </TextField>
             <TextField
               label="Transmisión (opcional)"
-              value={form.transmission}
-              onChange={(e) => setForm((p) => ({ ...p, transmission: e?.target?.value ?? "" }))}
+              value={String(form.transmission ?? "")}
+              onChange={onFieldChange("transmission")}
               variant="outlined"
               style={{ width: 220 }}
             />
@@ -582,29 +593,29 @@ export default function Demands() {
           <Box display="flex" gridGap={12} flexWrap="wrap">
             <TextField
               label="Nombre"
-              value={form.contactName}
-              onChange={(e) => setForm((p) => ({ ...p, contactName: e?.target?.value ?? "" }))}
+              value={String(form.contactName ?? "")}
+              onChange={onFieldChange("contactName")}
               variant="outlined"
               style={{ width: 240 }}
             />
             <TextField
               label="Teléfono"
-              value={form.phone}
-              onChange={(e) => setForm((p) => ({ ...p, phone: e?.target?.value ?? "" }))}
+              value={String(form.phone ?? "")}
+              onChange={onFieldChange("phone")}
               variant="outlined"
               style={{ width: 200 }}
             />
             <TextField
               label="remoteJid (549..@s.whatsapp.net)"
-              value={form.remoteJid}
-              onChange={(e) => setForm((p) => ({ ...p, remoteJid: e?.target?.value ?? "" }))}
+              value={String(form.remoteJid ?? "")}
+              onChange={onFieldChange("remoteJid")}
               variant="outlined"
               style={{ width: 320 }}
             />
             <TextField
               label="Instance (opcional)"
-              value={form.instance}
-              onChange={(e) => setForm((p) => ({ ...p, instance: e?.target?.value ?? "" }))}
+              value={String(form.instance ?? "")}
+              onChange={onFieldChange("instance")}
               variant="outlined"
               style={{ width: 220 }}
             />
@@ -619,7 +630,7 @@ export default function Demands() {
               control={
                 <Switch
                   checked={!!form.notifyOnMatch}
-                  onChange={(e) => setForm((p) => ({ ...p, notifyOnMatch: e?.target?.checked ?? false }))}
+                  onChange={onFieldCheck("notifyOnMatch")}
                   color="primary"
                 />
               }
@@ -628,8 +639,8 @@ export default function Demands() {
             <TextField
               label="Min score notify (0-1)"
               type="number"
-              value={form.notifyMinScore}
-              onChange={(e) => setForm((p) => ({ ...p, notifyMinScore: e?.target?.value ?? "" }))}
+              value={String(form.notifyMinScore ?? "")}
+              onChange={onFieldChange("notifyMinScore")}
               variant="outlined"
               style={{ width: 200 }}
               inputProps={{ step: 0.01, min: 0, max: 1 }}
@@ -637,8 +648,8 @@ export default function Demands() {
             <TextField
               label="Cooldown (min)"
               type="number"
-              value={form.notifyCooldownMin}
-              onChange={(e) => setForm((p) => ({ ...p, notifyCooldownMin: e?.target?.value ?? "" }))}
+              value={String(form.notifyCooldownMin ?? "")}
+              onChange={onFieldChange("notifyCooldownMin")}
               variant="outlined"
               style={{ width: 180 }}
             />
@@ -646,7 +657,7 @@ export default function Demands() {
               control={
                 <Switch
                   checked={!!form.recontactEnabled}
-                  onChange={(e) => setForm((p) => ({ ...p, recontactEnabled: e?.target?.checked ?? false }))}
+                  onChange={onFieldCheck("recontactEnabled")}
                   color="primary"
                 />
               }
@@ -655,16 +666,16 @@ export default function Demands() {
             <TextField
               label="Cada (días)"
               type="number"
-              value={form.recontactEveryDays}
-              onChange={(e) => setForm((p) => ({ ...p, recontactEveryDays: e?.target?.value ?? "" }))}
+              value={String(form.recontactEveryDays ?? "")}
+              onChange={onFieldChange("recontactEveryDays")}
               variant="outlined"
               style={{ width: 140 }}
             />
             <TextField
               label="Máx envíos"
               type="number"
-              value={form.recontactMax}
-              onChange={(e) => setForm((p) => ({ ...p, recontactMax: e?.target?.value ?? "" }))}
+              value={String(form.recontactMax ?? "")}
+              onChange={onFieldChange("recontactMax")}
               variant="outlined"
               style={{ width: 140 }}
             />
@@ -672,8 +683,8 @@ export default function Demands() {
 
           <TextField
             label="Plantilla de mensaje (match) — opcional"
-            value={form.matchTemplate}
-            onChange={(e) => setForm((p) => ({ ...p, matchTemplate: e?.target?.value ?? "" }))}
+            value={String(form.matchTemplate ?? "")}
+            onChange={onFieldChange("matchTemplate")}
             variant="outlined"
             fullWidth
             multiline
@@ -684,8 +695,8 @@ export default function Demands() {
 
           <TextField
             label="Plantilla de recontacto — opcional"
-            value={form.recontactTemplate}
-            onChange={(e) => setForm((p) => ({ ...p, recontactTemplate: e?.target?.value ?? "" }))}
+            value={String(form.recontactTemplate ?? "")}
+            onChange={onFieldChange("recontactTemplate")}
             variant="outlined"
             fullWidth
             multiline
