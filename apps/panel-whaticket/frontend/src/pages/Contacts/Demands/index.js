@@ -89,6 +89,9 @@ function fmtDate(iso) {
 function scorePct(s) {
   const n = Number(s);
   if (!Number.isFinite(n)) return "";
+  // Bot/db can store either 0..1 or 0..100 depending on version.
+  // Normalize to a readable percentage.
+  if (n > 1.5) return `${Math.round(n)}%`;
   return `${Math.round(n * 100)}%`;
 }
 

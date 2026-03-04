@@ -266,10 +266,10 @@ function sortByCreatedAtAsc(messages) {
     const ta = new Date(a?.createdAt || a?.created_at || 0).getTime();
     const tb = new Date(b?.createdAt || b?.created_at || 0).getTime();
     if (ta !== tb) return ta - tb;
-    // Tie-breaker: id
-    const ia = Number(a?.id ?? 0);
-    const ib = Number(b?.id ?? 0);
-    return ia - ib;
+    // Tie-breaker: id (Message.id is a string in this project)
+    const ia = String(a?.id ?? "");
+    const ib = String(b?.id ?? "");
+    return ia.localeCompare(ib);
   });
 }
 

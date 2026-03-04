@@ -10,7 +10,9 @@ COPY src/ ./src/
 COPY public/ ./public/
 COPY index.html ./
 COPY vite.config.js ./
-RUN npm run build
+RUN npm run build \
+    && test -f build/index.html \
+    && (test -d build/assets || test -d build/static)
 
 FROM nginx:alpine
 RUN apk add --no-cache jq openssl

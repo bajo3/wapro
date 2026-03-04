@@ -41,7 +41,10 @@ const ListMessagesService = async ({
       }
     ],
     offset,
-    order: [["createdAt", "DESC"]]
+    // Stable ordering: createdAt DESC, then id DESC.
+    // Some providers may insert batches quickly; without a secondary key,
+    // messages with identical timestamps can appear shuffled.
+    order: [["createdAt", "DESC"], ["id", "DESC"]]
   });
 
   const hasMore = count > offset + messages.length;
