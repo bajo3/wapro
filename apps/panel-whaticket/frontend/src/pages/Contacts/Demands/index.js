@@ -92,6 +92,19 @@ function scorePct(s) {
   return `${Math.round(n * 100)}%`;
 }
 
+function pickScore(m) {
+  if (!m) return undefined;
+  // Bot can return different field names depending on version.
+  return (
+    m.score ??
+    m.finalScore ??
+    m.matchScore ??
+    m.totalScore ??
+    m.similarity ??
+    m.rank
+  );
+}
+
 export default function Demands() {
   const [status, setStatus] = useState("open");
   const [loading, setLoading] = useState(false);
@@ -435,8 +448,8 @@ export default function Demands() {
                           </TableHead>
                           <TableBody>
                             {(matches[d.id] || []).map((m) => (
-                              <TableRow key={m.id}>
-                                <TableCell style={{ fontWeight: 700 }}>{scorePct(m.score)}</TableCell>
+                              <TableRow key={m.id || `${m.vehicleId}-${m.notifiedAt || ""}` }>
+                                <TableCell style={{ fontWeight: 700 }}>{scorePct(pickScore(m))}</TableCell>
                                 <TableCell>
                                   {m.vehicle?.title || `${m.vehicle?.brand || ""} ${m.vehicle?.model || ""}`.trim() || m.vehicleId}
                                 </TableCell>

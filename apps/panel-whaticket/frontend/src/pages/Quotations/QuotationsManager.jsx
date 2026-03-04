@@ -244,9 +244,14 @@ export default function QuotationsManager() {
     }
     setLookupLoading(true);
     try {
-      // Best-effort: /vehicles?search=...
-      const data = await safeGet("/vehicles", { params: { search: query } });
-      const list = Array.isArray(data) ? data : data?.rows || data?.data || [];
+      // Backend contract: /vehicles?q=... -> { vehicles: [] }
+      const data = await safeGet("/vehicles", { params: { q: query, limit: 25 } });
+      const list =
+        (Array.isArray(data) ? data : null) ||
+        data?.vehicles ||
+        data?.rows ||
+        data?.data ||
+        [];
       const normalized = (list || []).slice(0, 15).map((v) => ({
         id: v.id ?? v.vehicleId ?? v.uuid ?? "",
         label:
@@ -273,9 +278,16 @@ export default function QuotationsManager() {
     }
     setLookupLoading(true);
     try {
-      // Best-effort: /contacts?search=...
-      const data = await safeGet("/contacts", { params: { search: query } });
-      const list = Array.isArray(data) ? data : data?.rows || data?.data || [];
+      // Backend contract: /contacts?searchParam=... -> { contacts: [] }
+      const data = await safeGet("/contacts", {
+        params: { searchParam: query, pageNumber: 1, pageSize: 25 },
+      });
+      const list =
+        (Array.isArray(data) ? data : null) ||
+        data?.contacts ||
+        data?.rows ||
+        data?.data ||
+        [];
       const normalized = (list || []).slice(0, 15).map((c) => ({
         id: c.id ?? c.contactId ?? c.uuid ?? "",
         label: c.name || c.pushname || c.number || String(c.id || ""),

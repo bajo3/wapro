@@ -261,6 +261,18 @@ const useStyles = makeStyles((theme) => ({
   },
 }));
 
+function sortByCreatedAtAsc(messages) {
+  return (messages || []).slice().sort((a, b) => {
+    const ta = new Date(a?.createdAt || a?.created_at || 0).getTime();
+    const tb = new Date(b?.createdAt || b?.created_at || 0).getTime();
+    if (ta !== tb) return ta - tb;
+    // Tie-breaker: id
+    const ia = Number(a?.id ?? 0);
+    const ib = Number(b?.id ?? 0);
+    return ia - ib;
+  });
+}
+
 const reducer = (state, action) => {
   if (action.type === "LOAD_MESSAGES") {
     const messages = action.payload;
@@ -275,7 +287,9 @@ const reducer = (state, action) => {
       }
     });
 
-    return [...newMessages, ...state];
+    // Keep chronological order stable (oldest -> newest). The API order can
+    // vary between installs (ASC/DESC) and pagination can prepend/append.
+    return sortByCreatedAtAsc([...newMessages, ...state]);
   }
 
   if (action.type === "ADD_MESSAGE") {
@@ -288,7 +302,7 @@ const reducer = (state, action) => {
       state.push(newMessage);
     }
 
-    return [...state];
+    return sortByCreatedAtAsc([...state]);
   }
 
   if (action.type === "UPDATE_MESSAGE") {
@@ -299,7 +313,7 @@ const reducer = (state, action) => {
       state[messageIndex] = messageToUpdate;
     }
 
-    return [...state];
+    return sortByCreatedAtAsc([...state]);
   }
 
   if (action.type === "RESET") {
