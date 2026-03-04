@@ -10,8 +10,6 @@ import { es } from 'date-fns/locale';
 import { toast } from 'react-toastify';
 import toastError from '../../errors/toastError';
 
-const MS_DAY = 24 * 60 * 60 * 1000;
-
 import {
   listQuotations,
   createQuotation,
@@ -21,6 +19,11 @@ import {
 } from '../../services/quotations';
 
 import api from '../../services/api';
+
+const MS_DAY = 24 * 60 * 60 * 1000;
+// Back-compat alias (older code may reference msDay)
+const msDay = MS_DAY;
+
 
 // Calculadora de Financiamiento
 const FinanceCalculator = ({ price, onCalculate }) => {
