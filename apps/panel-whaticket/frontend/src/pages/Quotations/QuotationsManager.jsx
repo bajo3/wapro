@@ -83,7 +83,6 @@ const emptyForm = {
 export default function QuotationsManager() {
   const [loading, setLoading] = useState(false);
   const [quotations, setQuotations] = useState([]);
-  const [quotations, setQuotations] = useState([]);
   const [search, setSearch] = useState("");
 
   const [dialogOpen, setDialogOpen] = useState(false);

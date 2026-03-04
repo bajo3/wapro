@@ -89,6 +89,23 @@ const TicketListItem = ({ ticket }) => {
               <span className="ml-auto flex items-center gap-2">
                 {/* Right-side meta chips (no absolute overlap) */}
                 <span className="hidden sm:flex items-center gap-1">
+                  {Number.isFinite(Number(ticket?.leadScore)) && (
+                    <span
+                      className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold text-white"
+                      style={{
+                        backgroundColor:
+                          Number(ticket.leadScore) >= 70
+                            ? "#16a34a" // green
+                            : Number(ticket.leadScore) >= 40
+                              ? "#f59e0b" // amber
+                              : "#dc2626" // red
+                      }}
+                      title={`Temperatura: ${Number(ticket.leadScore) >= 70 ? "CALIENTE" : Number(ticket.leadScore) >= 40 ? "TIBIO" : "FRÍO"} (${ticket.leadScore})`}
+                    >
+                      {Number(ticket.leadScore) >= 70 ? "🔥" : Number(ticket.leadScore) >= 40 ? "🟡" : "❄️"} {Number(ticket.leadScore)}
+                    </span>
+                  )}
+
                   {ticket?.contact?.leadSource && (
                     <span
                       className="inline-flex items-center rounded-full bg-ticket-accent px-2 py-0.5 text-[10px] font-semibold text-white"

@@ -1,4 +1,4 @@
-import { Op, fn, where, col, Filterable, Includeable } from "sequelize";
+import { Op, fn, where, col, Filterable, Includeable, QueryTypes } from "sequelize";
 import { startOfDay, endOfDay, parseISO } from "date-fns";
 
 import Ticket from "../../models/Ticket";
@@ -7,6 +7,7 @@ import Message from "../../models/Message";
 import Queue from "../../models/Queue";
 import ShowUserService from "../UserServices/ShowUserService";
 import Whatsapp from "../../models/Whatsapp";
+import sequelize from "../../database";
 
 interface Request {
   searchParam?: string;
@@ -184,6 +185,49 @@ const ListTicketsService = async ({
   });
 
   const hasMore = count > offset + tickets.length;
+
+  // Enrich tickets with bot leadScore (best-effort).
+  // We read from bot_conversations.state JSONB which is written by apps/bot.
+  try {
+    const keys = tickets
+      .map(t => {
+        const instance = (t as any)?.whatsapp?.name;
+        const number = (t as any)?.contact?.number;
+        const remoteJid = instance && number ? `${number}@s.whatsapp.net` : null;
+        return instance && remoteJid ? { instance, remoteJid } : null;
+      })
+      .filter(Boolean) as Array<{ instance: string; remoteJid: string }>;
+
+    if (keys.length > 0) {
+      const valuesSql = keys.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(",");
+      const params = keys.flatMap(k => [k.instance, k.remoteJid]);
+
+      const sql = `
+        select bc.instance, bc.remote_jid,
+               nullif(bc.state->>'leadScore','')::int as lead_score
+        from bot_conversations bc
+        join (values ${valuesSql}) as v(instance, remote_jid)
+          on v.instance = bc.instance and v.remote_jid = bc.remote_jid
+      `;
+
+      const rows = await sequelize.query(sql, { bind: params, type: QueryTypes.SELECT });
+      const map = new Map<string, number>();
+      for (const r of rows as any[]) {
+        map.set(`${r.instance}::${r.remote_jid}`, Number(r.lead_score) || 0);
+      }
+
+      for (const t of tickets as any[]) {
+        const instance = t?.whatsapp?.name;
+        const number = t?.contact?.number;
+        const remoteJid = instance && number ? `${number}@s.whatsapp.net` : null;
+        if (!instance || !remoteJid) continue;
+        const score = map.get(`${instance}::${remoteJid}`);
+        if (score !== undefined) t.setDataValue("leadScore", score);
+      }
+    }
+  } catch {
+    // ignore
+  }
 
   return {
     tickets,

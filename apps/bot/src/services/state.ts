@@ -19,6 +19,40 @@ export type ConvState = {
   last_hits?: string[];
   /** ISO timestamp when last_hits were stored */
   last_hits_at?: string;
+
+  /** ISO timestamp of the last user message processed */
+  last_user_at?: string;
+  /** How many user messages have been processed in this conversation */
+  user_msg_count?: number;
+
+  /** Accumulated search context across turns (expires after inactivity) */
+  search_context?: {
+    brand?: string;
+    model?: string;
+    minYear?: number;
+    maxYear?: number;
+    transmission?: string;
+    fuel?: string;
+    bodywork?: string;
+    maxPrice?: number;
+    currency?: 'ARS' | 'USD' | string;
+  };
+  /** ISO timestamp when search_context was last updated */
+  search_context_at?: string;
+
+  /** Lead score (0..100) recalculated each turn */
+  leadScore?: number;
+
+  /** Financing flow state */
+  finance?: {
+    stage?: 'idle' | 'collecting';
+    price?: number;
+    downPayment?: number;
+    months?: number;
+    apr?: number;
+    monthly?: number;
+    createdAt?: string;
+  };
 };
 
 export async function getState(instance: string, remoteJid: string): Promise<ConvState> {

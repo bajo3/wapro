@@ -22,6 +22,8 @@ import {
 import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from '../services/extract.js';
 import { createHash } from 'node:crypto';
 import type { ConvState } from '../services/state.js';
+import { computeLeadScore, leadLabel } from '../services/lead.js';
+import { getFinanceApr, simulateFinancing, formatArs } from '../services/finance.js';
 
 export const webhookRouter = Router();
 
@@ -258,6 +260,57 @@ function isTruckishName(name: string): boolean {
   return /(camion\b|truck\b|furgon|utilitario|pickup|pick\s*up|hilux|amarok|ranger|s10|frontier|sprinter|ducato|master)/.test(n);
 }
 
+function mergeSearchContext(prev: any, extracted: any) {
+  const next = { ...(prev || {}) };
+  if (extracted?.brand) next.brand = extracted.brand;
+  if (extracted?.model) next.model = extracted.model;
+  if (extracted?.minYear) next.minYear = extracted.minYear;
+  if (extracted?.maxYear) next.maxYear = extracted.maxYear;
+  if (extracted?.transmission) next.transmission = extracted.transmission;
+  if (extracted?.fuel) next.fuel = extracted.fuel;
+  if (extracted?.bodywork) next.bodywork = extracted.bodywork;
+  if (extracted?.maxPrice) next.maxPrice = extracted.maxPrice;
+  if (extracted?.amount && !next.maxPrice) {
+    // If the user only said a number, treat it as "max price" in search context.
+    next.maxPrice = extracted.amount;
+  }
+  if (extracted?.currency) next.currency = extracted.currency;
+  return next;
+}
+
+function filterCatalogByContext(catalog: any[], ctx: any): any[] {
+  const brand = ctx?.brand ? normalize(String(ctx.brand)) : '';
+  const model = ctx?.model ? normalize(String(ctx.model)) : '';
+  const minYear = Number(ctx?.minYear ?? 0) || undefined;
+  const maxYear = Number(ctx?.maxYear ?? 0) || undefined;
+  const tx = ctx?.transmission ? normalize(String(ctx.transmission)) : '';
+  const fuel = ctx?.fuel ? normalize(String(ctx.fuel)) : '';
+  const maxPrice = Number(ctx?.maxPrice ?? 0) || undefined;
+
+  return (catalog || [])
+    .filter((it) => isVehicleItem(it))
+    .filter((it) => {
+      const b = it?.brand ? normalize(String(it.brand)) : normalize(String(it?.category || ''));
+      const m = it?.model ? normalize(String(it.model)) : normalize(String(it?.name || ''));
+      if (brand && !b.includes(brand)) return false;
+      if (model && !m.includes(model)) return false;
+      if (minYear && Number(it?.year || 0) && Number(it.year) < minYear) return false;
+      if (maxYear && Number(it?.year || 0) && Number(it.year) > maxYear) return false;
+      if (tx) {
+        const itTx = normalize(String(it?.transmission || ''));
+        if (itTx && !itTx.includes(tx)) return false;
+      }
+      if (fuel) {
+        const itFuel = normalize(String(it?.fuel || ''));
+        if (itFuel && !itFuel.includes(fuel)) return false;
+      }
+      if (maxPrice && Number(it?.priceNumber || 0)) {
+        if (Number(it.priceNumber) > maxPrice) return false;
+      }
+      return true;
+    });
+}
+
 function isSedanHatchName(name: string): boolean {
   const n = normalize(name);
   return /(sedan|hatch|onix|gol\b|polo\b|corolla|cronos|fiesta|focus|civic|sentra|versa|etios|logan|clio|208\b|206\b)/.test(n);
@@ -342,10 +395,36 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     }
 
     // Conversation state
-    const state: ConvState = await getState(instance, remoteJid);
-    const extracted = extractLeadFields(rawText, (state as any)?.extracted ?? (state as any)?.lead ?? {});
+    const stateRaw: ConvState = await getState(instance, remoteJid);
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
+
+    // Context timeout (30 min): if idle too long, drop accumulated search/finance context.
+    const lastUserAtMs = stateRaw.last_user_at ? Date.parse(stateRaw.last_user_at) : NaN;
+    const contextExpired = !Number.isNaN(lastUserAtMs) && now - lastUserAtMs > 30 * 60 * 1000;
+
+    const state: ConvState = {
+      ...stateRaw,
+      ...(contextExpired
+        ? { search_context: undefined, search_context_at: undefined, finance: undefined, last_hits: undefined, last_hits_at: undefined }
+        : {})
+    };
+
+    // Merge extracted fields across turns.
+    const extracted = extractLeadFields(rawText, (state as any)?.extracted ?? (state as any)?.lead ?? {});
+
+    // Update message counters & last user timestamp.
+    const userMsgCount = Math.max(0, Number(state.user_msg_count ?? 0)) + 1;
+    state.user_msg_count = userMsgCount;
+    state.last_user_at = nowIso;
+
+    // Accumulate search context across turns.
+    const nextSearchCtx = mergeSearchContext(state.search_context, extracted);
+    state.search_context = nextSearchCtx;
+    state.search_context_at = nowIso;
+
+    // Lead score recalculated each turn.
+    state.leadScore = computeLeadScore(state, extracted, now);
 
     const aggEntry = aggregators.get(key);
     const cleanup = () => {
@@ -449,6 +528,17 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     const catalog = await getCatalog();
 
+    // ── Financing flow continuation ───────────────────────────────────────
+    if (state.finance?.stage === 'collecting') {
+      // Re-enter the financing simulator even if the message is just a number.
+      const financeMsg = /(\bcuotas?\b|\bmeses?\b|\bentrada\b|\banticipo\b|\bse[ñn]a\b|\b\d{7,12}\b)/i.test(rawText);
+      if (financeMsg) {
+        // Force the asksFinancing branch by injecting a marker.
+        // (We keep logic in one place.)
+        (state as any)._forceFinancing = true;
+      }
+    }
+
     // ── Quick follow-up: user replies with option number ────────────────────
     const lastHits: string[] = Array.isArray((state as any).last_hits) ? (state as any).last_hits : [];
     const lastHitsAtStr: string | undefined = (state as any).last_hits_at;
@@ -474,8 +564,40 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       }
     }
 
+    // ── Multi-turn refinement: if we just showed product results and user adds filters,
+    // refine using accumulated search_context instead of starting from scratch.
+    const prevIntent = String((state as any).last_intent || '');
+    const hasSearchCtx = !!(state.search_context && (state.search_context.brand || state.search_context.model));
+    const looksLikeRefineOnly = !/(busco|quiero|tenes|tienes|hay|mostrame|mostrar|opcion|opci[oó]n)/i.test(rawText)
+      && /\b(20\d{2}|19\d{2}|manual|autom[aá]t|cvt|dsg|nafta|diesel|gasoil|gnc|suv|pickup|hatch|sedan|hasta|m[aá]ximo|palos|mil|usd|dolares?)\b/i.test(rawText);
+
+    if ((prevIntent === 'product_results' || prevIntent === 'product_results_single') && hasSearchCtx && looksLikeRefineOnly) {
+      const refined = filterCatalogByContext(catalog, state.search_context);
+      const baseHits = refined.length > 0
+        ? refined.slice(0, 6)
+        : searchCatalog(catalog, rawText, 6);
+      const { hits } = applyVehicleGuardrails(rawText, baseHits);
+
+      if (hits.length) {
+        const header = pickOne(['Perfecto, ajusto la búsqueda 👇', 'Listo, con esos filtros te dejo estas 👇', 'Dale, refinando… mirá 👇']);
+        const reply = [header, ...hits.map((it, i) => formatItemLine(it, i + 1))].join('\n');
+        const nextState: ConvState = {
+          ...state,
+          stage: 'idle',
+          last_intent: 'product_results',
+          last_query: (state.last_query || '') + ' | refine: ' + rawText,
+          last_hits: hits.map((it) => it.id).slice(0, 6),
+          last_hits_at: nowIso,
+          extracted
+        } as any;
+        scheduleReply(reply, nextState);
+        return;
+      }
+    }
+
     let reply = '';
-    let newState: ConvState = { ...state, stage: 'idle', lastBotAt: nowIso, extracted, last_media: lastMedia } as any;
+    const { _forceFinancing: _ff, ...stateClean } = state as any;
+    let newState: ConvState = { ...stateClean, stage: 'idle', lastBotAt: nowIso, extracted, last_media: lastMedia } as any;
     let isFallback = false;
 
     // ── INTELLIGENCE LAYER: check FAQ / Policy / Playbook FIRST ────────────
@@ -554,7 +676,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       const isGreeting = /^(hola|buenas|buen\s+d[ií]a|buen\s+tarde|buen\s+noche|hey|que\s+tal|buenos\s+d[ií]as?|buenas\s+tardes?|buenas\s+noches?)\b/i.test(rawText);
       const isSmallTalk = /(te\s*amo|te\s*amoo|amor|jaja+|😂|🤣|😍|❤️|😘)/i.test(rawText);
       const asksDemand = /(busco|estoy\s+buscando|necesi+to\s+(un\s+)?auto|quiero\s+(un\s+)?(auto|coche|camioneta)|me\s+interesa(?:ría)?\s+un)/i.test(rawText);
-      const asksFinancing = /(financ|cuota|cr[eé]dito|prestamo|pr[eé]stamo|banco|entrada|anticipo)/i.test(rawText);
+      const asksFinancing = /(financ|cuota|cr[eé]dito|prestamo|pr[eé]stamo|banco|entrada|anticipo)/i.test(rawText) || !!(state as any)._forceFinancing;
       const asksTradeIn = /(permuta|canje|parte\s+de\s+pago|doy\s+el\s+m[íi]o|entrego\s+el\s+auto|mi\s+(auto|coche))/i.test(rawText);
       const asksPrice = /(precio|cuanto|vale|valor|sale|financi|cuota|entrega)/i.test(rawText);
       const looksLikeVehicleQuery = /(auto|autos|coche|camioneta|pick\s*up|suv|fiat|ford|volkswagen|vw|renault|toyota|chevrolet|peugeot|jeep|honda|nissan|cronos|gol|amarok|hilux|duster|onix|corolla|km\b|a[ñn]os?\b|modelo\b|nafta|diesel|gnc|manual|automat)/i.test(rawText);
@@ -593,17 +715,77 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         newState.last_intent = 'demand_intake';
 
       } else if (asksFinancing) {
-        const required = requiredFieldsForIntent('financiacion');
-        const missing = computeMissingFields(required, extracted);
-        if (missing.length > 0) {
-          reply = buildMissingQuestions(required, missing);
-          (newState as any).missing_fields = missing;
-          (newState as any).awaiting_playbook = 'financiacion';
-        } else {
-          const cuotas = extracted.cuotas ? ` en ${extracted.cuotas} cuotas` : '';
-          const pct = extracted.percent ? ` (${extracted.percent}% financiado)` : '';
-          reply = `Perfecto. Te armo la simulación de financiación${pct}${cuotas}. ¿De qué vehículo?`;
+        // Financing simulator (offline): collect price, downPayment, months.
+        const finance = { ...(state.finance || {}), stage: 'collecting' } as any;
+
+        // Try infer price from last single option.
+        const lastHitsNow: string[] = Array.isArray((state as any).last_hits) ? (state as any).last_hits : [];
+        if (!finance.price && lastHitsNow.length === 1) {
+          const item = catalog.find((x) => x.id === lastHitsNow[0]);
+          if (item?.priceNumber) finance.price = Number(item.priceNumber);
         }
+
+        // Heuristics: if text contains "entrada/anticipo" and we parsed an amount, treat as down payment.
+        if (/\b(entrada|anticipo|se[ñn]a)\b/i.test(rawText) && extracted?.amount) {
+          finance.downPayment = Number(extracted.amount);
+        } else if (!finance.price && extracted?.amount) {
+          // If we don't have price yet, treat the first amount as price.
+          finance.price = Number(extracted.amount);
+        }
+
+        if (extracted?.cuotas) finance.months = Number(extracted.cuotas);
+
+        const missing: string[] = [];
+        if (!finance.price) missing.push('precio');
+        if (!finance.months) missing.push('cuotas');
+        if (finance.downPayment === undefined || finance.downPayment === null) missing.push('entrada');
+
+        if (missing.length > 0) {
+          const parts: string[] = [];
+          if (missing.includes('precio')) parts.push('• ¿Cuál es el **precio** del vehículo? (ej: 13.800.000)');
+          if (missing.includes('entrada')) parts.push('• ¿De cuánto sería la **entrada**? (si es 0, decime 0)');
+          if (missing.includes('cuotas')) parts.push('• ¿En cuántas **cuotas/meses**? (ej: 36)');
+          reply = `Dale, te la simulo. Necesito:\n${parts.join('\n')}`;
+          (newState as any).missing_fields = missing;
+          newState.finance = finance;
+        } else {
+          const apr = await getFinanceApr();
+          const sim = simulateFinancing({
+            price: Number(finance.price),
+            downPayment: Number(finance.downPayment || 0),
+            months: Number(finance.months),
+            apr
+          });
+
+          finance.apr = apr;
+          finance.monthly = sim.monthly;
+          finance.createdAt = nowIso;
+          finance.stage = 'idle';
+          newState.finance = finance;
+
+          const monthlyTxt = formatArs(sim.monthly);
+          const priceTxt = formatArs(sim.price);
+          const downTxt = formatArs(sim.downPayment);
+          const aprPct = Math.round(apr * 100);
+
+          reply = [
+            `✅ Simulación estimada:`,
+            `• Precio: ARS ${priceTxt}`,
+            `• Entrada: ARS ${downTxt}`,
+            `• Plazo: ${sim.months} meses`,
+            `• Tasa: ~${aprPct}% anual`,
+            `\n💳 Cuota estimada: **ARS ${monthlyTxt} / mes**`,
+            `\nSi me decís qué unidad te interesa, te armo una cotización con datos exactos.`
+          ].join('\n');
+
+          // Best-effort: persist a note for the operator.
+          try {
+            await addConversationNote(instance, remoteJid, `Simulación financiación: precio=${sim.price} entrada=${sim.downPayment} meses=${sim.months} apr=${apr} cuota=${Math.round(sim.monthly)}`);
+          } catch {
+            // ignore
+          }
+        }
+
         newState.last_intent = 'financing';
 
       } else if (asksTradeIn) {
