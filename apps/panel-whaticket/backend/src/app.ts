@@ -27,59 +27,28 @@ app.disable("x-powered-by");
 // and other proxy-aware features behave correctly.
 app.set("trust proxy", 1);
 
-// --- CORS -------------------------------------------------------------
-// Railway/Vercel frontends often differ only by subdomain. We support:
-// - exact origins: https://panel-front-end-production.up.railway.app
-// - comma-separated list in FRONTEND_URL
-// - simple wildcard patterns like: https://*.up.railway.app
-const normalizeOrigin = (o: string) => o.replace(/\/$/, "");
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const patternToRegExp = (pattern: string) => {
-  // Convert '*' to '.*' while escaping other regex chars.
-  const escaped = pattern
-    .split("*")
-    .map(part => escapeRegExp(part))
-    .join(".*");
-  return new RegExp(`^${escaped}$`);
-};
+app.use(
+  cors({
+    credentials: true,
+    origin: (origin, cb) => {
+      // Allow non-browser requests (no Origin) and allow-list configured origins.
+      if (!origin) return cb(null, true);
 
-const rawFrontend = String(process.env.FRONTEND_URL || "").trim();
-const allowList = rawFrontend
-  ? rawFrontend
-      .split(",")
-      .map(s => normalizeOrigin(s.trim()))
-      .filter(Boolean)
-  : [];
+      const raw = String(process.env.FRONTEND_URL || "").trim();
+      if (!raw) return cb(null, true);
 
-const allowMatchers = allowList.map(p => {
-  if (p.includes("*")) {
-    return (origin: string) => patternToRegExp(p).test(origin);
-  }
-  return (origin: string) => origin === p;
-});
+      const allowed = raw
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean);
 
-const corsOptions: cors.CorsOptions = {
-  credentials: true,
-  origin: (origin, cb) => {
-    // Non-browser requests (curl, server-to-server) won't have Origin.
-    if (!origin) return cb(null, true);
+      if (allowed.includes(origin)) return cb(null, true);
 
-    const o = normalizeOrigin(origin);
-
-    // If FRONTEND_URL not set, default to permissive (avoids hard lockouts).
-    if (allowMatchers.length === 0) return cb(null, true);
-
-    const allowed = allowMatchers.some(match => match(o));
-    if (allowed) return cb(null, true);
-
-    return cb(new Error(`Not allowed by CORS: ${o}`));
-  }
-};
-
-// Ensure preflight (OPTIONS) always gets CORS headers before csrf/auth/ratelimit.
-app.options("*", cors(corsOptions));
-
-app.use(cors(corsOptions));
+      // If misconfigured, fail closed with a clear message.
+      return cb(new Error(`Not allowed by CORS: ${origin}`));
+    }
+  })
+);
 app.use(securityHeaders);
 app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));
