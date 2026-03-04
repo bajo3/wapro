@@ -34,51 +34,73 @@ const buildQuotationMessage = (q: Quotation): string => {
   const add = toNumber((q as any).additionalCosts);
 
   const lines: string[] = [];
-  lines.push(`Cotización #${q.number}`);
-  lines.push(`Vehículo: ${q.vehicleLabel}`);
-  lines.push(`Total: ${currency} ${fmtMoney(total)}`);
 
-  // Breakdown (optional)
-  if (base || discount || add) {
-    lines.push(`Base: ${currency} ${fmtMoney(base)}`);
-    if (discount) lines.push(`Descuento: ${currency} ${fmtMoney(discount)}`);
-    if (add) lines.push(`Extras: ${currency} ${fmtMoney(add)}`);
+  // Header
+  lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
+  lines.push(`🚗 *COTIZACIÓN #${q.number}*`);
+  lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
+  lines.push(`📋 Vehículo: *${q.vehicleLabel}*`);
+  lines.push(`👤 Cliente: ${q.clientName}`);
+  lines.push(``);
+
+  // Price breakdown
+  lines.push(`💰 *Precio*`);
+  if (base && (discount || add)) {
+    lines.push(`  Base:       ${currency} ${fmtMoney(base)}`);
+    if (discount) lines.push(`  Descuento: -${currency} ${fmtMoney(discount)}`);
+    if (add)      lines.push(`  Extras:    +${currency} ${fmtMoney(add)}`);
+    lines.push(`  ─────────────────`);
   }
+  lines.push(`  *Total: ${currency} ${fmtMoney(total)}*`);
+  lines.push(``);
 
+  // Financing
   const fin = (q as any).financing;
   if (fin && typeof fin === "object") {
     const down = toNumber(fin.downPayment);
     const months = toNumber(fin.months);
     const rate = toNumber(fin.interestRate);
     const monthly = toNumber(fin.monthlyPayment);
-    const totalAmount = toNumber(fin.totalAmount);
+    const totalFin = toNumber(fin.totalAmount);
 
-    lines.push("\nFinanciación:");
-    if (down) lines.push(`- Entrada: ${currency} ${fmtMoney(down)}`);
-    if (months) lines.push(`- Plazo: ${months} meses`);
-    if (rate) lines.push(`- Tasa: ${rate}% anual`);
-    if (monthly) lines.push(`- Cuota estimada: ${currency} ${fmtMoney(monthly)}/mes`);
-    if (totalAmount) lines.push(`- Total financiado: ${currency} ${fmtMoney(totalAmount)}`);
+    lines.push(`🏦 *Financiación*`);
+    if (down)     lines.push(`  Entrada:       ${currency} ${fmtMoney(down)}`);
+    if (months)   lines.push(`  Plazo:         ${months} meses`);
+    if (rate)     lines.push(`  Tasa:          ${rate}% anual`);
+    if (monthly)  lines.push(`  Cuota estimada: ${currency} ${fmtMoney(monthly)}/mes`);
+    if (totalFin) lines.push(`  Total financ.: ${currency} ${fmtMoney(totalFin)}`);
+    lines.push(``);
   }
 
+  // Trade-in
   const tradeIn = (q as any).tradeIn;
   if (tradeIn && typeof tradeIn === "object") {
     const v = toNumber(tradeIn.value);
-    lines.push("\nParte de pago:");
-    lines.push(`- ${tradeIn.brand || ""} ${tradeIn.model || ""} ${tradeIn.year || ""}`.trim());
-    if (v) lines.push(`- Valor estimado: ${currency} ${fmtMoney(v)}`);
+    const label = [tradeIn.brand, tradeIn.model, tradeIn.year].filter(Boolean).join(" ").trim();
+    lines.push(`🔄 *Parte de pago*`);
+    if (label) lines.push(`  Vehículo: ${label}`);
+    if (v)     lines.push(`  Valor est.: ${currency} ${fmtMoney(v)}`);
+    lines.push(``);
   }
 
+  // Notes
+  if ((q as any).notes) {
+    lines.push(`📝 *Notas:* ${(q as any).notes}`);
+    lines.push(``);
+  }
+
+  // Validity
   if ((q as any).validUntil) {
     try {
       const d = new Date((q as any).validUntil);
-      lines.push(`\nVálida hasta: ${d.toLocaleDateString("es-AR")}`);
-    } catch {
-      // ignore
-    }
+      lines.push(`⏳ Válida hasta: ${d.toLocaleDateString("es-AR")}`);
+      lines.push(``);
+    } catch { /* ignore */ }
   }
 
-  lines.push("\nSi querés, te paso opciones similares o coordinamos para verla 👇");
+  lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
+  lines.push(`¿Querés avanzar? Respondé este mensaje o consultá con nuestro asesor. 👇`);
+
   return lines.join("\n");
 };
 
@@ -225,6 +247,11 @@ export const send = async (req: Request, res: Response): Promise<Response> => {
   const quotation = await Quotation.findByPk(id);
   if (!quotation) throw new AppError("ERR_QUOTATION_NOT_FOUND", 404);
 
+  // Prevent accidental re-sends of already-accepted/rejected quotations
+  if (["accepted", "rejected"].includes(quotation.status)) {
+    throw new AppError("ERR_QUOTATION_ALREADY_CLOSED", 400);
+  }
+
   // Ensure we have a WhatsApp connection to send from.
   const whatsapp =
     (await Whatsapp.findOne({ where: { isDefault: true } })) ||
@@ -251,22 +278,20 @@ export const send = async (req: Request, res: Response): Promise<Response> => {
       } as any);
     }
 
-    // persist the link
-    try {
-      await quotation.update({ contactId: contact.id });
-    } catch {
-      // ignore
-    }
+    try { await quotation.update({ contactId: contact!.id }); } catch { /* ignore */ }
   }
+
+  if (!contact) throw new AppError("ERR_QUOTATION_CONTACT_RESOLVE_FAILED", 500);
 
   // Find or create ticket and send message.
   const ticket = await FindOrCreateTicketService(contact, whatsapp.id, 0);
-
   const message = buildQuotationMessage(quotation);
   await SendWhatsAppMessage({ body: message, ticket } as any);
 
-  const nextStatus = String(quotation.status || "draft") === "draft" ? "sent" : quotation.status;
+  // Status progression: draft/viewed → sent, sent stays sent
+  const currentStatus = String(quotation.status || "draft");
+  const nextStatus = currentStatus === "sent" ? "sent" : "sent";
   await quotation.update({ status: nextStatus, sentAt: new Date() } as any);
 
-  return res.json({ ok: true, quotation });
+  return res.json({ ok: true, quotation, ticketId: ticket.id });
 };

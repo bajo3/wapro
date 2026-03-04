@@ -73,17 +73,26 @@ function tokenSet(s: string) {
   return new Set(toks);
 }
 
-// Lightweight synonyms to improve recall without adding dependencies.
-// Keep this list small and high-signal.
+// Extended synonyms for better recall across Spanish variants and common typos
 const SYNONYMS: Record<string, string[]> = {
-  suv: ['camioneta', 'crossover', 'utilitario'],
-  camioneta: ['suv', 'crossover', 'utilitario'],
-  automatico: ['automatica', 'at', 'tiptronic', 'dsg', 'cvt'],
+  suv: ['camioneta', 'crossover', 'utilitario', '4x4', 'todoterreno'],
+  camioneta: ['suv', 'crossover', 'utilitario', '4x4', 'pickup'],
+  pickup: ['pick up', 'doble cabina', 'camioneta'],
+  automatico: ['automatica', 'at', 'tiptronic', 'dsg', 'cvt', 'multitronic'],
   automatica: ['automatico', 'at', 'tiptronic', 'dsg', 'cvt'],
-  manual: ['mt', 'caja', 'caja manual'],
-  '4x4': ['4wd', 'awd'],
-  nafta: ['gasolina'],
-  gasolina: ['nafta']
+  manual: ['mt', 'caja', 'caja manual', 'sincronico'],
+  '4x4': ['4wd', 'awd', 'cuatro por cuatro'],
+  nafta: ['gasolina', 'naftero'],
+  gasolina: ['nafta', 'naftero'],
+  diesel: ['gasoil', 'gas oil', 'turbodiesel'],
+  gnc: ['gas natural', 'gas'],
+  volkswagen: ['vw', 'volk'],
+  chevrolet: ['chevy', 'chevi'],
+  mercedes: ['merc', 'benz'],
+  // Model aliases
+  hilux: ['hi lux', 'hi-lux'],
+  ecosport: ['eco sport'],
+  frontier: ['frontera'],
 };
 
 function expandTokens(set: Set<string>): Set<string> {
@@ -98,11 +107,24 @@ function expandTokens(set: Set<string>): Set<string> {
   return out;
 }
 
+// Dice coefficient — more stable than Jaccard for short strings
+function dice(a: Set<string>, b: Set<string>): number {
+  if (!a.size && !b.size) return 1;
+  if (!a.size || !b.size) return 0;
+  const inter = [...a].filter((x) => b.has(x)).length;
+  return (2 * inter) / (a.size + b.size);
+}
+
 function jaccard(a: Set<string>, b: Set<string>) {
   if (!a.size && !b.size) return 1;
   const inter = [...a].filter((x) => b.has(x)).length;
   const uni = new Set([...a, ...b]).size;
   return uni ? inter / uni : 0;
+}
+
+// Weighted combination of dice + jaccard for text similarity
+function textSim(a: Set<string>, b: Set<string>): number {
+  return dice(a, b) * 0.6 + jaccard(a, b) * 0.4;
 }
 
 function clamp01(x: number) {
@@ -354,38 +376,64 @@ export async function listDemandRecontacts(demandId: number, limit = 50): Promis
   return r.rows.map(mapRecontactRow);
 }
 
-function buildMatchMessage(demand: VehicleDemand, vehicle: any, score: number) {
-  const name = demand.contactName ? ` ${demand.contactName}` : '';
-  const title = String(vehicle?.title || `${vehicle?.brand || ''} ${vehicle?.model || ''}`.trim() || 'Auto').trim();
-  const year = vehicle?.year ? String(vehicle.year) : '';
-  const price = vehicle?.price ? String(vehicle.price) : '';
-  const currency = vehicle?.currency ? String(vehicle.currency) : '';
-  const url = vehicle?.permalink
-    ? String(vehicle.permalink)
-    : env.publicUrl && vehicle?.slug
-      ? `${env.publicUrl.replace(/\/$/, '')}/autos/${vehicle.slug}`
-      : '';
+function fmtPrice(price: any, currency: any): string {
+  const n = Number(price);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  const cur = String(currency || '').toUpperCase() || 'ARS';
+  try {
+    return `${cur} ${n.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`;
+  } catch {
+    return `${cur} ${n}`;
+  }
+}
 
-  const fallback =
-    `Hola${name}! 👋\n` +
-    `Entró una opción que puede encajar con lo que buscabas (${demand.query}).\n\n` +
-    `• ${title}${year ? ' ' + year : ''}\n` +
-    (price ? `• Precio: ${currency ? currency + ' ' : ''}${price}\n` : '') +
-    `• Coincidencia: ${Math.round(score * 100)}%\n` +
-    (url ? `\nVer: ${url}` : '');
+function buildMatchMessage(demand: VehicleDemand, vehicles: any[], scores: number[]): string {
+  const name = demand.contactName ? ` ${demand.contactName}` : '';
 
   const tpl = (demand.matchTemplate ?? '').trim();
-  if (!tpl) return fallback;
 
-  return tpl
-    .replaceAll('{name}', demand.contactName ?? '')
-    .replaceAll('{query}', demand.query)
-    .replaceAll('{title}', title)
-    .replaceAll('{year}', year)
-    .replaceAll('{price}', price)
-    .replaceAll('{currency}', currency)
-    .replaceAll('{score}', String(Math.round(score * 100)))
-    .replaceAll('{url}', url);
+  // Multi-vehicle message (up to 3)
+  const lines = vehicles.map((v, i) => {
+    const title = String(v?.title || `${v?.brand || ''} ${v?.model || ''}`.trim() || 'Vehículo').trim();
+    const year = v?.year ? ` ${v.year}` : '';
+    const priceStr = fmtPrice(v?.price, v?.currency);
+    const url = v?.permalink
+      ? String(v.permalink)
+      : env.publicUrl && v?.slug
+        ? `${env.publicUrl.replace(/\/$/, '')}/autos/${v.slug}`
+        : '';
+    const pct = Math.round((scores[i] ?? 0) * 100);
+    const parts = [`${i + 1}. *${title}${year}*`];
+    if (priceStr) parts.push(`   💰 ${priceStr}`);
+    if (url) parts.push(`   🔗 ${url}`);
+    parts.push(`   ✅ Coincidencia: ${pct}%`);
+    return parts.join('\n');
+  });
+
+  if (tpl && vehicles.length === 1) {
+    const v = vehicles[0];
+    const title = String(v?.title || `${v?.brand || ''} ${v?.model || ''}`.trim() || 'Vehículo').trim();
+    const year = v?.year ? String(v.year) : '';
+    const url = v?.permalink ?? (env.publicUrl && v?.slug ? `${env.publicUrl.replace(/\/$/, '')}/autos/${v.slug}` : '');
+    return tpl
+      .replaceAll('{name}', demand.contactName ?? '')
+      .replaceAll('{query}', demand.query)
+      .replaceAll('{title}', title)
+      .replaceAll('{year}', year)
+      .replaceAll('{price}', fmtPrice(v?.price, v?.currency))
+      .replaceAll('{currency}', String(v?.currency ?? ''))
+      .replaceAll('{score}', String(Math.round((scores[0] ?? 0) * 100)))
+      .replaceAll('{url}', url ?? '');
+  }
+
+  const count = vehicles.length;
+  const plural = count === 1 ? 'una opción' : `${count} opciones`;
+  return (
+    `🚗 Hola${name}! Encontré ${plural} que se acerca a lo que buscabas:\n` +
+    `_"${demand.query}"_\n\n` +
+    lines.join('\n\n') +
+    '\n\n¿Te interesa alguna? Puedo darte más info o buscar alternativas.'
+  );
 }
 
 export async function scanRecentVehiclesForDemandMatches(params: { since: Date; threshold: number }) {
@@ -411,7 +459,7 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
   }
 
   for (const d of demands) {
-    const demandText = `${d.query} ${d.brand ?? ''} ${d.model ?? ''}`;
+    const demandText = [d.query, d.brand, d.model, d.transmission].filter(Boolean).join(' ');
     const dSet = expandTokens(tokenSet(demandText));
 
     // Collect candidates so we can cap notifications (anti-spam): max 3 per demand per scan.
@@ -421,50 +469,78 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
       const reasons: any = {};
       let score = 0;
 
-      if (d.brand && v.brand && norm(d.brand) === norm(v.brand)) {
-        score += 0.22;
-        reasons.brand = true;
+      // ── Brand match (0–0.25) ──────────────────────────────────────────
+      if (d.brand && v.brand) {
+        const db = norm(d.brand);
+        const vb = norm(v.brand);
+        if (db === vb) {
+          score += 0.25;
+          reasons.brand = 'exact';
+        } else if (vb.includes(db) || db.includes(vb)) {
+          score += 0.12;
+          reasons.brand = 'partial';
+        }
       }
 
-      const sim = jaccard(dSet, vTok.get(String(v.id)) ?? new Set());
-      score += sim * 0.55;
-      reasons.text = sim;
+      // ── Model match (0–0.20) ──────────────────────────────────────────
+      if (d.model && v.model) {
+        const dm = norm(d.model);
+        const vm = norm(String(v.model ?? ''));
+        const vt = norm(String(v.title ?? ''));
+        if (dm === vm) {
+          score += 0.20;
+          reasons.model = 'exact';
+        } else if (vm.includes(dm) || dm.includes(vm) || vt.includes(dm)) {
+          score += 0.12;
+          reasons.model = 'partial';
+        }
+      }
 
+      // ── Text similarity (0–0.30) ──────────────────────────────────────
+      const sim = textSim(dSet, vTok.get(String(v.id)) ?? new Set());
+      score += sim * 0.30;
+      reasons.textSim = Math.round(sim * 100) / 100;
+
+      // ── Year range (0–0.15) ───────────────────────────────────────────
       const vy = v.year ? Number(v.year) : null;
       if (vy && (d.minYear || d.maxYear)) {
         const minY = d.minYear ?? d.maxYear ?? vy;
         const maxY = d.maxYear ?? d.minYear ?? vy;
         let yScore = 0;
-        if (vy >= minY && vy <= maxY) yScore = 1;
-        else {
+        if (vy >= minY && vy <= maxY) {
+          yScore = 1;
+        } else {
           const dist = Math.min(Math.abs(vy - minY), Math.abs(vy - maxY));
-          if (dist === 1) yScore = 0.75;
-          else if (dist === 2) yScore = 0.55;
-          else if (dist === 3) yScore = 0.35;
-          else yScore = 0;
+          yScore = dist === 1 ? 0.7 : dist === 2 ? 0.45 : dist === 3 ? 0.2 : 0;
         }
-        score += yScore * 0.18;
-        reasons.year = { vy, minY, maxY, yScore };
+        score += yScore * 0.15;
+        reasons.year = { vy, minY, maxY, yScore: Math.round(yScore * 100) / 100 };
       }
 
+      // ── Price fit (−0.10 to +0.10) ────────────────────────────────────
       if (d.maxPrice && v.price) {
         const vp = Number(v.price);
-        if (Number.isFinite(vp)) {
+        if (Number.isFinite(vp) && vp > 0) {
           if (vp <= d.maxPrice) {
-            score += 0.05;
-            reasons.priceOk = true;
+            // Full points when price is within budget; bonus when well under
+            const ratio = vp / d.maxPrice;
+            score += ratio >= 0.75 ? 0.10 : 0.06; // sweet spot 75–100% of budget
+            reasons.price = 'ok';
           } else {
             const over = (vp - d.maxPrice) / d.maxPrice;
-            score -= Math.min(0.08, over * 0.08);
-            reasons.priceOver = over;
+            score -= Math.min(0.10, over * 0.15);
+            reasons.price = `over_${Math.round(over * 100)}pct`;
           }
         }
       }
 
+      // ── Transmission match (+0.05) ────────────────────────────────────
       if (d.transmission && v.title) {
-        const t = norm(d.transmission);
-        const tt = norm(v.title);
-        if (t && tt.includes(t)) {
+        const dt = norm(d.transmission);
+        const vt = norm(String(v.title ?? ''));
+        // Also check synonyms
+        const syns = [dt, ...(SYNONYMS[dt] ?? [])];
+        if (syns.some((s) => vt.includes(s))) {
           score += 0.05;
           reasons.transmission = true;
         }
@@ -506,17 +582,9 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
         const top = candidates.sort((a, b) => b.score - a.score).slice(0, 3);
         try {
           const number = String(d.remoteJid).split('@')[0];
-          const header = `Tengo ${top.length} opción(es) que matchean con *${d.query}*:`;
-          const lines = top.map((c, idx) => {
-            const title = c.vehicle?.title ?? `${c.vehicle?.brand ?? ''} ${c.vehicle?.model ?? ''}`.trim();
-            const year = c.vehicle?.year ? ` (${c.vehicle.year})` : '';
-            const price = c.vehicle?.price ? ` - ${c.vehicle.currency ?? ''} ${c.vehicle.price}` : '';
-            const url = c.vehicle?.permalink || (c.vehicle?.slug ? String(c.vehicle.slug) : '');
-            const scoreTxt = `${Math.round(c.score * 100)}%`;
-            return `${idx + 1}) ${title}${year}${price}${url ? `\n${url}` : ''}\nScore: ${scoreTxt}`;
-          });
+          const msg = buildMatchMessage(d, top.map((c) => c.vehicle), top.map((c) => c.score));
 
-          await evolutionSendText(d.instance, number, `${header}\n\n${lines.join('\n\n')}`);
+          await evolutionSendText(d.instance, number, msg);
           notificationsSent += 1;
 
           await pool.query(

@@ -8,6 +8,7 @@ import { getContactRule, setContactRule } from '../services/contacts.js';
 import { getConversationRule, setConversationRule, addConversationNote } from '../services/rules.js';
 import { getSocket } from '../services/socket.js';
 import {
+  matchBest,
   matchPolicy,
   matchFaq,
   matchPlaybook,
@@ -303,24 +304,16 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     }
 
     // Hard override: private numbers (env) are treated as HUMAN_ONLY.
-    // This is a fast-path for "números privados" and avoids a DB round-trip.
     if (env.privateNumbers && env.privateNumbers.length > 0 && env.privateNumbers.includes(number)) {
       const e = aggregators.get(key);
       if (e?.timer) clearTimeout(e.timer);
       if (e?.sendTimer) clearTimeout(e.sendTimer);
       aggregators.delete(key);
-      // Best-effort: persist the mode for audit/visibility in admin UIs.
-      try {
-        await setContactRule(number, 'HUMAN_ONLY', 'private_numbers_env');
-      } catch {
-        // ignore
-      }
+      try { await setContactRule(number, 'HUMAN_ONLY', 'private_numbers_env'); } catch { /* ignore */ }
       return;
     }
 
-    // Respect contact rules: if a number is configured with bot_mode OFF or HUMAN_ONLY we
-    // should not automatically reply. The rule is stored in the database and retrieved
-    // via getContactRule(). When OFF or HUMAN_ONLY we simply clean up and abort.
+    // Contact rule check
     try {
       const rule = await getContactRule(number);
       if (rule && rule !== 'ON') {
@@ -331,11 +324,10 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         return;
       }
     } catch (err) {
-      // If rule lookup fails, we log and proceed with default behaviour.
       console.error('Failed to get contact rule for', number, err);
     }
 
-    // Respect conversation-level rules: if a specific conversation is set to OFF or HUMAN_ONLY skip replies.
+    // Conversation rule check
     try {
       const convRule = await getConversationRule(instance, remoteJid);
       if (convRule && convRule !== 'ON') {
@@ -351,7 +343,6 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // Conversation state
     const state: ConvState = await getState(instance, remoteJid);
-    // Structured extraction (best-effort): keeps useful fields across turns.
     const extracted = extractLeadFields(rawText, (state as any)?.extracted ?? (state as any)?.lead ?? {});
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
@@ -368,14 +359,11 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     const scheduleReply = (reply: string, nextState: any, imageUrl?: string) => {
       const delayMs = computeHumanDelay(reply);
-
-      // Best-effort typing indicator. Don’t block on errors.
       void evolutionSendPresence(instance, number, 'composing', Math.min(delayMs, 5000)).catch(() => {});
 
       const timer = setTimeout(async () => {
         const sentIso = new Date().toISOString();
         try {
-          // If an image URL is provided, send the image with the reply as caption. Otherwise send text.
           if (imageUrl) {
             await evolutionSendImage(instance, number, imageUrl, reply);
           } else {
@@ -389,49 +377,28 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             last_bot_reply_hash: hashString(reply)
           });
 
-          // Training episode (best-effort): store what the user wrote and what we replied.
           try {
-            const intent =
-              typeof nextState?.last_intent === 'string' && nextState.last_intent.trim()
-                ? nextState.last_intent.trim()
-                : undefined;
-
+            const intent = typeof nextState?.last_intent === 'string' && nextState.last_intent.trim()
+              ? nextState.last_intent.trim()
+              : undefined;
             const sources = Array.isArray(nextState?.last_sources) ? nextState.last_sources : [];
             const extractedObj = nextState?.extracted ?? nextState?.lead ?? {};
             const missingFields = Array.isArray(nextState?.missing_fields) ? nextState.missing_fields : [];
-
-            const variant =
-              typeof nextState?.last_variant === 'string' && nextState.last_variant.trim()
-                ? nextState.last_variant.trim()
-                : undefined;
-
+            const variant = typeof nextState?.last_variant === 'string' && nextState.last_variant.trim()
+              ? nextState.last_variant.trim()
+              : undefined;
             if (rawText && reply) {
               await logEpisode({
-                instance,
-                remoteJid,
-                channel: 'whatsapp',
-                user_text: rawText,
-                reply_text: reply,
-                intent,
-                variant,
-                sources,
-                extracted: extractedObj,
-                missing_fields: missingFields
+                instance, remoteJid, channel: 'whatsapp',
+                user_text: rawText, reply_text: reply,
+                intent, variant, sources, extracted: extractedObj, missing_fields: missingFields
               });
             }
-          } catch {
-            // ignore episode failures
-          }
+          } catch { /* ignore episode failures */ }
 
-          // Emit socket event for outgoing message
           const sock = getSocket();
           if (sock) {
-            sock.emit('send.message', {
-              instance,
-              number,
-              text: reply,
-              imageUrl: imageUrl ?? null
-            });
+            sock.emit('send.message', { instance, number, text: reply, imageUrl: imageUrl ?? null });
           }
         } catch (err) {
           console.error(err);
@@ -447,57 +414,42 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       }
     };
 
-    // Low-signal acknowledgements: reply only occasionally and only when not
-    // waiting for the user to specify a query.
+    // ── Low-signal ack ──────────────────────────────────────────────────────
     if (isAckOnly(rawText)) {
-      if (state.stage === 'awaiting_query') {
-        cleanup();
-        return;
-      }
-      if (!chance(0.35)) {
-        cleanup();
-        return;
-      }
-
-      const ackVariants = ['Dale 👍', 'Ok', 'Perfecto', 'Genial 🙌'];
-      const ackReply = pickOne(ackVariants);
-      scheduleReply(ackReply, {
-        ...state,
-        stage: state.stage ?? 'idle'
-      });
+      if (state.stage === 'awaiting_query') { cleanup(); return; }
+      if (!chance(0.35)) { cleanup(); return; }
+      scheduleReply(pickOne(['Dale 👍', 'Ok!', 'Perfecto', 'Genial 🙌']), { ...state, stage: state.stage ?? 'idle' });
       return;
     }
 
-    // Determine if user wants to hand off to human
-    const wantsHandoff = /(comprar|reservar|senar|se[ñn]a|pagar|quiero\s+ya|transferencia)/i.test(rawText);
+    // ── Handoff detection ───────────────────────────────────────────────────
+    const wantsHandoff = /(comprar|reservar|se[ñn]a[rl]|pagar|quiero\s*ya|transferencia|me\s+lo\s+llevo|cerramos)/i.test(rawText);
     if (wantsHandoff) {
-      // Mark this conversation as handled by a human from now on
       try {
         await setConversationRule(instance, remoteJid, 'HUMAN_ONLY');
         const pairs = Object.entries(extracted || {})
           .filter(([_, v]) => v !== undefined && v !== null && String(v).trim() !== '')
           .slice(0, 12)
           .map(([k, v]) => `${k}=${String(v)}`);
-        const summary = `Handoff automático. Texto: "${rawText.slice(0, 140)}"\nDatos: ${pairs.join(' | ') || 'n/a'}`;
-        await addConversationNote(instance, remoteJid, summary);
+        await addConversationNote(instance, remoteJid,
+          `Handoff automático. Texto: "${rawText.slice(0, 140)}"\nDatos: ${pairs.join(' | ') || 'n/a'}`);
       } catch (err) {
         console.error('Failed to set conversation rule on handoff', err);
       }
-      const handoffMsg = 'Perfecto 🙌 Te paso con un asesor para cerrarlo rápido. Decime tu nombre y zona, y qué producto querés.';
-      scheduleReply(handoffMsg, {
-        ...state,
-        stage: 'idle',
-        last_intent: 'handoff',
-        extracted,
-        missing_fields: []
+      const handoffVariants = [
+        'Perfecto 🙌 Te paso con un asesor para cerrarlo rápido. Decime tu nombre y zona.',
+        '¡Excelente! 🎉 Te conecto con un asesor ahora. ¿Cuál es tu nombre?',
+        'Buenísimo 🤝 Un asesor te contacta enseguida para cerrarlo.'
+      ];
+      scheduleReply(pickOne(handoffVariants), {
+        ...state, stage: 'idle', last_intent: 'handoff', extracted, missing_fields: []
       });
       return;
     }
 
     const catalog = await getCatalog();
 
-    // Quick follow-up handling when we previously showed options.
-    // Examples: user replies "2" or asks "y el precio?".
+    // ── Quick follow-up: user replies with option number ────────────────────
     const lastHits: string[] = Array.isArray((state as any).last_hits) ? (state as any).last_hits : [];
     const lastHitsAtStr: string | undefined = (state as any).last_hits_at;
     const lastHitsAt = lastHitsAtStr ? Date.parse(lastHitsAtStr) : NaN;
@@ -510,220 +462,246 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         const selectedId = lastHits[opt - 1];
         const item = catalog.find((x) => x.id === selectedId);
         if (item) {
-          const detailReply = `Dale. Opción ${opt}:\n${formatItemLine(item, opt)}\n\n¿Querés coordinar reserva o te paso otra alternativa?`;
-          // If the item has an image, include it as media; otherwise send plain text.
-          const imageUrl = (item as any).image ?? undefined;
-          scheduleReply(
-            detailReply,
-            {
-              ...state,
-              stage: 'idle',
-              last_intent: 'option_selected'
-            } as any,
-            imageUrl
-          );
+          const detailReply = `Dale. Opción ${opt}:\n${formatItemLine(item, opt)}\n\n¿Querés coordinar una visita o te paso más info?`;
+          scheduleReply(detailReply, { ...state, stage: 'idle', last_intent: 'option_selected' } as any, (item as any).image ?? undefined);
           return;
         }
       }
-
       if (asksPriceQuick && !opt) {
-        const askWhich = `Dale. ¿De cuál opción querés el precio? (1-${Math.min(lastHits.length, 6)})`;
-        scheduleReply(
-          askWhich,
-          {
-            ...state,
-            stage: 'idle',
-            last_intent: 'ask_price_which'
-          } as any
-        );
+        scheduleReply(`¿De cuál opción querés el precio? (1-${Math.min(lastHits.length, 6)})`,
+          { ...state, stage: 'idle', last_intent: 'ask_price_which' } as any);
         return;
       }
     }
 
     let reply = '';
-    // Start newState from previous state so we don't drop unrelated keys
-    // Persist media context (best-effort) so later turns can reference it.
     let newState: ConvState = { ...state, stage: 'idle', lastBotAt: nowIso, extracted, last_media: lastMedia } as any;
     let isFallback = false;
 
-    // If awaiting a query from previous greeting/price intent
+    // ── INTELLIGENCE LAYER: check FAQ / Policy / Playbook FIRST ────────────
+    // This is the key improvement — knowledge base is now wired into every message.
+    const knowledgeMatch = await matchBest(rawText);
+    if (knowledgeMatch && knowledgeMatch.score >= 0.5) {
+      const { type, row, score: kScore } = knowledgeMatch;
+
+      if (type === 'playbook') {
+        // Playbook: render template with extracted context
+        const playbookCtx = { ...extracted, contact_name: extracted?.name ?? '', query: rawText };
+        reply = renderTemplate(row.template, playbookCtx);
+        // Check if playbook requires additional fields
+        const required = requiredFieldsForIntent(row.intent, row.config);
+        const missing = computeMissingFields(required, extracted);
+        if (missing.length > 0) {
+          const questions = buildMissingQuestions(required, missing);
+          reply = reply ? `${reply}\n\n${questions}` : questions;
+          (newState as any).missing_fields = missing;
+          (newState as any).awaiting_playbook = row.intent;
+        }
+        newState.last_intent = row.intent ?? 'playbook';
+        (newState as any).last_sources = [{ type: 'playbook', id: row.id }];
+        (newState as any).last_variant = `playbook_${row.id}`;
+        void logDecision({ instance, remoteJid, intent: row.intent, confidence: kScore, data: { type: 'playbook', id: row.id } }).catch(() => {});
+
+      } else if (type === 'faq') {
+        reply = String(row.answer ?? '');
+        newState.last_intent = 'faq';
+        (newState as any).last_sources = [{ type: 'faq', id: row.id }];
+        void logDecision({ instance, remoteJid, intent: 'faq', confidence: kScore, data: { type: 'faq', id: row.id } }).catch(() => {});
+
+      } else if (type === 'policy') {
+        reply = String(row.body ?? '');
+        newState.last_intent = 'policy';
+        (newState as any).last_sources = [{ type: 'policy', id: row.id }];
+        void logDecision({ instance, remoteJid, intent: 'policy', confidence: kScore, data: { type: 'policy', id: row.id } }).catch(() => {});
+      }
+
+      if (reply) {
+        scheduleReply(reply, newState);
+        return;
+      }
+    }
+
+    // ── Awaiting query from previous turn ───────────────────────────────────
     if (state.stage === 'awaiting_query') {
       const baseHits = searchCatalog(catalog, rawText, 6);
       const { hits } = applyVehicleGuardrails(rawText, baseHits);
       if (hits.length) {
-        // If there is exactly one match, send an image + details directly and skip listing.
         if (hits.length === 1) {
           const item = hits[0];
-          const detailReply = `Dale. Opción 1:\n${formatItemLine(item, 1)}\n\n¿Querés coordinar reserva o te paso otra alternativa?`;
-          const nextState: ConvState = {
-            ...state,
-            stage: 'idle',
-            last_intent: 'product_results_single',
-            last_query: rawText,
-            last_hits: [item.id],
-            last_hits_at: nowIso
-          };
-          // Schedule reply with image if available and return early.
-          const imageUrl = (item as any).image ?? undefined;
-          scheduleReply(detailReply, nextState, imageUrl);
+          const detailReply = `Dale. Mirá:\n${formatItemLine(item, 1)}\n\n¿Te interesa? Puedo coordinar visita o pasarte más info.`;
+          const nextState: ConvState = { ...state, stage: 'idle', last_intent: 'product_results_single', last_query: rawText, last_hits: [item.id], last_hits_at: nowIso };
+          scheduleReply(detailReply, nextState, (item as any).image ?? undefined);
           return;
         }
-        // Compose a random variant for presenting results when multiple matches are found
-        const headerVariants = ['Dale. Mirá opciones 👇', 'Te paso estas opciones 👇', 'Genial, mirá lo que tengo 👇'];
-        const tailVariants = [
-          '¿Querés que te pase alternativas en otro rango de precio?',
-          'Si me decís presupuesto y zona, te recomiendo la mejor opción.',
-          'Decime presupuesto y zona y busco lo mejor para vos.'
-        ];
-        reply = [pickOne(headerVariants), ...hits.map((it, i) => formatItemLine(it, i + 1)), '', pickOne(tailVariants)].join('\n');
+        reply = [pickOne(['Dale. Mirá opciones 👇', 'Te paso estas opciones 👇', 'Genial, mirá lo que tengo 👇']),
+          ...hits.map((it, i) => formatItemLine(it, i + 1)),
+          '', pickOne(['¿Querés alternativas en otro rango de precio?', 'Contame presupuesto y zona y ajusto la búsqueda.', 'Si me decís presupuesto y zona, te recomiendo la mejor.'])
+        ].join('\n');
         newState.last_intent = 'product_results';
         newState.last_query = rawText;
         newState.last_hits = hits.map((it) => it.id).slice(0, 6);
         newState.last_hits_at = nowIso;
       } else {
-        const noMatchVariants = [
-          'No lo encontré 😕 ¿Me decís marca/modelo o para qué lo necesitás?',
-          'No me aparece ese modelo. ¿Tenés presupuesto aproximado?',
-          'No lo veo en el catálogo ahora. ¿Qué uso le das y rango de precio?'
-        ];
-        // If user sent media-only or looks like they referenced an image, ask for a minimal detail.
-        if (lastMedia && !String(rawText || '').trim()) {
-          reply = 'Te vi la imagen 👍 ¿qué modelo/marca estás buscando o cuál es tu presupuesto aproximado?';
-        } else {
-          reply = pickOne(noMatchVariants);
-        }
+        reply = lastMedia && !String(rawText || '').trim()
+          ? 'Te vi la imagen 👍 ¿qué modelo/marca estás buscando o cuál es tu presupuesto?'
+          : pickOne(['No lo encontré 😕 ¿Me decís marca/modelo o para qué lo usarías?', 'No me aparece ese modelo. ¿Tenés presupuesto aproximado?', 'No lo veo en el catálogo. ¿Qué uso le das y rango de precio?']);
         newState.last_intent = 'no_match';
         newState.last_query = rawText;
         isFallback = true;
       }
     } else {
-      // Heuristics to infer intent
-      const isGreeting = /^(hola|buenas|buen\s+dia|buen\s+tarde|buen\s+noche|hey|que\s+tal)\b/i.test(rawText);
-      const isSmallTalk = /(te\s*amo|te\s*amoo|amor|jaja|jajaja|😂|🤣|😍|❤️|❤️‍🔥|😘|jajaj)/i.test(rawText);
+      // ── Intent detection ──────────────────────────────────────────────────
+      const isGreeting = /^(hola|buenas|buen\s+d[ií]a|buen\s+tarde|buen\s+noche|hey|que\s+tal|buenos\s+d[ií]as?|buenas\s+tardes?|buenas\s+noches?)\b/i.test(rawText);
+      const isSmallTalk = /(te\s*amo|te\s*amoo|amor|jaja+|😂|🤣|😍|❤️|😘)/i.test(rawText);
+      const asksDemand = /(busco|estoy\s+buscando|necesi+to\s+(un\s+)?auto|quiero\s+(un\s+)?(auto|coche|camioneta)|me\s+interesa(?:ría)?\s+un)/i.test(rawText);
+      const asksFinancing = /(financ|cuota|cr[eé]dito|prestamo|pr[eé]stamo|banco|entrada|anticipo)/i.test(rawText);
+      const asksTradeIn = /(permuta|canje|parte\s+de\s+pago|doy\s+el\s+m[íi]o|entrego\s+el\s+auto|mi\s+(auto|coche))/i.test(rawText);
       const asksPrice = /(precio|cuanto|vale|valor|sale|financi|cuota|entrega)/i.test(rawText);
-
-      // Catalog intent: keep BOTH profiles (gaming + autos) but only search when it looks intentional.
+      const looksLikeVehicleQuery = /(auto|autos|coche|camioneta|pick\s*up|suv|fiat|ford|volkswagen|vw|renault|toyota|chevrolet|peugeot|jeep|honda|nissan|cronos|gol|amarok|hilux|duster|onix|corolla|km\b|a[ñn]os?\b|modelo\b|nafta|diesel|gnc|manual|automat)/i.test(rawText);
       const looksLikeGamingQuery = /(ps5|play\s*5|xbox|consola|auricular|headset|monitor|notebook|silla|joystick|teclado|mouse)/i.test(rawText);
-      const looksLikeVehicleQuery = /(auto|auto[s]?|coche|camioneta|pick\s*up|suv|fiat|ford|volkswagen|vw|renault|toyota|chevrolet|peugeot|jeep|honda|nissan|cronos|gol|amarok|hilux|duster|onix|corolla|km\b|años?\b|modelo\b|version\b|nafta|diesel|gnc|manual|automatic)/i.test(rawText);
-
-      const norm = normalize(rawText);
-      const hasContent = norm.length >= 3 && /[a-z0-9]/i.test(norm);
+      const normText = normalize(rawText);
+      const hasContent = normText.length >= 3 && /[a-z0-9]/i.test(normText);
       const stage = state.stage as ConvState['stage'];
-      // Only search when:
-      // - user is already in query mode, OR
-      // - message looks like a product/vehicle query, OR
-      // - user explicitly asked for price/financing.
       const shouldSearch = stage === 'awaiting_query' || looksLikeGamingQuery || looksLikeVehicleQuery || (asksPrice && hasContent);
 
       if (isGreeting) {
-        const greetingVariants = ['¡Buenas 😄! ¿Qué estás buscando hoy?', '¡Hola! Decime qué necesitás y te paso opciones.', '¡Hola! ¿Qué andás buscando?'];
-        reply = pickOne(greetingVariants);
+        const greetVariants = [
+          '¡Buenas 😄! ¿Qué estás buscando hoy?',
+          '¡Hola! Decime qué necesitás y te paso opciones.',
+          '¡Hola! ¿Qué andás buscando? Contame marca, modelo o presupuesto.'
+        ];
+        reply = pickOne(greetVariants);
         newState.stage = 'awaiting_query';
         newState.last_intent = 'greeting';
+
       } else if (isSmallTalk) {
-        // Prevent "random" messages (e.g. "Te amoo") from triggering a catalog search.
-        const smallTalkVariants = ['❤️ Yo también 😊', 'Jajaja 😄 ¿Qué hacés?', '😍 Qué lindo. ¿En qué te ayudo?'];
-        reply = pickOne(smallTalkVariants);
+        reply = pickOne(['❤️ Yo también 😊', 'Jajaja 😄 ¿Qué hacés?', '😍 ¡Qué lindo! ¿En qué te ayudo?']);
         newState.stage = 'idle';
         newState.last_intent = 'smalltalk';
+
+      } else if (asksDemand && !looksLikeVehicleQuery) {
+        // User explicitly says they're looking — acknowledge and ask for details
+        reply = [
+          '¡Perfecto! Para encontrarte las mejores opciones necesito saber:\n',
+          '• ¿Qué marca/modelo tenés en mente?',
+          '• ¿Rango de año?',
+          '• ¿Presupuesto aproximado?',
+          '• ¿Automático o manual?',
+          '\nContame lo que puedas y busco 🔍'
+        ].join('\n');
+        newState.stage = 'awaiting_query';
+        newState.last_intent = 'demand_intake';
+
+      } else if (asksFinancing) {
+        const required = requiredFieldsForIntent('financiacion');
+        const missing = computeMissingFields(required, extracted);
+        if (missing.length > 0) {
+          reply = buildMissingQuestions(required, missing);
+          (newState as any).missing_fields = missing;
+          (newState as any).awaiting_playbook = 'financiacion';
+        } else {
+          const cuotas = extracted.cuotas ? ` en ${extracted.cuotas} cuotas` : '';
+          const pct = extracted.percent ? ` (${extracted.percent}% financiado)` : '';
+          reply = `Perfecto. Te armo la simulación de financiación${pct}${cuotas}. ¿De qué vehículo?`;
+        }
+        newState.last_intent = 'financing';
+
+      } else if (asksTradeIn) {
+        const required = requiredFieldsForIntent('permuta');
+        const missing = computeMissingFields(required, extracted);
+        if (missing.length > 0) {
+          reply = buildMissingQuestions(required, missing);
+          (newState as any).missing_fields = missing;
+        } else {
+          const model = extracted.tradeInModel ?? extracted.model ?? '';
+          const year = extracted.tradeInYear ?? extracted.year ?? '';
+          const km = extracted.tradeInKm !== undefined ? ` con ${extracted.tradeInKm.toLocaleString('es-AR')} km` : '';
+          reply = `Perfecto, tomamos ${model} ${year}${km} en parte de pago. ¿Querés que te busque opciones con ese canje?`;
+        }
+        newState.last_intent = 'tradein';
+
       } else if (asksPrice) {
-        const priceVariants = ['Dale. ¿De qué producto/modelo querés precio?', '¡Ok! Decime el modelo o marca y busco el precio.', 'Decime el producto o modelo para chequear el precio.'];
-        reply = pickOne(priceVariants);
+        reply = pickOne([
+          'Dale. ¿De qué producto/modelo querés precio?',
+          '¡Ok! Decime la marca/modelo y te consigo el precio.',
+          'Decime el modelo para chequear el precio.'
+        ]);
         newState.stage = 'awaiting_query';
         newState.last_intent = 'price_request';
+
       } else if (shouldSearch) {
         const baseHits = searchCatalog(catalog, rawText, 6);
         const { hits } = applyVehicleGuardrails(rawText, baseHits);
         if (hits.length) {
-          // If exactly one hit, send image + details directly and return early
           if (hits.length === 1) {
             const item = hits[0];
-            const detailReply = `Dale. Opción 1:\n${formatItemLine(item, 1)}\n\n¿Querés coordinar reserva o te paso otra alternativa?`;
-            const nextState: ConvState = {
-              ...state,
-              stage: 'idle',
-              last_intent: 'product_results_single',
-              last_query: rawText,
-              last_hits: [item.id],
-              last_hits_at: nowIso
-            };
-            const imageUrl = (item as any).image ?? undefined;
-            scheduleReply(detailReply, nextState, imageUrl);
+            const detailReply = `Dale. Mirá:\n${formatItemLine(item, 1)}\n\n¿Te interesa? Puedo coordinar visita o buscar alternativas.`;
+            const nextState: ConvState = { ...state, stage: 'idle', last_intent: 'product_results_single', last_query: rawText, last_hits: [item.id], last_hits_at: nowIso };
+            scheduleReply(detailReply, nextState, (item as any).image ?? undefined);
             return;
           }
-          const headerVariants = ['Te paso opciones 👇', 'Mirá estas opciones 👇', 'Dale. Tengo esto 👇'];
-          const tailVariants = [
-            'Si me decís presupuesto y zona, te recomiendo la mejor opción.',
-            '¿Querés que te pase alternativas en otro rango de precio?',
-            'Contame presupuesto y zona para ajustar la búsqueda.'
-          ];
-          reply = [pickOne(headerVariants), ...hits.map((it, i) => formatItemLine(it, i + 1)), '', pickOne(tailVariants)].join('\n');
+          reply = [pickOne(['Te paso opciones 👇', 'Mirá estas opciones 👇', 'Dale. Tengo esto 👇']),
+            ...hits.map((it, i) => formatItemLine(it, i + 1)),
+            '', pickOne(['Si me decís presupuesto y zona, te recomiendo la mejor.', '¿Querés alternativas en otro rango?', 'Contame presupuesto y zona para ajustar.'])
+          ].join('\n');
           newState.last_intent = 'product_results';
           newState.last_query = rawText;
           newState.last_hits = hits.map((it) => it.id).slice(0, 6);
           newState.last_hits_at = nowIso;
         } else {
-          const noMatchVariants = [
-            'No lo encontré 😕 ¿Me decís marca/modelo o para qué lo necesitás?',
-            'No me aparece ese modelo. ¿Tenés presupuesto aproximado?',
-            'No lo veo en el catálogo ahora. ¿Qué uso le das y rango de precio?'
-          ];
-          if (lastMedia && !String(rawText || '').trim()) {
-            reply = 'Te vi la imagen 👍 ¿qué modelo/marca es o qué rango de precio buscás?';
-          } else {
-            reply = pickOne(noMatchVariants);
-          }
+          reply = lastMedia && !String(rawText || '').trim()
+            ? 'Te vi la imagen 👍 ¿qué modelo/marca o rango de precio buscás?'
+            : pickOne(['No lo encontré 😕 ¿Me decís marca/modelo o para qué lo usarías?', 'No me aparece. ¿Tenés presupuesto aproximado?', 'No lo veo ahora. ¿Qué uso le das y rango de precio?']);
           newState.last_intent = 'no_match';
           newState.last_query = rawText;
           newState.stage = 'awaiting_query';
           isFallback = true;
         }
+
       } else {
-        // Fallback generic prompt
-        const fallbackVariants = [
-          'Dale 🙂 ¿Qué producto estabas buscando?',
-          '¿Qué necesitás ver? Si me decís marca/modelo o presupuesto, te recomiendo mejor.',
-          'Decime qué estás buscando y te paso opciones y precios.'
-        ];
-        reply = pickOne(fallbackVariants);
-        newState.stage = 'awaiting_query';
-        newState.last_intent = 'fallback';
-        isFallback = true;
+        // Fallback: try full-text knowledge search before giving up
+        const kResults = await searchKnowledge(rawText, 1);
+        if (kResults.length > 0 && kResults[0].rank > 0) {
+          reply = kResults[0].snippet;
+          newState.last_intent = `knowledge_${kResults[0].type}`;
+          (newState as any).last_sources = [{ type: kResults[0].type, id: kResults[0].id }];
+        } else {
+          reply = pickOne([
+            'Dale 🙂 ¿Qué vehículo o producto estabas buscando?',
+            '¿En qué te puedo ayudar? Si me decís marca/modelo o presupuesto, te busco opciones.',
+            'Decime qué buscás y te paso opciones y precios 🔍'
+          ]);
+          newState.stage = 'awaiting_query';
+          newState.last_intent = 'fallback';
+          isFallback = true;
+        }
       }
     }
 
-    // Anti-repeat: do not send the same reply (hash) within fallbackCooldownMs
+    // ── Anti-repeat guard ───────────────────────────────────────────────────
     const replyHash = hashString(reply);
     const lastHash = (state as any).last_bot_reply_hash;
-    const lastHashAtStr = (state as any).last_bot_reply_at;
-    let skipReply = false;
-    if (lastHash && lastHashAtStr && lastHash === replyHash) {
-      const lastHashAt = Date.parse(lastHashAtStr);
-      if (!Number.isNaN(lastHashAt) && now - lastHashAt < env.fallbackCooldownMs) {
-        skipReply = true;
+    const lastHashAt = (state as any).last_bot_reply_at;
+    if (lastHash && lastHashAt && lastHash === replyHash) {
+      const lastAt = Date.parse(lastHashAt);
+      if (!Number.isNaN(lastAt) && now - lastAt < env.fallbackCooldownMs) {
+        cleanup();
+        return;
       }
     }
 
-    // If skipping, do nothing (user will likely clarify soon)
-    if (skipReply) {
-      cleanup();
-      return;
-    }
-
-    // If previous fallback was within cooldown, avoid repeating fallback and ask for a specific detail instead
+    // ── Anti-repeat fallback: vary the question ────────────────────────────
     const lastFallbackAt = (state as any).last_fallback_at;
     if (isFallback && lastFallbackAt) {
       const lastFb = Date.parse(lastFallbackAt);
       if (!Number.isNaN(lastFb) && now - lastFb < env.fallbackCooldownMs) {
-        // Instead of repeating, ask one clarifying question
-        const clarVariants = ['¿Tenés alguna marca o modelo en mente?', '¿Cuál es tu presupuesto aproximado?', '¿Para qué lo vas a usar?'];
-        reply = pickOne(clarVariants);
-        isFallback = false; // treat as different
+        reply = pickOne(['¿Tenés alguna marca o modelo en mente?', '¿Cuál es tu presupuesto aproximado?', '¿Para qué lo vas a usar?']);
+        isFallback = false;
       }
     }
 
     if (isFallback) {
-      newState.last_fallback_at = nowIso;
+      (newState as any).last_fallback_at = nowIso;
     }
 
     scheduleReply(reply, newState);
