@@ -2,7 +2,7 @@ import "./bootstrap";
 import "reflect-metadata";
 import "express-async-errors";
 import express, { Request, Response, NextFunction } from "express";
-import cors from "cors";
+import cors, { CorsOptions } from "cors";
 import cookieParser from "cookie-parser";
 import * as Sentry from "@sentry/node";
 
@@ -27,28 +27,51 @@ app.disable("x-powered-by");
 // and other proxy-aware features behave correctly.
 app.set("trust proxy", 1);
 
-app.use(
-  cors({
-    credentials: true,
-    origin: (origin, cb) => {
-      // Allow non-browser requests (no Origin) and allow-list configured origins.
-      if (!origin) return cb(null, true);
+// --- CORS ---
+// FRONTEND_URL can be a comma-separated allowlist of origins.
+// Examples:
+//   FRONTEND_URL="https://panel-front-end-production.up.railway.app,http://localhost:3000"
+// Supports simple wildcard entries like:
+//   FRONTEND_URL="https://*.up.railway.app"
+const normalizeOrigin = (v: string) => v.trim().replace(/\/+$/, "");
 
-      const raw = String(process.env.FRONTEND_URL || "").trim();
-      if (!raw) return cb(null, true);
+const corsOptions: CorsOptions = {
+  credentials: true,
+  origin: (origin, cb) => {
+    // Allow non-browser requests (no Origin).
+    if (!origin) return cb(null, true);
 
-      const allowed = raw
-        .split(",")
-        .map(s => s.trim())
-        .filter(Boolean);
+    const raw = String(process.env.FRONTEND_URL || "").trim();
+    if (!raw) return cb(null, true);
 
-      if (allowed.includes(origin)) return cb(null, true);
+    const reqOrigin = normalizeOrigin(origin);
 
-      // If misconfigured, fail closed with a clear message.
-      return cb(new Error(`Not allowed by CORS: ${origin}`));
-    }
-  })
-);
+    const allowed = raw
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean)
+      .map(normalizeOrigin);
+
+    const isAllowed = allowed.some(entry => {
+      if (entry.includes("*")) {
+        // Convert "https://*.up.railway.app" -> /^https:\/\/.*\.up\.railway\.app$/i
+        const esc = entry
+          .replace(/[.+?^${}()|[\]\]/g, "\$&")
+          .replace(/\\*/g, ".*");
+        const re = new RegExp(`^${esc}$`, "i");
+        return re.test(reqOrigin);
+      }
+      return entry === reqOrigin;
+    });
+
+    return cb(null, isAllowed);
+  }
+};
+
+// Ensure preflight always returns the proper CORS headers.
+app.options("*", cors(corsOptions));
+app.use(cors(corsOptions));
+
 app.use(securityHeaders);
 app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));

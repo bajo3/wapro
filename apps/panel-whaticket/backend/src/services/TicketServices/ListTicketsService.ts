@@ -200,14 +200,7 @@ const ListTicketsService = async ({
 
     if (keys.length > 0) {
       const valuesSql = keys.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(",");
-      // Avoid Array.prototype.flatMap for older TS lib targets used in this repo.
-      const params = keys.reduce<Array<string>>(
-        (acc, k: { instance: string; remoteJid: string }) => {
-          acc.push(k.instance, k.remoteJid);
-          return acc;
-        },
-        []
-      );
+      const params = keys.flatMap(k => [k.instance, k.remoteJid]);
 
       const sql = `
         select bc.instance, bc.remote_jid,
