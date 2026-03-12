@@ -28,6 +28,66 @@ export function normalize(s: string): string {
     .trim();
 }
 
+
+function tokenize(s: string): string[] {
+  return normalize(s)
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .map(x => x.trim())
+    .filter(x => x.length >= 2);
+}
+
+function unique<T>(arr: T[]): T[] {
+  return Array.from(new Set(arr));
+}
+
+function levenshtein(a: string, b: string): number {
+  const aa = a || '';
+  const bb = b || '';
+  const m = aa.length;
+  const n = bb.length;
+  if (!m) return n;
+  if (!n) return m;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      const cost = aa[i - 1] === bb[j - 1] ? 0 : 1;
+      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost);
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+function similarity(a: string, b: string): number {
+  const aa = normalize(a);
+  const bb = normalize(b);
+  if (!aa || !bb) return 0;
+  if (aa === bb) return 1;
+  const maxLen = Math.max(aa.length, bb.length);
+  if (!maxLen) return 0;
+  return Math.max(0, 1 - levenshtein(aa, bb) / maxLen);
+}
+
+function fuzzyTokenHit(textTokens: string[], triggerTokens: string[]): number {
+  if (!textTokens.length || !triggerTokens.length) return 0;
+  let hits = 0;
+  for (const tt of triggerTokens) {
+    let best = 0;
+    for (const token of textTokens) {
+      const sim = similarity(token, tt);
+      if (sim > best) best = sim;
+      if (best >= 0.92) break;
+    }
+    if (best >= 0.84) hits += best >= 0.92 ? 1 : 0.8;
+  }
+  return hits / triggerTokens.length;
+}
+
 // ─── Trigger scoring ────────────────────────────────────────────────────────────
 // Instead of boolean match, count how many triggers hit and how specifically.
 // Returns a score in [0, 1] where 1 = every trigger matched.
@@ -36,23 +96,48 @@ function triggerScore(text: string, triggers: string[]): number {
   const t = normalize(text);
   if (!t) return 0;
 
+  const textTokens = unique(tokenize(t));
   let hits = 0;
   let exactWordHits = 0;
+  let fuzzyHits = 0;
+  let tokenOverlapHits = 0;
 
   for (const raw of triggers) {
     const trig = normalize(raw);
     if (!trig) continue;
-    if (!t.includes(trig)) continue;
-    hits++;
-    // Bonus for word-boundary match (e.g. "manual" should not match "manualidad")
-    const re = new RegExp(`(^|[\\s,;.!?])${trig.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([\\s,;.!?]|$)`);
-    if (re.test(t)) exactWordHits++;
+
+    const escaped = trig.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(^|[\\s,;.!?])${escaped}([\\s,;.!?]|$)`);
+    const directIncludes = t.includes(trig);
+    if (directIncludes) {
+      hits++;
+      if (re.test(t)) exactWordHits++;
+      continue;
+    }
+
+    const trigTokens = unique(tokenize(trig));
+    if (!trigTokens.length) continue;
+
+    const overlap = trigTokens.filter(tok => textTokens.includes(tok)).length / trigTokens.length;
+    if (overlap >= 0.6) {
+      hits += 0.85;
+      tokenOverlapHits++;
+      continue;
+    }
+
+    const fuzzy = fuzzyTokenHit(textTokens, trigTokens);
+    if (fuzzy >= 0.7) {
+      hits += Math.max(0.65, Math.min(0.9, fuzzy));
+      fuzzyHits++;
+    }
   }
 
   if (hits === 0) return 0;
-  const base = hits / triggers.length;           // ratio of matched triggers
-  const bonus = exactWordHits > 0 ? 0.1 : 0;    // word-boundary bonus
-  return Math.min(1, base + bonus);
+  const base = hits / triggers.length;
+  const exactBonus = exactWordHits > 0 ? 0.08 : 0;
+  const overlapBonus = tokenOverlapHits > 0 ? 0.05 : 0;
+  const fuzzyBonus = fuzzyHits > 0 ? 0.04 : 0;
+  return Math.min(1, base + exactBonus + overlapBonus + fuzzyBonus);
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────────
