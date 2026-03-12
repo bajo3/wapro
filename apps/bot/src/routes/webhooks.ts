@@ -17,7 +17,10 @@ import {
   getIntelligenceSettings,
   searchKnowledge,
   getAbVariantsFor,
-  logEpisode
+  logEpisode,
+  matchExample,
+  getReplyGuidelines,
+  trimQuestions
 } from '../services/intelligence.js';
 import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from '../services/extract.js';
 import { createHash } from 'node:crypto';
@@ -182,6 +185,38 @@ function isAckOnly(text: string): boolean {
   // Keep it tight so we don't misclassify real queries
   if (t.length > 16) return false;
   return /^(ok|oki|okey|dale|(?:de\s+una|deuna)|jaja+|aja|ah+|mmm+|joya|genial|buenisimo|buen[ií]simo|listo|gracias|grx|sorry|sry|👍|👌)$/.test(t);
+}
+
+
+function askFirstMissing(required: any[], missing: string[], maxQuestions = 1): string {
+  const limited = missing.slice(0, Math.max(1, maxQuestions));
+  return trimQuestions(buildMissingQuestions(required, limited), maxQuestions);
+}
+
+function detectIntentHint(rawText: string, flags: {
+  isGreeting: boolean;
+  isSmallTalk: boolean;
+  asksDemand: boolean;
+  asksFinancing: boolean;
+  asksTradeIn: boolean;
+  asksPrice: boolean;
+  shouldSearch: boolean;
+}): string | null {
+  if (flags.asksFinancing) return 'financiacion';
+  if (flags.asksTradeIn) return 'permuta';
+  if (flags.shouldSearch || flags.asksDemand || flags.asksPrice) return 'catalogo';
+  if (flags.isGreeting) return 'greeting';
+  if (flags.isSmallTalk) return 'smalltalk';
+  const t = normalize(rawText);
+  if (/(visita|verlo|pasar|ir|agendar|turno|cuando puedo)/.test(t)) return 'visita';
+  return null;
+}
+
+async function maybeUseExampleReply(rawText: string, intentHint: string | null, minScore = 0.72): Promise<string | null> {
+  const hits = await matchExample(rawText, { intent: intentHint, limit: 1, minScore });
+  if (hits.length) return String(hits[0].row?.ideal_answer ?? '').trim() || null;
+  const generic = await matchExample(rawText, { limit: 1, minScore: Math.max(0.8, minScore + 0.05) });
+  return generic.length ? String(generic[0].row?.ideal_answer ?? '').trim() || null : null;
 }
 
 /** Extract an option number like "2", "opcion 3", "la 1". */
@@ -527,6 +562,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     }
 
     const catalog = await getCatalog();
+    const settings = await getIntelligenceSettings();
+    const guidelines = getReplyGuidelines(settings);
 
     // ── Financing flow continuation ───────────────────────────────────────
     if (state.finance?.stage === 'collecting') {
@@ -603,7 +640,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     // ── INTELLIGENCE LAYER: check FAQ / Policy / Playbook FIRST ────────────
     // This is the key improvement — knowledge base is now wired into every message.
     const knowledgeMatch = await matchBest(rawText);
-    if (knowledgeMatch && knowledgeMatch.score >= 0.5) {
+    if (knowledgeMatch && knowledgeMatch.score >= guidelines.knowledgeThreshold) {
       const { type, row, score: kScore } = knowledgeMatch;
 
       if (type === 'playbook') {
@@ -614,7 +651,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         const required = requiredFieldsForIntent(row.intent, row.config);
         const missing = computeMissingFields(required, extracted);
         if (missing.length > 0) {
-          const questions = buildMissingQuestions(required, missing);
+          const questions = askFirstMissing(required, missing, guidelines.maxQuestions);
           reply = reply ? `${reply}\n\n${questions}` : questions;
           (newState as any).missing_fields = missing;
           (newState as any).awaiting_playbook = row.intent;
@@ -703,14 +740,11 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
       } else if (asksDemand && !looksLikeVehicleQuery) {
         // User explicitly says they're looking — acknowledge and ask for details
-        reply = [
-          '¡Perfecto! Para encontrarte las mejores opciones necesito saber:\n',
-          '• ¿Qué marca/modelo tenés en mente?',
-          '• ¿Rango de año?',
-          '• ¿Presupuesto aproximado?',
-          '• ¿Automático o manual?',
-          '\nContame lo que puedas y busco 🔍'
-        ].join('\n');
+        reply = pickOne([
+          'Perfecto. Decime primero qué presupuesto manejás y te oriento con opciones reales.',
+          'Buenísimo. Arranquemos por lo más importante: ¿qué presupuesto aproximado tenés?',
+          'Dale. Para no marearte, decime primero presupuesto y después afinamos marca/modelo.'
+        ]);
         newState.stage = 'awaiting_query';
         newState.last_intent = 'demand_intake';
 
@@ -741,11 +775,9 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         if (finance.downPayment === undefined || finance.downPayment === null) missing.push('entrada');
 
         if (missing.length > 0) {
-          const parts: string[] = [];
-          if (missing.includes('precio')) parts.push('• ¿Cuál es el **precio** del vehículo? (ej: 13.800.000)');
-          if (missing.includes('entrada')) parts.push('• ¿De cuánto sería la **entrada**? (si es 0, decime 0)');
-          if (missing.includes('cuotas')) parts.push('• ¿En cuántas **cuotas/meses**? (ej: 36)');
-          reply = `Dale, te la simulo. Necesito:\n${parts.join('\n')}`;
+          if (missing.includes('precio')) reply = 'Dale, te la simulo. Pasame primero el precio de la unidad.';
+          else if (missing.includes('entrada')) reply = 'Perfecto. ¿Cuánto podrías poner de entrada? Si es sin anticipo, decime 0.';
+          else reply = 'Bien. ¿En cuántas cuotas te gustaría simularlo?';
           (newState as any).missing_fields = missing;
           newState.finance = finance;
         } else {
@@ -792,7 +824,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         const required = requiredFieldsForIntent('permuta');
         const missing = computeMissingFields(required, extracted);
         if (missing.length > 0) {
-          reply = buildMissingQuestions(required, missing);
+          reply = askFirstMissing(required, missing, guidelines.maxQuestions);
           (newState as any).missing_fields = missing;
         } else {
           const model = extracted.tradeInModel ?? extracted.model ?? '';
@@ -831,13 +863,14 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           newState.last_hits = hits.map((it) => it.id).slice(0, 6);
           newState.last_hits_at = nowIso;
         } else {
-          reply = lastMedia && !String(rawText || '').trim()
+          const exampleReply = guidelines.useExamplesAsFallback ? await maybeUseExampleReply(rawText, 'catalogo', 0.7) : null;
+          reply = exampleReply || (lastMedia && !String(rawText || '').trim()
             ? 'Te vi la imagen 👍 ¿qué modelo/marca o rango de precio buscás?'
-            : pickOne(['No lo encontré 😕 ¿Me decís marca/modelo o para qué lo usarías?', 'No me aparece. ¿Tenés presupuesto aproximado?', 'No lo veo ahora. ¿Qué uso le das y rango de precio?']);
-          newState.last_intent = 'no_match';
+            : pickOne(['No lo encontré 😕 ¿Me decís marca/modelo o para qué lo usarías?', 'No me aparece. ¿Tenés presupuesto aproximado?', 'No lo veo ahora. ¿Qué uso le das y rango de precio?']));
+          newState.last_intent = exampleReply ? 'example_catalogo' : 'no_match';
           newState.last_query = rawText;
           newState.stage = 'awaiting_query';
-          isFallback = true;
+          isFallback = !exampleReply;
         }
 
       } else {
@@ -848,16 +881,22 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           newState.last_intent = `knowledge_${kResults[0].type}`;
           (newState as any).last_sources = [{ type: kResults[0].type, id: kResults[0].id }];
         } else {
-          reply = pickOne([
+          const intentHint = detectIntentHint(rawText, { isGreeting: false, isSmallTalk: false, asksDemand, asksFinancing, asksTradeIn, asksPrice, shouldSearch });
+          const exampleReply = guidelines.useExamplesAsFallback ? await maybeUseExampleReply(rawText, intentHint) : null;
+          reply = exampleReply || pickOne([
             'Dale 🙂 ¿Qué vehículo o producto estabas buscando?',
             '¿En qué te puedo ayudar? Si me decís marca/modelo o presupuesto, te busco opciones.',
             'Decime qué buscás y te paso opciones y precios 🔍'
           ]);
           newState.stage = 'awaiting_query';
-          newState.last_intent = 'fallback';
-          isFallback = true;
+          newState.last_intent = exampleReply ? `example_${intentHint || 'fallback'}` : 'fallback';
+          isFallback = !exampleReply;
         }
       }
+    }
+
+    if (guidelines.askOneThingAtATime) {
+      reply = trimQuestions(reply, guidelines.maxQuestions);
     }
 
     // ── Anti-repeat guard ───────────────────────────────────────────────────

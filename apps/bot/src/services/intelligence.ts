@@ -31,113 +31,110 @@ export function normalize(s: string): string {
 
 function tokenize(s: string): string[] {
   return normalize(s)
-    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
-    .map(x => x.trim())
-    .filter(x => x.length >= 2);
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 2);
 }
 
-function unique<T>(arr: T[]): T[] {
-  return Array.from(new Set(arr));
+function uniqueTokens(s: string): string[] {
+  return [...new Set(tokenize(s))];
 }
 
 function levenshtein(a: string, b: string): number {
-  const aa = a || '';
-  const bb = b || '';
-  const m = aa.length;
-  const n = bb.length;
-  if (!m) return n;
-  if (!n) return m;
-  const dp = new Array(n + 1);
-  for (let j = 0; j <= n; j++) dp[j] = j;
-  for (let i = 1; i <= m; i++) {
-    let prev = dp[0];
-    dp[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const tmp = dp[j];
-      const cost = aa[i - 1] === bb[j - 1] ? 0 : 1;
-      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost);
-      prev = tmp;
+  const x = normalize(a);
+  const y = normalize(b);
+  if (!x) return y.length;
+  if (!y) return x.length;
+
+  const dp = Array.from({ length: x.length + 1 }, () => new Array<number>(y.length + 1).fill(0));
+  for (let i = 0; i <= x.length; i++) dp[i][0] = i;
+  for (let j = 0; j <= y.length; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= x.length; i++) {
+    for (let j = 1; j <= y.length; j++) {
+      const cost = x[i - 1] === y[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
     }
   }
-  return dp[n];
+  return dp[x.length][y.length];
 }
 
-function similarity(a: string, b: string): number {
-  const aa = normalize(a);
-  const bb = normalize(b);
-  if (!aa || !bb) return 0;
-  if (aa === bb) return 1;
-  const maxLen = Math.max(aa.length, bb.length);
+function fuzzyWordSimilarity(a: string, b: string): number {
+  const x = normalize(a);
+  const y = normalize(b);
+  if (!x || !y) return 0;
+  if (x === y) return 1;
+  if (x.includes(y) || y.includes(x)) return 0.9;
+  const dist = levenshtein(x, y);
+  const maxLen = Math.max(x.length, y.length);
   if (!maxLen) return 0;
-  return Math.max(0, 1 - levenshtein(aa, bb) / maxLen);
+  return Math.max(0, 1 - dist / maxLen);
 }
 
-function fuzzyTokenHit(textTokens: string[], triggerTokens: string[]): number {
-  if (!textTokens.length || !triggerTokens.length) return 0;
+function tokenOverlapScore(text: string, sample: string): number {
+  const a = uniqueTokens(text);
+  const b = uniqueTokens(sample);
+  if (!a.length || !b.length) return 0;
+
   let hits = 0;
-  for (const tt of triggerTokens) {
-    let best = 0;
-    for (const token of textTokens) {
-      const sim = similarity(token, tt);
-      if (sim > best) best = sim;
-      if (best >= 0.92) break;
-    }
-    if (best >= 0.84) hits += best >= 0.92 ? 1 : 0.8;
+  for (const bt of b) {
+    const best = a.reduce((acc, at) => Math.max(acc, fuzzyWordSimilarity(at, bt)), 0);
+    if (best >= 0.84) hits += best >= 0.96 ? 1 : 0.75;
   }
-  return hits / triggerTokens.length;
+  return Math.min(1, hits / b.length);
 }
+
+function titleScore(text: string, title?: string | null): number {
+  if (!title) return 0;
+  return tokenOverlapScore(text, title);
+}
+
+function escapeRegExp(s: string): string {
+  const specials = new Set(['\\', '.', '*', '+', '?', '^', '$', '{', '}', '(', ')', '|', '[', ']']);
+  return Array.from(String(s || '')).map((ch) => specials.has(ch) ? `\${ch}` : ch).join('');
+}
+
 
 // ─── Trigger scoring ────────────────────────────────────────────────────────────
-// Instead of boolean match, count how many triggers hit and how specifically.
-// Returns a score in [0, 1] where 1 = every trigger matched.
+// Multi-signal score: exact/contains + token overlap + fuzzy similarity.
+// Returns a score in [0, 1].
 function triggerScore(text: string, triggers: string[]): number {
   if (!triggers?.length) return 0;
   const t = normalize(text);
   if (!t) return 0;
 
-  const textTokens = unique(tokenize(t));
-  let hits = 0;
-  let exactWordHits = 0;
-  let fuzzyHits = 0;
-  let tokenOverlapHits = 0;
+  let best = 0;
 
   for (const raw of triggers) {
     const trig = normalize(raw);
     if (!trig) continue;
 
-    const escaped = trig.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`(^|[\\s,;.!?])${escaped}([\\s,;.!?]|$)`);
-    const directIncludes = t.includes(trig);
-    if (directIncludes) {
-      hits++;
-      if (re.test(t)) exactWordHits++;
-      continue;
-    }
+    let exact = 0;
+    if (t === trig) exact = 1;
+    else if (t.includes(trig) || trig.includes(t)) exact = 0.92;
 
-    const trigTokens = unique(tokenize(trig));
-    if (!trigTokens.length) continue;
+    const overlap = tokenOverlapScore(t, trig);
+    const fuzzy = fuzzyWordSimilarity(t, trig);
 
-    const overlap = trigTokens.filter(tok => textTokens.includes(tok)).length / trigTokens.length;
-    if (overlap >= 0.6) {
-      hits += 0.85;
-      tokenOverlapHits++;
-      continue;
-    }
+    const re = new RegExp(`(^|[\\s,;.!?])${escapeRegExp(trig)}([\\s,;.!?]|$)`);
+    const boundaryBonus = re.test(t) ? 0.06 : 0;
 
-    const fuzzy = fuzzyTokenHit(textTokens, trigTokens);
-    if (fuzzy >= 0.7) {
-      hits += Math.max(0.65, Math.min(0.9, fuzzy));
-      fuzzyHits++;
-    }
+    const score = Math.min(1, Math.max(exact, overlap * 0.9, fuzzy * 0.8) + boundaryBonus);
+    if (score > best) best = score;
   }
 
-  if (hits === 0) return 0;
-  const base = hits / triggers.length;
-  const exactBonus = exactWordHits > 0 ? 0.08 : 0;
-  const overlapBonus = tokenOverlapHits > 0 ? 0.05 : 0;
-  const fuzzyBonus = fuzzyHits > 0 ? 0.04 : 0;
-  return Math.min(1, base + exactBonus + overlapBonus + fuzzyBonus);
+  const overlapHits = (triggers || []).reduce((acc, raw) => {
+    const s = tokenOverlapScore(t, String(raw || ''));
+    return acc + (s >= 0.55 ? 1 : 0);
+  }, 0);
+  if (overlapHits >= 2) best = Math.min(1, best + 0.05);
+
+  return best;
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────────
@@ -521,7 +518,7 @@ export async function matchBest(text: string): Promise<MatchResult | null> {
       const s = triggerScore(text, row.triggers || []);
       if (s <= 0) continue;
       // Playbooks get a small tie-breaking bonus
-      const adjusted = type === 'playbook' ? s + 0.01 : s;
+      const adjusted = Math.min(1, s + titleScore(text, row.title ?? row.intent ?? null) * 0.15 + (type === 'playbook' ? 0.01 : 0));
       if (!best || adjusted > best.score) best = { type, row, score: adjusted };
     }
   };
@@ -531,6 +528,84 @@ export async function matchBest(text: string): Promise<MatchResult | null> {
   evaluate('playbook', cache.playbooks);
 
   return best;
+}
+
+
+export async function matchExample(
+  text: string,
+  options?: { intent?: string | null; limit?: number; minScore?: number }
+): Promise<Array<{ row: any; score: number }>> {
+  const q = String(text || '').trim();
+  if (!q) return [];
+
+  const params: any[] = [];
+  let sql = 'select * from bot_examples';
+  const where: string[] = [];
+  if (options?.intent) {
+    params.push(String(options.intent));
+    where.push(`intent = $${params.length}`);
+  }
+  if (where.length) sql += ' where ' + where.join(' and ');
+  sql += ' order by id desc limit 300';
+
+  const r = await pool.query(sql, params);
+  const rows = r.rows ?? [];
+  const minScore = options?.minScore ?? 0.6;
+
+  const scored = rows
+    .map((row: any) => {
+      const overlap = tokenOverlapScore(q, String(row.user_text ?? ''));
+      const fuzzy = fuzzyWordSimilarity(q, String(row.user_text ?? ''));
+      const intentHint = options?.intent && String(row.intent) === String(options.intent) ? 0.05 : 0;
+      const score = Math.min(1, Math.max(overlap, fuzzy * 0.8) + intentHint);
+      return { row, score };
+    })
+    .filter((x) => x.score >= minScore)
+    .sort((a, b) => b.score - a.score);
+
+  return scored.slice(0, Math.max(1, Math.min(10, options?.limit ?? 3)));
+}
+
+export function getReplyGuidelines(settings: Settings | null | undefined): {
+  tone: string;
+  maxQuestions: number;
+  askOneThingAtATime: boolean;
+  humanMode: boolean;
+  preferShortParagraphs: boolean;
+  useExamplesAsFallback: boolean;
+  knowledgeThreshold: number;
+} {
+  const s = (settings && typeof settings === 'object') ? settings : {};
+  const human = (s.humanization && typeof s.humanization === 'object') ? s.humanization : {};
+  const thresholds = (s.thresholds && typeof s.thresholds === 'object') ? s.thresholds : {};
+  return {
+    tone: String(human.tone ?? s.tone ?? 'vendedor_consultivo'),
+    maxQuestions: Number.isFinite(Number(human.maxQuestions)) ? Math.max(1, Math.min(3, Number(human.maxQuestions))) : 1,
+    askOneThingAtATime: human.askOneThingAtATime !== false,
+    humanMode: human.humanMode !== false,
+    preferShortParagraphs: human.preferShortParagraphs !== false,
+    useExamplesAsFallback: human.useExamplesAsFallback !== false,
+    knowledgeThreshold: Number.isFinite(Number(thresholds.knowledgeMatchMinScore)) ? Math.max(0.35, Math.min(0.9, Number(thresholds.knowledgeMatchMinScore))) : 0.58
+  };
+}
+
+export function trimQuestions(text: string, maxQuestions = 1): string {
+  const parts = String(text || '')
+    .split(/\n+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  let questions = 0;
+  const kept: string[] = [];
+  for (const part of parts) {
+    const qCount = (part.match(/\?/g) || []).length;
+    if (qCount > 0) {
+      if (questions >= maxQuestions) continue;
+      questions += qCount;
+      if (questions > maxQuestions) continue;
+    }
+    kept.push(part);
+  }
+  return kept.join('\n');
 }
 
 // ─── Episodes ───────────────────────────────────────────────────────────────────

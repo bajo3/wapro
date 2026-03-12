@@ -200,10 +200,7 @@ const ListTicketsService = async ({
 
     if (keys.length > 0) {
       const valuesSql = keys.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(",");
-      const params = keys.reduce<string[]>((acc, k: { instance: string; remoteJid: string }) => {
-        acc.push(k.instance, k.remoteJid);
-        return acc;
-      }, []);
+      const params = keys.flatMap(k => [k.instance, k.remoteJid]);
 
       const sql = `
         select bc.instance, bc.remote_jid,

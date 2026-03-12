@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "es2019",
+    "target": "es6",
     "module": "commonjs",
     "outDir": "./dist",
     "strict": true,
@@ -10,10 +10,6 @@
     "emitDecoratorMetadata": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "useUnknownInCatchVariables": false,
-    "lib": [
-      "es2019",
-      "dom"
-    ]
+    "useUnknownInCatchVariables": false
   }
 }
