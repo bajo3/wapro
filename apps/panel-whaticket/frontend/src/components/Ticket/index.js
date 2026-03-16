@@ -58,6 +58,7 @@ const Ticket = () => {
   const classes = useStyles();
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState(1);
   const [proView, setProView] = useState(true);
   const [loading, setLoading] = useState(true);
   const [contact, setContact] = useState({});
@@ -135,7 +136,10 @@ const Ticket = () => {
     };
   }, [ticketId, history]);
 
-  const handleDrawerOpen = () => setDrawerOpen(true);
+  const handleDrawerOpen = (tab = 1) => {
+    setDrawerTab(typeof tab === "number" ? tab : 1);
+    setDrawerOpen(true);
+  };
   const handleDrawerClose = () => setDrawerOpen(false);
 
   return (
@@ -190,6 +194,8 @@ const Ticket = () => {
         contact={contact}
         ticket={ticket}
         loading={loading}
+        initialTab={drawerTab}
+        onTicketPatched={(patch) => setTicket((prev) => ({ ...prev, ...(patch || {}) }))}
       />
     </div>
   );

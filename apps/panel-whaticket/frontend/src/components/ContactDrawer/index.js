@@ -75,7 +75,7 @@ const useStyles = makeStyles(theme => ({
 		flexDirection: "column",
 		padding: "8px",
 		height: "100%",
-		overflowY: "scroll",
+		overflowY: "auto",
 		...theme.scrollbarStyles,
 	},
 
@@ -118,7 +118,7 @@ const useStyles = makeStyles(theme => ({
 	},
 }));
 
-const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading, onTicketPatched = () => {} }) => {
+const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading, initialTab = 1, onTicketPatched = () => {} }) => {
 	const classes = useStyles();
 
 	const [modalOpen, setModalOpen] = useState(false);
@@ -157,7 +157,6 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading, onTi
   }, [botMode, ticket?.botMode]);
 
   useEffect(() => {
-    // Keep state in sync when switching tickets
     setTags([]);
     setNotes([]);
     setHistoryTickets([]);
@@ -167,6 +166,15 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading, onTi
     setBotMode(String(ticket?.botMode || "ON").toUpperCase());
     setTab(ticket?.id ? 1 : 0);
   }, [ticketId, contactId, ticket?.botMode, ticket?.id]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (typeof initialTab === "number") {
+      setTab(initialTab);
+    } else {
+      setTab(ticket?.id ? 1 : 0);
+    }
+  }, [open, initialTab, ticket?.id]);
 
   useEffect(() => {
     const loadTicketTools = async () => {

@@ -126,9 +126,9 @@ const TicketOptionsMenu = ({
     }
   };
 
-  const handleOpenLeadTools = () => {
+  const handleOpenLeadTools = (tab = 1) => {
     handleClose();
-    onOpenContact();
+    onOpenContact(tab);
   };
 
   return (
@@ -158,10 +158,10 @@ const TicketOptionsMenu = ({
           }
         }}
       >
-        <MenuItem onClick={handleOpenLeadTools}>
+        <MenuItem onClick={() => handleOpenLeadTools(1)}>
           Gestión del lead
         </MenuItem>
-        <MenuItem onClick={handleOpenLeadTools}>
+        <MenuItem onClick={() => handleOpenLeadTools(1)}>
           Programar / recontacto
         </MenuItem>
         <MenuItem onClick={() => handleSetBotMode("HUMAN_ONLY")}>
@@ -182,7 +182,7 @@ const TicketOptionsMenu = ({
         <MenuItem onClick={handlePostponeTicket}>
           {i18n.t("ticketOptionsMenu.postpone")}
         </MenuItem>
-        <MenuItem onClick={handleOpenLeadTools}>{i18n.t("ticketOptionsMenu.contactDetails")}</MenuItem>
+        <MenuItem onClick={() => handleOpenLeadTools(0)}>{i18n.t("ticketOptionsMenu.contactDetails")}</MenuItem>
         <MenuItem onClick={handleKeepWithMe}>
           {i18n.t("ticketOptionsMenu.keep")}
         </MenuItem>

@@ -82,8 +82,8 @@ export default function ImprovedTicketChat({
   };
 
   return (
-    <div className={clsx("flex h-full min-h-0 flex-col bg-auto-panel", className)}>
-      <div className="border-b border-auto-border bg-auto-panel px-3 py-3 md:px-4">
+    <div className={clsx("flex h-full min-h-0 flex-col overflow-hidden bg-auto-panel", className)}>
+      <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-3 md:px-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 items-start gap-3">
             <button
@@ -144,7 +144,7 @@ export default function ImprovedTicketChat({
 
             <button
               type="button"
-              onClick={() => onOpenContact?.()}
+              onClick={() => onOpenContact?.(1)}
               className="inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
               title="Abrir gestión del ticket"
             >
@@ -164,7 +164,7 @@ export default function ImprovedTicketChat({
 
             <button
               type="button"
-              onClick={() => onOpenContact?.()}
+              onClick={() => onOpenContact?.(1)}
               className="inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
               title="Abrir recontactos y mensajes programados"
             >
@@ -215,7 +215,7 @@ export default function ImprovedTicketChat({
       </div>
 
       {showQuickReplies && (
-        <div className="border-b border-auto-border bg-auto-panel px-3 py-2 md:px-4">
+        <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-2 md:px-4">
           <div className="flex gap-2 overflow-x-auto pb-1">
             {QUICK_REPLIES.map((qr) => (
               <button
@@ -234,13 +234,13 @@ export default function ImprovedTicketChat({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 bg-auto-surface">
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-auto-surface">
         <MessagesList ticketId={ticketId} isGroup={ticket?.isGroup} />
       </div>
 
-      {/* Bottom message input bar. A dedicated component is used here to avoid
-       * layout conflicts with the legacy Material‑UI implementation. */}
-      <ImprovedMessageInput ticketStatus={ticket?.status} />
+      <div className="shrink-0">
+        <ImprovedMessageInput ticketStatus={ticket?.status} />
+      </div>
     </div>
   );
 }

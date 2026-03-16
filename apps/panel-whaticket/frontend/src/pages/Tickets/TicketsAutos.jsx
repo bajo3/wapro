@@ -88,7 +88,7 @@ export default function TicketsAutos() {
   }, [sidebarWidth]);
 
   return (
-    <div className="flex h-full min-h-0 w-full bg-auto-surface text-auto-text">
+    <div className="flex h-[calc(100vh-72px)] min-h-[620px] w-full bg-auto-surface text-auto-text">
       <div className="mx-auto flex h-full min-h-0 max-w-[1800px] gap-3 p-3">
         {/* Sidebar (hide on mobile when a ticket is selected) */}
         {sidebarVisible && (
