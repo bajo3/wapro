@@ -15,7 +15,8 @@ import {
 import { useHistory } from "react-router-dom";
 
 import MessagesList from "./MessagesList";
-import MessageInput from "./MessageInput";
+// Replace the Material‑UI based MessageInput with a simplified Tailwind component.
+import ImprovedMessageInput from "./ImprovedMessageInput";
 
 const statusLabelMap = {
   pending: "En cola",
@@ -229,9 +230,9 @@ export default function ImprovedTicketChat({
         <MessagesList ticketId={ticketId} isGroup={ticket?.isGroup} />
       </div>
 
-      <div className="border-t border-auto-border bg-auto-panel">
-        <MessageInput ticketStatus={ticket?.status} />
-      </div>
+      {/* Bottom message input bar. A dedicated component is used here to avoid
+       * layout conflicts with the legacy Material‑UI implementation. */}
+      <ImprovedMessageInput ticketStatus={ticket?.status} />
     </div>
   );
 }
