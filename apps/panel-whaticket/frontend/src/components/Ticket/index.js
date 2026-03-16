@@ -38,14 +38,17 @@ const useStyles = makeStyles((theme) => ({
     padding: theme.spacing(1),
     borderBottom: "1px solid rgba(148, 163, 184, 0.18)",
     background: "rgba(255,255,255,0.96)",
-    [theme.breakpoints.up("md")]: {
-      display: "none",
-    },
   },
   mobileBackButton: {
     minWidth: 0,
     borderRadius: 999,
     textTransform: "none",
+  },
+  desktopSwitch: {
+    marginLeft: "auto",
+    [theme.breakpoints.down("sm")]: {
+      display: "none",
+    },
   },
 }));
 
@@ -138,19 +141,6 @@ const Ticket = () => {
   return (
     <div className={classes.root} id="drawer-container">
       <div className={classes.classicWrapper}>
-        {proView && (
-          <div className={classes.mobileBackBar}>
-            <Button
-              color="primary"
-              onClick={() => history.push("/tickets")}
-              className={classes.mobileBackButton}
-              startIcon={<ArrowBackIos />}
-            >
-              Volver
-            </Button>
-          </div>
-        )}
-
         <ReplyMessageProvider>
           {proView ? (
             <ImprovedTicketChat
@@ -177,7 +167,14 @@ const Ticket = () => {
                   onClick={() => setProView(true)}
                   className={classes.mobileBackButton}
                 >
-                  Vista pro
+                  Vista avanzada
+                </Button>
+                <Button
+                  color="primary"
+                  onClick={() => setProView(true)}
+                  className={classes.desktopSwitch}
+                >
+                  Cambiar a vista avanzada
                 </Button>
               </div>
               <MessagesList ticketId={ticketId} isGroup={ticket?.isGroup} />
@@ -193,7 +190,6 @@ const Ticket = () => {
         contact={contact}
         ticket={ticket}
         loading={loading}
-        onTicketPatched={(next) => setTicket((prev) => ({ ...prev, ...(next || {}) }))}
       />
     </div>
   );
