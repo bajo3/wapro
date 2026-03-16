@@ -75,31 +75,84 @@ async function main() {
   // Periodic follow-up job. Every hour, scan conversations and send a gentle reminder if a user
   // hasn't responded within the follow-up window after receiving product results or a price.
   const FOLLOWUP_MS = Number(process.env.BOT_FOLLOWUP_MS ?? String(48 * 60 * 60 * 1000)); // default 48h
+  // Maintain a simple in-memory cache for conversation and contact rules to
+  // reduce database/API calls during the follow-up scan. Entries expire after
+  // a short TTL to ensure changes propagate. Using Maps with a timestamp
+  // avoids external dependencies. When the cache grows large it will be
+  // naturally cleared over time as entries expire and are replaced.
+  const convRuleCache = new Map<string, { value: string | null; ts: number }>();
+  const contactRuleCache = new Map<string, { value: string | null; ts: number }>();
+  const RULE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+  async function getCachedConversationRuleCached(instance: string, remoteJid: string) {
+    const key = `${instance}:${remoteJid}`;
+    const nowTs = Date.now();
+    const cached = convRuleCache.get(key);
+    if (cached && nowTs - cached.ts < RULE_CACHE_TTL_MS) {
+      return cached.value;
+    }
+    try {
+      const value = await getConversationRule(instance, remoteJid);
+      convRuleCache.set(key, { value, ts: nowTs });
+      return value;
+    } catch (err) {
+      // If retrieval fails, return null and do not cache to allow future retries.
+      return null;
+    }
+  }
+
+  async function getCachedContactRuleCached(number: string) {
+    const nowTs = Date.now();
+    const cached = contactRuleCache.get(number);
+    if (cached && nowTs - cached.ts < RULE_CACHE_TTL_MS) {
+      return cached.value;
+    }
+    try {
+      const value = await getContactRule(number);
+      contactRuleCache.set(number, { value, ts: nowTs });
+      return value;
+    } catch {
+      return null;
+    }
+  }
+
+  // Prevent overlapping follow-up scans. If the previous scan is still running
+  // when the interval fires again, skip this execution to avoid concurrent
+  // modifications and excessive load. Only one scan will run at a time.
+  let followUpJobRunning = false;
+
   setInterval(async () => {
+    if (followUpJobRunning) {
+      return;
+    }
+    followUpJobRunning = true;
     try {
       const instance = env.instanceName;
-      // Fetch all conversations for this instance
-      const res = await pool.query('select remote_jid, state from bot_conversations where instance=$1', [instance]);
+      // Fetch conversations that have not been followed up yet. We use
+      // PostgreSQL's JSONB operations to filter by state.followup_sent = false
+      // (or missing) to reduce the number of rows scanned in memory. The
+      // COALESCE ensures that missing keys are treated as false.
+      const res = await pool.query(
+        "select remote_jid, state from bot_conversations where instance=$1 and coalesce((state->>'followup_sent')::boolean, false) = false",
+        [instance]
+      );
       const rows = res.rows ?? [];
       const now = Date.now();
       for (const row of rows) {
         const remoteJid = row.remote_jid as string;
         const state = row.state as any;
         if (!state) continue;
-
         // Respect operator handoff / per-conversation rules.
-        // If a conversation (or number) is set to HUMAN_ONLY or OFF, do not send follow-ups.
         try {
-          const convRule = await getConversationRule(instance, remoteJid);
+          const convRule = await getCachedConversationRuleCached(instance, remoteJid);
           if (convRule && convRule !== 'ON') continue;
           const number = remoteJid.split('@')[0];
-          const contactRule = await getContactRule(number);
+          const contactRule = await getCachedContactRuleCached(number);
           if (contactRule && contactRule !== 'ON') continue;
         } catch {
           // best-effort
         }
-
-        // Skip if follow-up already sent
+        // Skip if follow-up already sent (redundant due to SQL filter but kept for safety)
         if (state.followup_sent) continue;
         // Determine last bot reply time
         const lastReplyIso = state.last_bot_reply_at || state.lastBotAt;
@@ -138,6 +191,8 @@ async function main() {
       }
     } catch (err) {
       console.error('Failed follow-up job', err);
+    } finally {
+      followUpJobRunning = false;
     }
   }, 60 * 60 * 1000);
 

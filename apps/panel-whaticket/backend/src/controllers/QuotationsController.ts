@@ -149,7 +149,22 @@ export const create = async (req: Request, res: Response): Promise<Response> => 
   const year = new Date().getFullYear();
 
   // Best-effort sequential number per year.
-  let seq = (await Quotation.count({ where: { number: { [Op.like]: `${year}-%` } } })) + 1;
+  // Counting all existing quotations with the same prefix and adding 1 can lead to
+  // race conditions when multiple quotations are created concurrently. Instead,
+  // fetch the latest quotation for the current year ordered by number
+  // descending, parse its sequence and increment it. If none exists, start
+  // from 1. This still may collide under heavy concurrency, but combined with
+  // the retry loop below it reduces the likelihood of duplicate numbers.
+  const lastQuotation = await Quotation.findOne({
+    where: { number: { [Op.like]: `${year}-%` } },
+    order: [["number", "DESC"]]
+  });
+  let seq = 1;
+  if (lastQuotation?.number) {
+    const parts = String(lastQuotation.number).split("-");
+    const s = parts.length > 1 ? parseInt(parts[1], 10) : NaN;
+    if (Number.isFinite(s)) seq = s + 1;
+  }
   let number = `${year}-${String(seq).padStart(3, "0")}`;
 
   const basePrice = toNumber(body.basePrice);
@@ -288,10 +303,19 @@ export const send = async (req: Request, res: Response): Promise<Response> => {
   const message = buildQuotationMessage(quotation);
   await SendWhatsAppMessage({ body: message, ticket } as any);
 
-  // Status progression: draft/viewed → sent, sent stays sent
+  // Status progression: draft/viewed → sent, sent stays sent. Do not change
+  // status if already in a terminal state (accepted/rejected) – those cases
+  // are handled at the start of the handler. The previous implementation
+  // always set "sent" regardless of the current status, which was redundant.
   const currentStatus = String(quotation.status || "draft");
-  const nextStatus = currentStatus === "sent" ? "sent" : "sent";
-  await quotation.update({ status: nextStatus, sentAt: new Date() } as any);
+  // When sending a quotation we transition to the "sent" status unless it is already "sent".
+  const nextStatus = "sent";
+  if (currentStatus !== nextStatus) {
+    await quotation.update({ status: nextStatus, sentAt: new Date() } as any);
+  } else {
+    // If it's already sent, just refresh the timestamp
+    await quotation.update({ sentAt: new Date() } as any);
+  }
 
   return res.json({ ok: true, quotation, ticketId: ticket.id });
 };
