@@ -15,11 +15,19 @@ module.exports = {
     // returns an object mapping column names to definitions.
     const table = await queryInterface.describeTable("Contacts");
     if (!Object.prototype.hasOwnProperty.call(table, "email")) {
-      await queryInterface.addColumn("Contacts", "email", {
-        type: DataTypes.STRING,
-        allowNull: false,
-        defaultValue: ""
-      });
+      try {
+        await queryInterface.addColumn("Contacts", "email", {
+          type: DataTypes.STRING,
+          allowNull: false,
+          defaultValue: ""
+        });
+      } catch (err: any) {
+        const message = String(err?.message || "").toLowerCase();
+        // Be resilient across partial deploys / concurrent migrations.
+        if (!message.includes("already exists") && !message.includes("duplicate")) {
+          throw err;
+        }
+      }
     }
     return Promise.resolve();
   },
@@ -29,7 +37,14 @@ module.exports = {
     // rollback. This mirrors the behaviour in `up`.
     const table = await queryInterface.describeTable("Contacts");
     if (Object.prototype.hasOwnProperty.call(table, "email")) {
-      await queryInterface.removeColumn("Contacts", "email");
+      try {
+        await queryInterface.removeColumn("Contacts", "email");
+      } catch (err: any) {
+        const message = String(err?.message || "").toLowerCase();
+        if (!message.includes("does not exist") && !message.includes("unknown column")) {
+          throw err;
+        }
+      }
     }
     return Promise.resolve();
   }

@@ -1,3 +1,5 @@
+set -e
+
 _writeFrontendEnvVars() {
     # The frontend reads runtime configuration from window.ENV (see src/config.js).
     # Expose only VITE_* variables to avoid leaking unrelated env vars.
@@ -7,7 +9,11 @@ _writeFrontendEnvVars() {
 }
 
 _writeNginxEnvVars() {
-    dockerize -template /etc/nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf
+    # Render the nginx config from a template file into the real .conf. Writing
+    # in-place can generate duplicate files such as default(1).conf and make
+    # nginx try to parse the raw Go template syntax (`{{ ... }}`), which causes:
+    # `unexpected "{" in /etc/nginx/conf.d/default(1).conf`.
+    dockerize -template /etc/nginx/conf.d/default.conf.tmpl:/etc/nginx/conf.d/default.conf
 }
 
 _addSslConfig() {

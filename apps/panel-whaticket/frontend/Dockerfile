@@ -25,6 +25,10 @@ RUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSI
 ENV PUBLIC_HTML=/var/www/public/
 
 COPY .docker/nginx /etc/nginx/
+# Keep nginx config as a template and render it at container startup.
+# Rendering in-place from default.conf -> default.conf was producing malformed
+# files such as default(1).conf with unexpanded `{{ ... }}` blocks.
+RUN mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.tmpl
 COPY --from=build-deps /usr/src/app/build ${PUBLIC_HTML}
 EXPOSE 80
 
