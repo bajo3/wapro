@@ -88,8 +88,8 @@ export default function TicketsAutos() {
   }, [sidebarWidth]);
 
   return (
-    <div className="h-[calc(100%-48px)] w-full bg-auto-surface text-auto-text">
-      <div className="mx-auto flex h-full max-w-[1800px] gap-3 p-3">
+    <div className="flex h-full min-h-0 w-full bg-auto-surface text-auto-text">
+      <div className="mx-auto flex h-full min-h-0 max-w-[1800px] gap-3 p-3">
         {/* Sidebar (hide on mobile when a ticket is selected) */}
         {sidebarVisible && (
           <div
@@ -129,7 +129,7 @@ export default function TicketsAutos() {
         )}
 
         {/* Main panel */}
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-w-0 min-h-0 flex-1 flex-col">
           <TicketsHeaderAutos
             activeTab={activeTab}
             statusTabs={STATUS_TABS}
@@ -151,8 +151,8 @@ export default function TicketsAutos() {
               "mt-3 flex min-h-0 flex-1 overflow-hidden rounded-auto-xl border border-auto-border bg-auto-panel shadow-auto-soft"
             )}
           >
-            <div className="min-w-0 flex flex-1">
-              <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex min-h-0 flex-1">
+              <div className="min-w-0 min-h-0 flex-1">
                 {numericTicketId ? (
                   <Ticket />
                 ) : (

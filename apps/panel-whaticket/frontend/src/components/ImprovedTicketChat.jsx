@@ -1,39 +1,49 @@
 import React, { useMemo, useState } from "react";
 import clsx from "clsx";
 
-import { Calendar, FileText, Info, PhoneCall, Sparkles } from "lucide-react";
+import {
+  Calendar,
+  ChevronLeft,
+  FileText,
+  Info,
+  MessageSquareText,
+  PhoneCall,
+  RefreshCw,
+  Sparkles,
+  UserRound,
+} from "lucide-react";
+import { useHistory } from "react-router-dom";
 
-// Reuse existing chat plumbing (no behavior fork)
-// NOTE: ImprovedTicketChat lives alongside MessagesList and MessageInput in the
-// components directory. The original imports incorrectly navigated up one
-// directory ("../"), which resolved to a non-existent path (src/MessagesList
-// instead of src/components/MessagesList). This caused Rollup to throw
-// "Could not resolve '../MessagesList'" during the build. We fix the paths
-// here by referencing the sibling modules directly with "./".  See
-// logs.1771906134855.json for the original error.
 import MessagesList from "./MessagesList";
 import MessageInput from "./MessageInput";
 
-/**
- * ImprovedTicketChat
- *
- * Goal: provide a cleaner, space-efficient chat header + quick actions,
- * while reusing existing MessagesList/MessageInput and the current back-end.
- *
- * This component intentionally does NOT try to persist new "lead" fields.
- * For editing/notes/tags, keep using ContactDrawer (opened via onOpenContact).
- */
+const statusLabelMap = {
+  pending: "En cola",
+  open: "Trabajando",
+  closed: "Cerrado",
+};
+
 export default function ImprovedTicketChat({
+  loading,
   ticketId,
   ticket,
   contact,
   onOpenContact,
+  onToggleView,
   className,
 }) {
+  const history = useHistory();
   const [showQuickReplies, setShowQuickReplies] = useState(true);
 
   const displayName = contact?.name || "Contacto";
   const phone = contact?.number || contact?.phone || "";
+  const leadSource = contact?.leadSource ? String(contact.leadSource).toUpperCase() : null;
+  const statusKey = String(ticket?.status || "open").toLowerCase();
+  const statusLabel = statusLabelMap[statusKey] || "Ticket";
+  const botMode = String(ticket?.botMode || "ON").toUpperCase();
+  const isHumanOnly = botMode === "HUMAN_ONLY";
+  const assignedTo = ticket?.user?.name || null;
+  const waName = ticket?.whatsapp?.name || null;
 
   const waLink = useMemo(() => {
     const digits = String(phone || "").replace(/[^\d]/g, "");
@@ -65,111 +75,160 @@ export default function ImprovedTicketChat({
     []
   );
 
-  // Prefill text in the existing MessageInput. We inject via a window event to
-  // avoid touching the MessageInput internals too aggressively.
   const prefill = (text) => {
-    window.dispatchEvent(
-      new CustomEvent("tickets:prefill", { detail: { text } })
-    );
+    window.dispatchEvent(new CustomEvent("tickets:prefill", { detail: { text } }));
   };
 
   return (
-    <div className={clsx("flex h-full min-h-0 flex-col", className)}>
-      {/* Header */}
-      <div className="flex items-center justify-between gap-3 border-b border-auto-border bg-auto-panel px-3 py-2">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="h-9 w-9 shrink-0 rounded-full bg-auto-accent/15 ring-1 ring-auto-border" />
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-auto-text">
-              {displayName}
-            </div>
-            <div className="truncate text-xs text-auto-muted">{phone}</div>
-          </div>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-1">
-          {waLink && (
-            <a
-              className="inline-flex items-center justify-center rounded-auto-lg px-2 py-1 text-xs font-medium text-auto-text hover:bg-auto-surface"
-              href={waLink}
-              target="_blank"
-              rel="noreferrer"
-              title="Abrir en WhatsApp"
+    <div className={clsx("flex h-full min-h-0 flex-col bg-auto-panel", className)}>
+      <div className="border-b border-auto-border bg-auto-panel px-3 py-3 md:px-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <button
+              type="button"
+              onClick={() => history.push("/tickets")}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-auto-lg border border-auto-border bg-auto-surface text-auto-text hover:bg-auto-panel2 md:hidden"
+              title="Volver a la lista"
             >
-              <PhoneCall className="h-4 w-4" />
-            </a>
-          )}
+              <ChevronLeft className="h-4 w-4" />
+            </button>
 
-          <button
-            type="button"
-            onClick={() => onOpenContact?.()}
-            className="inline-flex items-center gap-1 rounded-auto-lg px-2 py-1 text-xs font-medium text-auto-text hover:bg-auto-surface"
-            title="Ver ficha / acciones del contacto"
-          >
-            <Info className="h-4 w-4" />
-            <span className="hidden sm:inline">Ficha</span>
-          </button>
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-auto-border bg-auto-accent/10 text-auto-accent">
+              <UserRound className="h-5 w-5" />
+            </div>
 
-          <button
-            type="button"
-            onClick={() => setShowQuickReplies((v) => !v)}
-            className={clsx(
-              "inline-flex items-center gap-1 rounded-auto-lg px-2 py-1 text-xs font-medium hover:bg-auto-surface",
-              showQuickReplies ? "text-auto-text" : "text-auto-muted"
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <div className="truncate text-base font-semibold text-auto-text">
+                  {loading ? "Cargando…" : displayName}
+                </div>
+                <span className="rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] font-medium text-auto-text">
+                  {statusLabel}
+                </span>
+                {leadSource && (
+                  <span className="rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] text-auto-muted">
+                    {leadSource}
+                  </span>
+                )}
+                {isHumanOnly && (
+                  <span className="rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] text-auto-text">
+                    HUMANO
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-auto-muted">
+                {phone ? <span className="truncate">{phone}</span> : null}
+                {assignedTo ? <span className="truncate">Asesor: {assignedTo}</span> : null}
+                {waName ? <span className="truncate">Canal: {waName}</span> : null}
+                {ticket?.id ? <span>Ticket #{ticket.id}</span> : null}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
+            {waLink && (
+              <a
+                className="inline-flex h-9 items-center justify-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
+                href={waLink}
+                target="_blank"
+                rel="noreferrer"
+                title="Abrir en WhatsApp"
+              >
+                <PhoneCall className="h-4 w-4" />
+                <span className="hidden sm:inline">WhatsApp</span>
+              </a>
             )}
-            title="Mensajes rápidos"
-          >
-            <Sparkles className="h-4 w-4" />
-            <span className="hidden sm:inline">Rápidos</span>
-          </button>
 
-          <button
-            type="button"
-            className="inline-flex items-center justify-center rounded-auto-lg px-2 py-1 text-xs font-medium text-auto-muted hover:bg-auto-surface"
-            title="Cotizar (próximo)"
-            disabled
-          >
-            <FileText className="h-4 w-4" />
-          </button>
+            <button
+              type="button"
+              onClick={() => onOpenContact?.()}
+              className="inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
+              title="Ver ficha del contacto"
+            >
+              <Info className="h-4 w-4" />
+              <span>Ficha</span>
+            </button>
 
-          <button
-            type="button"
-            className="inline-flex items-center justify-center rounded-auto-lg px-2 py-1 text-xs font-medium text-auto-muted hover:bg-auto-surface"
-            title="Agendar (próximo)"
-            disabled
-          >
-            <Calendar className="h-4 w-4" />
-          </button>
+            <button
+              type="button"
+              onClick={() => setShowQuickReplies((v) => !v)}
+              className={clsx(
+                "inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border px-3 text-xs font-medium",
+                showQuickReplies
+                  ? "bg-auto-accent text-white"
+                  : "bg-auto-surface text-auto-text hover:bg-auto-panel2"
+              )}
+              title="Mostrar u ocultar mensajes rápidos"
+            >
+              <Sparkles className="h-4 w-4" />
+              <span>Rápidos</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onToggleView?.()}
+              className="inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
+              title="Cambiar a vista clásica"
+            >
+              <MessageSquareText className="h-4 w-4" />
+              <span className="hidden sm:inline">Vista clásica</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => history.replace(`/tickets/${ticketId}`)}
+              className="inline-flex h-9 items-center justify-center rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
+              title="Refrescar chat"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </button>
+
+            <button
+              type="button"
+              className="inline-flex h-9 items-center justify-center rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-muted"
+              title="Cotizar (próximo paso)"
+              disabled
+            >
+              <FileText className="h-4 w-4" />
+            </button>
+
+            <button
+              type="button"
+              className="inline-flex h-9 items-center justify-center rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-muted"
+              title="Agendar (próximo paso)"
+              disabled
+            >
+              <Calendar className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Quick replies */}
       {showQuickReplies && (
-        <div className="border-b border-auto-border bg-auto-panel px-3 py-2">
+        <div className="border-b border-auto-border bg-auto-panel px-3 py-2 md:px-4">
           <div className="flex gap-2 overflow-x-auto pb-1">
             {QUICK_REPLIES.map((qr) => (
               <button
                 key={qr.label}
                 type="button"
                 onClick={() => prefill(qr.text)}
-                className="shrink-0 rounded-full border border-auto-border bg-auto-surface px-3 py-1 text-xs text-auto-text hover:bg-auto-panel"
+                className="shrink-0 rounded-full border border-auto-border bg-auto-surface px-3 py-1.5 text-xs text-auto-text hover:bg-auto-panel2"
               >
                 {qr.label}
               </button>
             ))}
           </div>
           <div className="mt-1 text-[11px] text-auto-muted">
-            Tip: clic en un chip para pre-cargar el texto.
+            Clic en un chip para precargar el mensaje.
           </div>
         </div>
       )}
 
-      {/* Messages */}
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 bg-auto-surface">
         <MessagesList ticketId={ticketId} isGroup={ticket?.isGroup} />
       </div>
 
-      {/* Input */}
       <div className="border-t border-auto-border bg-auto-panel">
         <MessageInput ticketStatus={ticket?.status} />
       </div>

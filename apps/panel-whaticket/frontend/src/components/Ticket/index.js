@@ -3,83 +3,52 @@ import { useParams, useHistory } from "react-router-dom";
 
 import { toast } from "react-toastify";
 import openSocket from "../../services/socket-io";
-import clsx from "clsx";
-
-import { Paper, makeStyles } from "@material-ui/core";
+import { Button, makeStyles } from "@material-ui/core";
+import ArrowBackIos from "@material-ui/icons/ArrowBackIos";
 
 import ContactDrawer from "../ContactDrawer";
 import MessageInput from "../MessageInput/";
-import TicketHeader from "../TicketHeader";
-import TicketInfo from "../TicketInfo";
-// NOTE: use our enhanced TicketActionButtons component that accepts onOpenContact
-import TicketActionButtons from "../TicketActionButtons";
 import MessagesList from "../MessagesList";
 import ImprovedTicketChat from "../ImprovedTicketChat";
 import api from "../../services/api";
 import { ReplyMessageProvider } from "../../context/ReplyingMessage/ReplyingMessageContext";
 import toastError from "../../errors/toastError";
 
-// Maintain the same drawer width as the original implementation
-const drawerWidth = 320;
-
 const useStyles = makeStyles((theme) => ({
   root: {
     display: "flex",
     height: "100%",
+    minHeight: 0,
     position: "relative",
     overflow: "hidden",
+    background: "transparent",
   },
-
-  ticketInfo: {
-    maxWidth: "50%",
-    flexBasis: "50%",
-    [theme.breakpoints.down("sm")]: {
-      maxWidth: "80%",
-      flexBasis: "80%",
-    },
-  },
-  ticketActionButtons: {
-    maxWidth: "50%",
-    flexBasis: "50%",
-    display: "flex",
-    [theme.breakpoints.down("sm")]: {
-      maxWidth: "100%",
-      flexBasis: "100%",
-      marginBottom: "5px",
-    },
-  },
-
-  mainWrapper: {
+  classicWrapper: {
     flex: 1,
+    minWidth: 0,
     height: "100%",
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
-    borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 0,
-    borderLeft: "0",
-    marginRight: -drawerWidth,
-    transition: theme.transitions.create("margin", {
-      easing: theme.transitions.easing.sharp,
-      duration: theme.transitions.duration.leavingScreen,
-    }),
   },
-
-  mainWrapperShift: {
-    borderTopRightRadius: 0,
-    borderBottomRightRadius: 0,
-    transition: theme.transitions.create("margin", {
-      easing: theme.transitions.easing.easeOut,
-      duration: theme.transitions.duration.enteringScreen,
-    }),
-    marginRight: 0,
+  mobileBackBar: {
+    display: "flex",
+    alignItems: "center",
+    gap: theme.spacing(1),
+    padding: theme.spacing(1),
+    borderBottom: "1px solid rgba(148, 163, 184, 0.18)",
+    background: "rgba(255,255,255,0.96)",
+    [theme.breakpoints.up("md")]: {
+      display: "none",
+    },
+  },
+  mobileBackButton: {
+    minWidth: 0,
+    borderRadius: 999,
+    textTransform: "none",
   },
 }));
 
-// This component displays a single ticket conversation. We enhanced it so
-// that the ticket action buttons can open the contact drawer via the
-// `onOpenContact` prop. This aligns with the new menu option for viewing
-// contact details.
 const Ticket = () => {
   const { ticketId } = useParams();
   const history = useHistory();
@@ -91,7 +60,6 @@ const Ticket = () => {
   const [contact, setContact] = useState({});
   const [ticket, setTicket] = useState({});
 
-  // Keep track of previous bot mode so we can detect hand‑off events
   const prevBotMode = useRef(null);
 
   useEffect(() => {
@@ -100,28 +68,23 @@ const Ticket = () => {
       const fetchTicket = async () => {
         try {
           const { data } = await api.get("/tickets/" + ticketId);
-
-          setContact(data.contact);
-          setTicket(data);
-          setLoading(false);
+          setContact(data.contact || {});
+          setTicket(data || {});
         } catch (err) {
-          setLoading(false);
           toastError(err);
+        } finally {
+          setLoading(false);
         }
       };
       fetchTicket();
-    }, 500);
+    }, 250);
     return () => clearTimeout(delayDebounceFn);
   }, [ticketId, history]);
 
-  // When the ticket's botMode changes from ON to HUMAN_ONLY or OFF, show
-  // a notification to the agent.  This helps agents know when the bot
-  // decided to hand the conversation over to a human or was disabled.
   useEffect(() => {
     if (!ticket || typeof ticket.botMode === "undefined") return;
     const currentMode = String(ticket.botMode || "ON").toUpperCase();
     const previous = prevBotMode.current;
-    // Don't notify on first render
     if (previous && currentMode !== previous) {
       if (currentMode === "HUMAN_ONLY") {
         toast.info("El bot ha derivado la conversación a un asesor humano.");
@@ -134,18 +97,14 @@ const Ticket = () => {
 
   useEffect(() => {
     const socket = openSocket();
-
     const join = () => socket.emit("joinChatBox", ticketId);
 
-    // If the socket is already connected (common), the "connect" event
-    // won't fire for this effect. Join immediately to avoid requiring a
-    // manual refresh after accepting a ticket.
     if (socket.connected) join();
     socket.on("connect", join);
 
     socket.on("ticket", (data) => {
       if (data.action === "update") {
-        setTicket(data.ticket);
+        setTicket(data.ticket || {});
       }
 
       if (data.action === "delete") {
@@ -173,71 +132,61 @@ const Ticket = () => {
     };
   }, [ticketId, history]);
 
-  // Handlers to control the contact drawer state
-  const handleDrawerOpen = () => {
-    setDrawerOpen(true);
-  };
-
-  const handleDrawerClose = () => {
-    setDrawerOpen(false);
-  };
+  const handleDrawerOpen = () => setDrawerOpen(true);
+  const handleDrawerClose = () => setDrawerOpen(false);
 
   return (
     <div className={classes.root} id="drawer-container">
-      <Paper
-        variant="outlined"
-        elevation={0}
-        className={clsx(classes.mainWrapper, {
-          [classes.mainWrapperShift]: drawerOpen,
-        })}
-      >
-        <TicketHeader loading={loading}>
-          <div className={classes.ticketInfo}>
-            <TicketInfo
-              contact={contact}
-              ticket={ticket}
-              onClick={handleDrawerOpen}
-            />
+      <div className={classes.classicWrapper}>
+        {proView && (
+          <div className={classes.mobileBackBar}>
+            <Button
+              color="primary"
+              onClick={() => history.push("/tickets")}
+              className={classes.mobileBackButton}
+              startIcon={<ArrowBackIos />}
+            >
+              Volver
+            </Button>
           </div>
-          <div className={classes.ticketActionButtons}>
-            {/* Provide handleDrawerOpen to TicketActionButtons via onOpenContact prop */}
-            <div style={{ display: "flex", gap: 8, alignItems: "center", width: "100%" }}>
-              <TicketActionButtons ticket={ticket} onOpenContact={handleDrawerOpen} />
-              <button
-                type="button"
-                onClick={() => setProView((v) => !v)}
-                style={{
-                  whiteSpace: "nowrap",
-                  border: "1px solid rgba(0,0,0,0.12)",
-                  borderRadius: 999,
-                  padding: "6px 10px",
-                  fontSize: 12,
-                  background: proView ? "#111827" : "#fff",
-                  color: proView ? "#fff" : "#111827",
-                }}
-                title="Alternar vista pro"
-              >
-                {proView ? "Vista pro" : "Vista clásica"}
-              </button>
-            </div>
-          </div>
-        </TicketHeader>
+        )}
+
         <ReplyMessageProvider>
           {proView ? (
             <ImprovedTicketChat
+              loading={loading}
               ticketId={ticketId}
               ticket={ticket}
               contact={contact}
               onOpenContact={handleDrawerOpen}
+              onToggleView={() => setProView(false)}
             />
           ) : (
             <>
-              <MessagesList ticketId={ticketId} isGroup={ticket.isGroup} />
-              <MessageInput ticketStatus={ticket.status} />
+              <div className={classes.mobileBackBar}>
+                <Button
+                  color="primary"
+                  onClick={() => history.push("/tickets")}
+                  className={classes.mobileBackButton}
+                  startIcon={<ArrowBackIos />}
+                >
+                  Volver
+                </Button>
+                <Button
+                  color="primary"
+                  onClick={() => setProView(true)}
+                  className={classes.mobileBackButton}
+                >
+                  Vista pro
+                </Button>
+              </div>
+              <MessagesList ticketId={ticketId} isGroup={ticket?.isGroup} />
+              <MessageInput ticketStatus={ticket?.status} />
             </>
           )}
         </ReplyMessageProvider>
-      </Paper>
+      </div>
+
       <ContactDrawer
         open={drawerOpen}
         handleDrawerClose={handleDrawerClose}

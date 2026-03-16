@@ -1,0 +1,6 @@
+# Production environment variables for WAPro CRM frontend
+# Set the backend API URL to your deployed backend instance.
+# When deploying via Railway, this will typically be something like:
+# https://<your-backend>.up.railway.app/
+
+VITE_BACKEND_URL=https://pabel-backend-production.up.railway.app/
