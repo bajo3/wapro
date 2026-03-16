@@ -117,6 +117,20 @@ const TicketOptionsMenu = ({
     }
   };
 
+  const handleSetBotMode = async (mode) => {
+    handleClose();
+    try {
+      await api.put(`/tickets/${ticket.id}/bot-mode`, { botMode: mode });
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const handleOpenLeadTools = () => {
+    handleClose();
+    onOpenContact();
+  };
+
   return (
     <>
       <Menu
@@ -134,7 +148,31 @@ const TicketOptionsMenu = ({
         }}
         open={menuOpen}
         onClose={handleClose}
+        PaperProps={{
+          style: {
+            minWidth: 280,
+            backgroundColor: "#ffffff",
+            color: "#0f172a",
+            border: "1px solid #d8deeb",
+            boxShadow: "0 10px 30px rgba(15, 23, 42, 0.14)",
+          }
+        }}
       >
+        <MenuItem onClick={handleOpenLeadTools}>
+          Gestión del lead
+        </MenuItem>
+        <MenuItem onClick={handleOpenLeadTools}>
+          Programar / recontacto
+        </MenuItem>
+        <MenuItem onClick={() => handleSetBotMode("HUMAN_ONLY")}>
+          Derivar a humano
+        </MenuItem>
+        <MenuItem onClick={() => handleSetBotMode("ON")}>
+          Volver a bot automático
+        </MenuItem>
+        <MenuItem onClick={() => handleSetBotMode("OFF")}>
+          Apagar bot
+        </MenuItem>
         <MenuItem onClick={handleResolveWithoutFarewell}>
           {i18n.t("ticketOptionsMenu.resolveWithoutFarewell")}
         </MenuItem>
@@ -144,9 +182,7 @@ const TicketOptionsMenu = ({
         <MenuItem onClick={handlePostponeTicket}>
           {i18n.t("ticketOptionsMenu.postpone")}
         </MenuItem>
-        <MenuItem onClick={onOpenContact}>
-          {i18n.t("ticketOptionsMenu.contactDetails")}
-        </MenuItem>
+        <MenuItem onClick={handleOpenLeadTools}>{i18n.t("ticketOptionsMenu.contactDetails")}</MenuItem>
         <MenuItem onClick={handleKeepWithMe}>
           {i18n.t("ticketOptionsMenu.keep")}
         </MenuItem>

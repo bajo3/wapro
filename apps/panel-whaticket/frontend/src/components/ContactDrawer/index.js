@@ -28,7 +28,7 @@ import MarkdownWrapper from "../MarkdownWrapper";
 import api from "../../services/api";
 import toastError from "../../errors/toastError";
 
-const drawerWidth = 320;
+const drawerWidth = 420;
 
 const parseKvpTag = (tags, key) => {
   const prefix = `${key}:`;
@@ -52,18 +52,18 @@ const useStyles = makeStyles(theme => ({
 		width: drawerWidth,
 		maxWidth: "100vw",
 		display: "flex",
-		backgroundColor: "#0b1220",
-		color: "#e5e7eb",
-		borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-		borderRight: "1px solid rgba(255, 255, 255, 0.08)",
-		borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+		backgroundColor: "#ffffff",
+		color: "#0f172a",
+		borderTop: "1px solid #d8deeb",
+		borderRight: "1px solid #d8deeb",
+		borderBottom: "1px solid #d8deeb",
 		borderTopRightRadius: 4,
 		borderBottomRightRadius: 4,
 	},
 	header: {
 		display: "flex",
 		borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
-		backgroundColor: "#0b1220",
+		backgroundColor: "#ffffff",
 		alignItems: "center",
 		padding: theme.spacing(0, 1),
 		minHeight: 56,
@@ -71,7 +71,7 @@ const useStyles = makeStyles(theme => ({
 	},
 	content: {
 		display: "flex",
-		backgroundColor: "#0b1220",
+		backgroundColor: "#ffffff",
 		flexDirection: "column",
 		padding: "8px",
 		height: "100%",
@@ -111,18 +111,20 @@ const useStyles = makeStyles(theme => ({
 		fontWeight: 700,
 		textTransform: "uppercase",
 		letterSpacing: 0.6,
-		color: "rgba(229,231,235,0.7)",
+		color: "#64748b",
 	},
 	muted: {
-		color: "rgba(229,231,235,0.72)",
+		color: "#64748b",
 	},
 }));
 
-const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) => {
+const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading, onTicketPatched = () => {} }) => {
 	const classes = useStyles();
 
 	const [modalOpen, setModalOpen] = useState(false);
-  const [tab, setTab] = useState(0);
+  const [tab, setTab] = useState(ticket?.id ? 1 : 0);
+  const [botMode, setBotMode] = useState(String(ticket?.botMode || "ON").toUpperCase());
+  const [recontactAt, setRecontactAt] = useState("");
 
   // Ticket tools state
   const [tags, setTags] = useState([]);
@@ -148,11 +150,11 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
   const waLink = phone ? `https://wa.me/${phone.replace(/\D/g, "")}` : "";
 
   const botModeLabel = useMemo(() => {
-    const mode = String(ticket?.botMode || "ON").toUpperCase();
+    const mode = String(botMode || ticket?.botMode || "ON").toUpperCase();
     if (mode === "HUMAN_ONLY") return i18n.t("contactDrawer.ticket.botMode.human");
     if (mode === "OFF") return i18n.t("contactDrawer.ticket.botMode.off");
     return i18n.t("contactDrawer.ticket.botMode.on");
-  }, [ticket?.botMode]);
+  }, [botMode, ticket?.botMode]);
 
   useEffect(() => {
     // Keep state in sync when switching tickets
@@ -162,7 +164,9 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
     setTagInput("");
     setNoteInput("");
     setScheduledRows([]);
-  }, [ticketId, contactId]);
+    setBotMode(String(ticket?.botMode || "ON").toUpperCase());
+    setTab(ticket?.id ? 1 : 0);
+  }, [ticketId, contactId, ticket?.botMode, ticket?.id]);
 
   useEffect(() => {
     const loadTicketTools = async () => {
@@ -260,7 +264,10 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
   const handleBotMode = async (mode) => {
     if (!ticketId) return;
     try {
-      await api.put(`/tickets/${ticketId}/bot-mode`, { botMode: mode });
+      const { data } = await api.put(`/tickets/${ticketId}/bot-mode`, { botMode: mode });
+      const next = String(data?.botMode || mode).toUpperCase();
+      setBotMode(next);
+      onTicketPatched(data);
     } catch (err) {
       toastError(err);
     }
@@ -281,9 +288,15 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
     const days = Math.max(0, Number(recontactDays) || 0);
     const body = String(recontactBody || "").trim();
     if (!body) return;
-    const sendAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+
+    let sendAt = recontactAt ? new Date(recontactAt).toISOString() : null;
+    if (!sendAt) {
+      sendAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+    }
+
     try {
       await api.post(`/scheduled-messages`, { ticketId, contactId, body, sendAt });
+      setRecontactAt("");
       await refreshScheduled();
     } catch (err) {
       toastError(err);
@@ -321,7 +334,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 				<IconButton onClick={handleDrawerClose}>
 					<CloseIcon />
 				</IconButton>
-				<Typography style={{ justifySelf: "center", color: "#e5e7eb", fontWeight: 600 }}>
+				<Typography style={{ justifySelf: "center", color: "#0f172a", fontWeight: 600 }}>
 					{i18n.t("contactDrawer.header")}
 				</Typography>
 			</div>
@@ -329,17 +342,23 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 				<ContactDrawerSkeleton classes={classes} />
 			) : (
 				<div className={classes.content}>
-					<Paper square variant="outlined" className={classes.contactHeader} style={{ background: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.08)" }}>
+					<Paper square variant="outlined" className={classes.contactHeader} style={{ background: "#ffffff", borderColor: "#d8deeb", borderRadius: 12 }}>
 						<Avatar
 							alt={contact.name}
 							src={contact.profilePicUrl}
 							className={classes.contactAvatar}
 						></Avatar>
 
-						<Typography style={{ fontWeight: 700, color: "#e5e7eb" }}>{contact.name}</Typography>
+						<Typography style={{ fontWeight: 700, color: "#0f172a" }}>{contact.name}</Typography>
 						<Typography className={classes.muted}>
-							<Link style={{ color: "#93c5fd" }} href={`tel:${contact.number}`}>{contact.number}</Link>
+							<Link style={{ color: "#2563eb" }} href={`tel:${contact.number}`}>{contact.number}</Link>
 						</Typography>
+						{ticketId ? (
+							<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+								<Chip size="small" label={`Ticket #${ticketId}`} style={{ background: "#f8fafc", color: "#0f172a" }} />
+								<Chip size="small" label={`Bot: ${botModeLabel}`} style={{ background: "#f8fafc", color: "#0f172a" }} />
+							</div>
+						) : null}
 						<Button
 							variant="outlined"
 							color="primary"
@@ -349,7 +368,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 						</Button>
 					</Paper>
 
-					<Paper square variant="outlined" style={{ marginRight: 0, background: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.08)" }}>
+					<Paper square variant="outlined" style={{ marginRight: 0, background: "#ffffff", borderColor: "#d8deeb", borderRadius: 12 }}>
 						<Tabs
 							value={tab}
 							onChange={(_, v) => setTab(v)}
@@ -364,7 +383,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 					</Paper>
 
 					{tab === 0 && (
-						<Paper square variant="outlined" className={classes.contactDetails} style={{ background: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.08)" }}>
+						<Paper square variant="outlined" className={classes.contactDetails} style={{ background: "#ffffff", borderColor: "#d8deeb", borderRadius: 12 }}>
 						<ContactModal
 							open={modalOpen}
 							onClose={() => setModalOpen(false)}
@@ -379,7 +398,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 								square
 								variant="outlined"
 								className={classes.contactExtraInfo}
-								style={{ background: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.08)" }}
+								style={{ background: "#ffffff", borderColor: "#d8deeb" }}
 							>
 								<InputLabel>{info.name}</InputLabel>
 								<Typography component="div" noWrap style={{ paddingTop: 2 }}>
@@ -391,13 +410,13 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 					)}
 
 					{tab === 1 && (
-						<Paper square variant="outlined" className={classes.contactDetails} style={{ background: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.08)" }}>
+						<Paper square variant="outlined" className={classes.contactDetails} style={{ background: "#ffffff", borderColor: "#d8deeb", borderRadius: 12 }}>
 							<Typography className={classes.sectionTitle}>
 								{i18n.t("contactDrawer.ticket.title")}
 							</Typography>
 
 							{/* Ficha (compact) */}
-							<Divider style={{ margin: "10px 0", borderColor: "rgba(255,255,255,0.08)" }} />
+							<Divider style={{ margin: "10px 0", borderColor: "#e2e8f0" }} />
 							<Typography className={classes.sectionTitle}>Ficha</Typography>
 							<div style={{ display: "grid", gap: 10, marginTop: 10 }}>
 								<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -408,7 +427,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 											SelectProps={{ native: true }}
 											variant="outlined"
 											size="small"
-										InputProps={{ style: { color: "#e5e7eb" } }}
+										InputProps={{ style: { color: "#0f172a", background: "#fff" } }}
 											value={stage}
 											onChange={(e) => setStage(e.target.value)}
 											fullWidth
@@ -429,7 +448,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 											SelectProps={{ native: true }}
 											variant="outlined"
 											size="small"
-										InputProps={{ style: { color: "#e5e7eb" } }}
+										InputProps={{ style: { color: "#0f172a", background: "#fff" } }}
 											value={interest}
 											onChange={(e) => setInterest(e.target.value)}
 											fullWidth
@@ -464,10 +483,13 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 								</div>
 							</div>
 
-							<Divider style={{ margin: "14px 0", borderColor: "rgba(255,255,255,0.08)" }} />
+							<Divider style={{ margin: "14px 0", borderColor: "#e2e8f0" }} />
 
 							<Typography variant="subtitle2">
 								{i18n.t("contactDrawer.ticket.botMode.label")}: {botModeLabel}
+							</Typography>
+							<Typography variant="body2" className={classes.muted} style={{ marginTop: 4 }}>
+								Usá estos botones para pasar la conversación a humano, devolverla al bot o apagarlo por completo.
 							</Typography>
 							<div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
 								<Button size="small" variant="outlined" onClick={() => handleBotMode("ON")}>
@@ -481,7 +503,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 								</Button>
 							</div>
 
-							<Divider style={{ margin: "16px 0", borderColor: "rgba(255,255,255,0.08)" }} />
+							<Divider style={{ margin: "16px 0", borderColor: "#e2e8f0" }} />
 
 							<Typography variant="subtitle2">Recontacto</Typography>
 							<Typography variant="body2" className={classes.muted} style={{ marginTop: 4 }}>
@@ -496,12 +518,23 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 										type="number"
 										value={recontactDays}
 										onChange={(e) => setRecontactDays(e.target.value)}
-										InputProps={{ style: { color: "#e5e7eb" } }}
+										InputProps={{ style: { color: "#0f172a", background: "#fff" } }}
 									/>
 									<Button size="small" variant="contained" color="primary" onClick={createRecontact}>
 										Agendar
 									</Button>
 								</div>
+								<TextField
+									label="Fecha y hora (opcional)"
+									variant="outlined"
+									size="small"
+									type="datetime-local"
+									value={recontactAt}
+									onChange={(e) => setRecontactAt(e.target.value)}
+									InputLabelProps={{ shrink: true }}
+									InputProps={{ style: { color: "#0f172a", background: "#fff" } }}
+									fullWidth
+								/>
 								<TextField
 									label="Mensaje"
 									variant="outlined"
@@ -509,7 +542,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 									minRows={3}
 									value={recontactBody}
 									onChange={(e) => setRecontactBody(e.target.value)}
-									InputProps={{ style: { color: "#e5e7eb" } }}
+									InputProps={{ style: { color: "#0f172a", background: "#fff" } }}
 									fullWidth
 								/>
 							</div>
@@ -544,7 +577,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 								)}
 							</List>
 
-							<Divider style={{ margin: "16px 0", borderColor: "rgba(255,255,255,0.08)" }} />
+							<Divider style={{ margin: "16px 0", borderColor: "#e2e8f0" }} />
 
 							<Typography variant="subtitle2">{i18n.t("contactDrawer.ticket.tags")}</Typography>
 							<div style={{ display: "flex", gap: 8, marginTop: 8 }}>
@@ -554,7 +587,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 									placeholder={i18n.t("contactDrawer.ticket.tagsPlaceholder")}
 									value={tagInput}
 									onChange={(e) => setTagInput(e.target.value)}
-									InputProps={{ style: { color: "#e5e7eb" } }}
+									InputProps={{ style: { color: "#0f172a", background: "#fff" } }}
 									onKeyDown={(e) => {
 										if (e.key === "Enter") handleAddTag();
 									}}
@@ -575,7 +608,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 								)}
 							</div>
 
-							<Divider style={{ margin: "16px 0", borderColor: "rgba(255,255,255,0.08)" }} />
+							<Divider style={{ margin: "16px 0", borderColor: "#e2e8f0" }} />
 
 							<Typography variant="subtitle2">{i18n.t("contactDrawer.ticket.notes")}</Typography>
 							<TextField
@@ -585,7 +618,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 								placeholder={i18n.t("contactDrawer.ticket.notesPlaceholder")}
 								value={noteInput}
 								onChange={(e) => setNoteInput(e.target.value)}
-								InputProps={{ style: { color: "#e5e7eb" } }}
+								InputProps={{ style: { color: "#0f172a", background: "#fff" } }}
 								style={{ marginTop: 8 }}
 								fullWidth
 							/>

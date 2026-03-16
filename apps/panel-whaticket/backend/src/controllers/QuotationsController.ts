@@ -13,6 +13,18 @@ const normalizePhone = (phone: any): string => {
   return String(phone || "").replace(/\D/g, "").trim();
 };
 
+const buildVehicleLabelFromData = (data: any): string => {
+  if (!data || typeof data !== "object") return "";
+  return String(
+    data.label ||
+    data.name ||
+    data.title ||
+    [data.marca || data.brand, data.modelo || data.model, data.version, data.year]
+      .filter(Boolean)
+      .join(" ")
+  ).trim();
+};
+
 const toNumber = (v: any, def = 0): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : def;
@@ -140,8 +152,21 @@ export const show = async (req: Request, res: Response): Promise<Response> => {
 export const create = async (req: Request, res: Response): Promise<Response> => {
   const body = req.body || {};
 
-  const clientName = String(body.clientName || "").trim();
-  const vehicleLabel = String(body.vehicleLabel || body.vehicle || "").trim();
+  let clientName = String(body.clientName || body.contactName || "").trim();
+  let clientPhone = String(body.clientPhone || body.contactPhone || "").trim();
+  let vehicleLabel = String(body.vehicleLabel || body.vehicle || "").trim();
+
+  if (!clientName && body.contactId) {
+    const c = await Contact.findByPk(body.contactId as any);
+    if (c) {
+      clientName = String(c.name || "").trim();
+      clientPhone = clientPhone || String(c.number || "").trim();
+    }
+  }
+
+  if (!vehicleLabel) {
+    vehicleLabel = buildVehicleLabelFromData(body.vehicleData);
+  }
 
   if (!clientName) throw new AppError("ERR_QUOTATION_CLIENT_REQUIRED", 400);
   if (!vehicleLabel) throw new AppError("ERR_QUOTATION_VEHICLE_REQUIRED", 400);
@@ -177,7 +202,7 @@ export const create = async (req: Request, res: Response): Promise<Response> => 
     status: String(body.status || "draft"),
     clientRefId: body.clientRefId ?? body.clientId ?? null,
     clientName,
-    clientPhone: String(body.clientPhone || "").trim() || null,
+    clientPhone: clientPhone || null,
     contactId: body.contactId ?? null,
     vehicleRefId: body.vehicleRefId ?? body.vehicleId ?? null,
     vehicleLabel,
@@ -222,14 +247,30 @@ export const update = async (req: Request, res: Response): Promise<Response> => 
 
   const body = req.body || {};
 
+  let nextClientName = body.clientName ?? body.contactName ?? quotation.clientName;
+  let nextClientPhone = body.clientPhone ?? body.contactPhone ?? quotation.clientPhone;
+  let nextVehicleLabel = body.vehicleLabel ?? body.vehicle ?? quotation.vehicleLabel;
+
+  if ((!nextClientName || !String(nextClientName).trim()) && (body.contactId ?? quotation.contactId)) {
+    const c = await Contact.findByPk((body.contactId ?? quotation.contactId) as any);
+    if (c) {
+      nextClientName = c.name;
+      nextClientPhone = nextClientPhone || c.number;
+    }
+  }
+
+  if (!nextVehicleLabel || !String(nextVehicleLabel).trim()) {
+    nextVehicleLabel = buildVehicleLabelFromData(body.vehicleData ?? quotation.vehicleData);
+  }
+
   const patch: any = {
     status: body.status ?? quotation.status,
     clientRefId: body.clientRefId ?? body.clientId ?? quotation.clientRefId,
-    clientName: body.clientName ?? quotation.clientName,
-    clientPhone: body.clientPhone ?? quotation.clientPhone,
+    clientName: nextClientName,
+    clientPhone: nextClientPhone,
     contactId: body.contactId ?? quotation.contactId,
     vehicleRefId: body.vehicleRefId ?? body.vehicleId ?? quotation.vehicleRefId,
-    vehicleLabel: body.vehicleLabel ?? body.vehicle ?? quotation.vehicleLabel,
+    vehicleLabel: nextVehicleLabel,
     vehicleData: body.vehicleData ?? quotation.vehicleData,
     currency: body.currency ? String(body.currency).toUpperCase() : quotation.currency,
     basePrice: body.basePrice ?? quotation.basePrice,

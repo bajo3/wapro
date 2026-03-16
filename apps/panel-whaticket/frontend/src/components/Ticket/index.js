@@ -193,6 +193,7 @@ const Ticket = () => {
         contact={contact}
         ticket={ticket}
         loading={loading}
+        onTicketPatched={(next) => setTicket((prev) => ({ ...prev, ...(next || {}) }))}
       />
     </div>
   );

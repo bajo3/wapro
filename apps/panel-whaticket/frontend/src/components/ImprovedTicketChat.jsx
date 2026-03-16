@@ -45,6 +45,7 @@ export default function ImprovedTicketChat({
   const isHumanOnly = botMode === "HUMAN_ONLY";
   const assignedTo = ticket?.user?.name || null;
   const waName = ticket?.whatsapp?.name || null;
+  const botModeLabel = isHumanOnly ? "Humano" : botMode === "OFF" ? "Off" : "Auto";
 
   const waLink = useMemo(() => {
     const digits = String(phone || "").replace(/[^\d]/g, "");
@@ -145,10 +146,30 @@ export default function ImprovedTicketChat({
               type="button"
               onClick={() => onOpenContact?.()}
               className="inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
-              title="Ver ficha del contacto"
+              title="Abrir gestión del ticket"
             >
               <Info className="h-4 w-4" />
-              <span>Ficha</span>
+              <span>Gestión</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => history.push("/quotations")}
+              className="inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
+              title="Abrir cotizaciones"
+            >
+              <FileText className="h-4 w-4" />
+              <span className="hidden sm:inline">Cotización</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onOpenContact?.()}
+              className="inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
+              title="Abrir recontactos y mensajes programados"
+            >
+              <Calendar className="h-4 w-4" />
+              <span className="hidden sm:inline">Recontacto</span>
             </button>
 
             <button
@@ -165,6 +186,10 @@ export default function ImprovedTicketChat({
               <Sparkles className="h-4 w-4" />
               <span>Rápidos</span>
             </button>
+
+            <span className="inline-flex h-9 items-center rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-muted">
+              Bot: {botModeLabel}
+            </span>
 
             <button
               type="button"
@@ -185,23 +210,6 @@ export default function ImprovedTicketChat({
               <RefreshCw className="h-4 w-4" />
             </button>
 
-            <button
-              type="button"
-              className="inline-flex h-9 items-center justify-center rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-muted"
-              title="Cotizar (próximo paso)"
-              disabled
-            >
-              <FileText className="h-4 w-4" />
-            </button>
-
-            <button
-              type="button"
-              className="inline-flex h-9 items-center justify-center rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-muted"
-              title="Agendar (próximo paso)"
-              disabled
-            >
-              <Calendar className="h-4 w-4" />
-            </button>
           </div>
         </div>
       </div>
@@ -226,10 +234,12 @@ export default function ImprovedTicketChat({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-hidden bg-auto-surface">
+      <div className="min-h-0 flex-1 bg-auto-surface">
         <MessagesList ticketId={ticketId} isGroup={ticket?.isGroup} />
       </div>
 
+      {/* Bottom message input bar. A dedicated component is used here to avoid
+       * layout conflicts with the legacy Material‑UI implementation. */}
       <ImprovedMessageInput ticketStatus={ticket?.status} />
     </div>
   );

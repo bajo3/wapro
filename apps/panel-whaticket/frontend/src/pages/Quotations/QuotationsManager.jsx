@@ -52,6 +52,19 @@ async function safeGet(url, config) {
   }
 }
 
+const buildVehicleLabel = (v) => {
+  if (!v) return "";
+  return (
+    v.label ||
+    v.name ||
+    v.title ||
+    [v.marca || v.brand, v.modelo || v.model, v.version, v.year]
+      .filter(Boolean)
+      .join(" ")
+      .trim()
+  );
+};
+
 async function safePost(url, payload) {
   const { data } = await api.post(url, payload);
   return data;
@@ -72,8 +85,10 @@ const emptyForm = {
   title: "",
   contactId: "",
   contactName: "",
+  contactPhone: "",
   vehicleId: "",
   vehicleLabel: "",
+  vehicleData: null,
   currency: "ARS",
   price: "",
   notes: "",
@@ -121,7 +136,7 @@ export default function QuotationsManager() {
     try {
       // API esperada: GET /quotations -> []
       const data = await safeGet("/quotations");
-      setQuotations(Array.isArray(data) ? data : data?.rows || []);
+      setQuotations(Array.isArray(data) ? data : data?.quotations || data?.rows || []);
     } catch (e) {
       toastError(e, "No pude cargar las cotizaciones");
     } finally {
@@ -147,12 +162,14 @@ export default function QuotationsManager() {
       ...emptyForm,
       id: q?.id ?? null,
       title: q?.title ?? "",
-      contactId: q?.contactId ?? q?.contact?.id ?? "",
-      contactName: q?.contactName ?? q?.contact?.name ?? "",
-      vehicleId: q?.vehicleId ?? q?.vehicle?.id ?? "",
+      contactId: q?.contactId ?? q?.contact?.id ?? q?.clientRefId ?? "",
+      contactName: q?.contactName ?? q?.contact?.name ?? q?.clientName ?? "",
+      contactPhone: q?.contact?.number ?? q?.clientPhone ?? "",
+      vehicleId: q?.vehicleId ?? q?.vehicle?.id ?? q?.vehicleRefId ?? "",
       vehicleLabel: q?.vehicleLabel ?? q?.vehicle?.name ?? q?.vehicle?.title ?? "",
+      vehicleData: q?.vehicleData ?? null,
       currency: q?.currency ?? "ARS",
-      price: q?.price ?? "",
+      price: q?.price ?? q?.totalPrice ?? "",
       notes: q?.notes ?? "",
       status: q?.status ?? "draft",
     });
@@ -166,7 +183,7 @@ export default function QuotationsManager() {
 
   const validate = () => {
     if (!String(form.contactId || "").trim() && !String(form.contactName || "").trim()) {
-      toast.error("Seleccioná un cliente (o completá el nombre).");
+      toast.error("Seleccioná un cliente o completá nombre/teléfono.");
       return false;
     }
     if (!String(form.vehicleId || "").trim() && !String(form.vehicleLabel || "").trim()) {
@@ -181,14 +198,63 @@ export default function QuotationsManager() {
 
     setSaving(true);
     try {
+      let resolvedContactName = String(form.contactName || "").trim();
+      let resolvedContactPhone = String(form.contactPhone || "").trim();
+      let resolvedVehicleLabel = String(form.vehicleLabel || "").trim();
+      let resolvedVehicleData = form.vehicleData || null;
+
+      if (!resolvedContactName && form.contactId) {
+        const found = contactOptions.find((c) => String(c.id) === String(form.contactId));
+        if (found) {
+          resolvedContactName = found.label || resolvedContactName;
+          resolvedContactPhone = found.phone || resolvedContactPhone;
+        } else {
+          try {
+            const data = await safeGet(`/contacts/${form.contactId}`);
+            resolvedContactName = data?.name || resolvedContactName;
+            resolvedContactPhone = data?.number || resolvedContactPhone;
+          } catch {
+            // best-effort
+          }
+        }
+      }
+
+      if (!resolvedVehicleLabel && form.vehicleId) {
+        const found = vehicleOptions.find((v) => String(v.id) === String(form.vehicleId));
+        if (found) {
+          resolvedVehicleLabel = found.label || resolvedVehicleLabel;
+          resolvedVehicleData = found.raw || resolvedVehicleData;
+        } else {
+          try {
+            const data = await safeGet("/vehicles", {
+              params: { q: form.vehicleId, searchParam: form.vehicleId, limit: 25 },
+            });
+            const list = data?.vehicles || data?.rows || data?.data || [];
+            const match = (list || []).find((v) => String(v.id) === String(form.vehicleId));
+            if (match) {
+              resolvedVehicleLabel = buildVehicleLabel(match) || resolvedVehicleLabel;
+              resolvedVehicleData = match;
+            }
+          } catch {
+            // best-effort
+          }
+        }
+      }
+
       const payload = {
-        title: form.title || undefined,
+        meta: form.title ? { title: form.title } : undefined,
         contactId: form.contactId || undefined,
-        contactName: form.contactName || undefined,
+        clientId: form.contactId || undefined,
+        clientRefId: form.contactId || undefined,
+        clientName: resolvedContactName || undefined,
+        clientPhone: resolvedContactPhone || undefined,
         vehicleId: form.vehicleId || undefined,
-        vehicleLabel: form.vehicleLabel || undefined,
+        vehicleRefId: form.vehicleId || undefined,
+        vehicleLabel: resolvedVehicleLabel || undefined,
+        vehicleData: resolvedVehicleData || undefined,
         currency: form.currency,
-        price: form.price ? Number(form.price) : undefined,
+        basePrice: form.price ? Number(form.price) : undefined,
+        totalPrice: form.price ? Number(form.price) : undefined,
         notes: form.notes || undefined,
         status: form.status,
       };
@@ -245,7 +311,7 @@ export default function QuotationsManager() {
     setLookupLoading(true);
     try {
       // Backend contract: /vehicles?q=... -> { vehicles: [] }
-      const data = await safeGet("/vehicles", { params: { q: query, limit: 25 } });
+      const data = await safeGet("/vehicles", { params: { q: query, searchParam: query, limit: 25 } });
       const list =
         (Array.isArray(data) ? data : null) ||
         data?.vehicles ||
@@ -257,7 +323,7 @@ export default function QuotationsManager() {
         label:
           v.name ||
           v.title ||
-          [v.brand, v.model, v.year].filter(Boolean).join(" ") ||
+          [v.marca || v.brand, v.modelo || v.model, v.version, v.year].filter(Boolean).join(" ") ||
           String(v.id || ""),
         raw: v,
       }));
@@ -291,6 +357,7 @@ export default function QuotationsManager() {
       const normalized = (list || []).slice(0, 15).map((c) => ({
         id: c.id ?? c.contactId ?? c.uuid ?? "",
         label: c.name || c.pushname || c.number || String(c.id || ""),
+        phone: c.number || "",
         raw: c,
       }));
       setContactOptions(normalized);
@@ -356,12 +423,12 @@ export default function QuotationsManager() {
                 const when = updatedAt ? (() => {
                   try { return format(new Date(updatedAt), "dd/MM/yyyy HH:mm"); } catch { return String(updatedAt); }
                 })() : "-";
-                const price = q.price ?? q.amount ?? "";
+                const price = q.totalPrice ?? q.basePrice ?? q.price ?? q.amount ?? "";
                 const currency = q.currency ?? "ARS";
                 return (
                   <TableRow key={q.id || Math.random()}>
                     <TableCell>{q.id ?? "-"}</TableCell>
-                    <TableCell>{q.contactName ?? q.contact?.name ?? "-"}</TableCell>
+                    <TableCell>{q.clientName ?? q.contactName ?? q.contact?.name ?? "-"}</TableCell>
                     <TableCell>{q.vehicleLabel ?? q.vehicle?.name ?? q.vehicle?.title ?? "-"}</TableCell>
                     <TableCell>
                       {price !== "" ? `${currency} ${price}` : "-"}
@@ -436,6 +503,7 @@ export default function QuotationsManager() {
                     ...form,
                     contactId: id,
                     contactName: found?.label || form.contactName,
+                    contactPhone: found?.phone || form.contactPhone,
                   });
                 }}
                 label="Cliente"
@@ -459,7 +527,13 @@ export default function QuotationsManager() {
               fullWidth
             />
 
-            <div />
+            <TextField
+              variant="outlined"
+              label="Teléfono cliente (manual)"
+              value={form.contactPhone}
+              onChange={(e) => setForm({ ...form, contactPhone: e.target.value })}
+              fullWidth
+            />
 
             <TextField
               variant="outlined"
@@ -481,6 +555,7 @@ export default function QuotationsManager() {
                     ...form,
                     vehicleId: id,
                     vehicleLabel: found?.label || form.vehicleLabel,
+                    vehicleData: found?.raw || form.vehicleData,
                   });
                 }}
                 label="Vehículo"
