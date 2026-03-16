@@ -46,11 +46,11 @@ const upsertKvpTag = (tags, key, value) => {
 
 const useStyles = makeStyles(theme => ({
 	drawer: {
-		width: drawerWidth,
 		flexShrink: 0,
 	},
 	drawerPaper: {
 		width: drawerWidth,
+		maxWidth: "100vw",
 		display: "flex",
 		backgroundColor: "#0b1220",
 		color: "#e5e7eb",
@@ -302,13 +302,15 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading }) =>
 	return (
 		<Drawer
 			className={classes.drawer}
-			variant="persistent"
+			variant="temporary"
 			anchor="right"
 			open={open}
+			onClose={handleDrawerClose}
 			PaperProps={{ style: { position: "absolute" } }}
 			BackdropProps={{ style: { position: "absolute" } }}
 			ModalProps={{
 				container: document.getElementById("drawer-container"),
+				keepMounted: true,
 				style: { position: "absolute" },
 			}}
 			classes={{
