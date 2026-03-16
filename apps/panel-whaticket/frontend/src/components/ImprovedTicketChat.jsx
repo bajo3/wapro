@@ -226,12 +226,10 @@ export default function ImprovedTicketChat({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 bg-auto-surface">
+      <div className="min-h-0 flex-1 overflow-hidden bg-auto-surface">
         <MessagesList ticketId={ticketId} isGroup={ticket?.isGroup} />
       </div>
 
-      {/* Bottom message input bar. A dedicated component is used here to avoid
-       * layout conflicts with the legacy Material‑UI implementation. */}
       <ImprovedMessageInput ticketStatus={ticket?.status} />
     </div>
   );
