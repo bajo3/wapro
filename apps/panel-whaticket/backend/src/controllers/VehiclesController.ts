@@ -9,6 +9,7 @@ import sequelize from "../database";
 type Query = {
   q?: string;
   searchParam?: string;
+  id?: string;
   limit?: string;
 };
 
@@ -198,9 +199,10 @@ function qi(ident: string): string {
 }
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
-  const { q = "", searchParam = "", limit = "200" } = req.query as Query;
+  const { q = "", searchParam = "", id = "", limit = "200" } = req.query as Query;
   const lim = Math.min(Math.max(parseInt(String(limit), 10) || 200, 1), 1000);
   const term = String(q || searchParam || "").trim();
+  const exactId = String(id || "").trim();
 
   try {
     const source = await detectSource();
@@ -224,13 +226,16 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
     const yearExpr = map.year ? qi(map.year) : "NULL";
 
     const whereParts: string[] = [];
+    if (exactId) {
+      whereParts.push(`${qi(map.id)} = :exactId`);
+    }
     if (term) {
       const orParts: string[] = [];
-      orParts.push(`CAST(${qi(map.id)} AS TEXT) = :termExact`);
       if (map.title) orParts.push(`${qi(map.title)} ILIKE :term`);
       if (map.brand) orParts.push(`${qi(map.brand)} ILIKE :term`);
       if (map.model) orParts.push(`${qi(map.model)} ILIKE :term`);
       if (map.version) orParts.push(`${qi(map.version)} ILIKE :term`);
+      orParts.push(`TRIM(CONCAT(${brandExpr}, ' ', ${modelExpr}, ' ', ${titleExpr})) ILIKE :term`);
       if (orParts.length) whereParts.push(`(${orParts.join(" OR ")})`);
     }
 
@@ -254,7 +259,7 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
     const [rows] = await sequelize.query(sql, {
       replacements: {
         term: `%${term}%`,
-        termExact: term,
+        exactId,
         lim,
       },
     });

@@ -227,7 +227,7 @@ export default function QuotationsManager() {
         } else {
           try {
             const data = await safeGet("/vehicles", {
-              params: { q: form.vehicleId, limit: 25 },
+              params: { q: form.vehicleId, searchParam: form.vehicleId, limit: 25 },
             });
             const list = data?.vehicles || data?.rows || data?.data || [];
             const match = (list || []).find((v) => String(v.id) === String(form.vehicleId));
@@ -311,7 +311,7 @@ export default function QuotationsManager() {
     setLookupLoading(true);
     try {
       // Backend contract: /vehicles?q=... -> { vehicles: [] }
-      const data = await safeGet("/vehicles", { params: { q: query, limit: 25 } });
+      const data = await safeGet("/vehicles", { params: { q: query, searchParam: query, limit: 25 } });
       const list =
         (Array.isArray(data) ? data : null) ||
         data?.vehicles ||
@@ -378,28 +378,6 @@ export default function QuotationsManager() {
     const t = setTimeout(() => loadContacts(contactQuery), 250);
     return () => clearTimeout(t);
   }, [contactQuery]);
-
-  useEffect(() => {
-    if (!form.contactId || !form.contactName) return;
-    setContactOptions((prev) => {
-      if (prev.some((c) => String(c.id) === String(form.contactId))) return prev;
-      return [
-        { id: form.contactId, label: form.contactName, phone: form.contactPhone || "", raw: null },
-        ...prev
-      ];
-    });
-  }, [form.contactId, form.contactName, form.contactPhone]);
-
-  useEffect(() => {
-    if (!form.vehicleId || !form.vehicleLabel) return;
-    setVehicleOptions((prev) => {
-      if (prev.some((v) => String(v.id) === String(form.vehicleId))) return prev;
-      return [
-        { id: form.vehicleId, label: form.vehicleLabel, raw: form.vehicleData || null },
-        ...prev
-      ];
-    });
-  }, [form.vehicleId, form.vehicleLabel, form.vehicleData]);
 
   return (
     <div style={{ padding: 16 }}>
