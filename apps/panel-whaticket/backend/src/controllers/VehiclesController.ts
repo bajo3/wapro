@@ -8,6 +8,7 @@ import sequelize from "../database";
 
 type Query = {
   q?: string;
+  searchParam?: string;
   limit?: string;
 };
 
@@ -197,9 +198,9 @@ function qi(ident: string): string {
 }
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
-  const { q = "", limit = "200" } = req.query as Query;
+  const { q = "", searchParam = "", limit = "200" } = req.query as Query;
   const lim = Math.min(Math.max(parseInt(String(limit), 10) || 200, 1), 1000);
-  const term = String(q || "").trim();
+  const term = String(q || searchParam || "").trim();
 
   try {
     const source = await detectSource();
@@ -225,6 +226,7 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
     const whereParts: string[] = [];
     if (term) {
       const orParts: string[] = [];
+      orParts.push(`CAST(${qi(map.id)} AS TEXT) = :termExact`);
       if (map.title) orParts.push(`${qi(map.title)} ILIKE :term`);
       if (map.brand) orParts.push(`${qi(map.brand)} ILIKE :term`);
       if (map.model) orParts.push(`${qi(map.model)} ILIKE :term`);
@@ -252,6 +254,7 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
     const [rows] = await sequelize.query(sql, {
       replacements: {
         term: `%${term}%`,
+        termExact: term,
         lim,
       },
     });

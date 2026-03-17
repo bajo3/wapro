@@ -178,10 +178,20 @@ export default function Demands() {
   const toggleExpand = async (id) => {
     const isOpen = !!expanded[id];
     setExpanded((p) => ({ ...p, [id]: !isOpen }));
-    if (!isOpen && !matches[id]) {
+    if (!isOpen) {
       try {
-        const r = await listDemandMatches(id, { limit: 30 });
-        setMatches((p) => ({ ...p, [id]: r?.matches || [] }));
+        let r = await listDemandMatches(id, { limit: 30 });
+        let foundMatches = r?.matches || [];
+
+        // If there are no persisted matches yet, force a broad scan against existing stock
+        // so old vehicles also get scored and rendered in the UI.
+        if (!foundMatches.length) {
+          await runDemandScan({ sinceMinutes: 60 * 24 * 3650, threshold: 0.35 });
+          r = await listDemandMatches(id, { limit: 30 });
+          foundMatches = r?.matches || [];
+        }
+
+        setMatches((p) => ({ ...p, [id]: foundMatches }));
         const rr = await listDemandRecontacts(id, { limit: 30 });
         setRecontacts((p) => ({ ...p, [id]: rr?.recontacts || [] }));
       } catch (e) {
@@ -274,7 +284,7 @@ export default function Demands() {
 
   const forceScan = async () => {
     try {
-      const r = await runDemandScan({ sinceMinutes: 120 });
+      const r = await runDemandScan({ sinceMinutes: 60 * 24 * 3650, threshold: 0.35 });
       const m = Number(r?.matches || 0);
       const n = Number(r?.notificationsSent || 0);
       toast.info(`Scan OK · matches: ${m} · notificados: ${n}`);

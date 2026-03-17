@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import fetch from 'node-fetch';
 import type { Request, Response } from 'express';
 import { env } from '../lib/env.js';
 import { evolutionSendPresence, evolutionSendText, evolutionSendImage } from '../services/evolution.js';
@@ -23,7 +24,47 @@ import { buildMissingQuestions, computeMissingFields, extractLeadFields, require
 import { createHash } from 'node:crypto';
 import type { ConvState } from '../services/state.js';
 import { computeLeadScore, leadLabel } from '../services/lead.js';
+
 import { getFinanceApr, simulateFinancing, formatArs } from '../services/finance.js';
+
+async function persistBotOutboundMessage(params: {
+  instance: string;
+  remoteJid: string;
+  text: string;
+  imageUrl?: string;
+}) {
+  const backendUrl = String(process.env.BACKEND_URL || '').replace(/\/$/, '');
+  const adminToken = String(process.env.BOT_ADMIN_TOKEN || '').trim();
+  if (!backendUrl || !adminToken || !params.text?.trim()) return;
+
+  const number = String(params.remoteJid || '').split('@')[0];
+  if (!number) return;
+
+  const syntheticId = `bot-${params.instance}-${number}-${Date.now()}-${hashString(`${params.text}|${params.imageUrl || ''}`)}`;
+
+  try {
+    await fetch(`${backendUrl}/webhooks/bot/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-admin-token': adminToken
+      },
+      body: JSON.stringify({
+        id: syntheticId,
+        instance: params.instance,
+        remoteJid: params.remoteJid,
+        text: params.text,
+        mediaUrl: params.imageUrl || null,
+        mediaType: params.imageUrl ? 'image' : null,
+        fromMe: true,
+        ack: 1,
+        read: true
+      })
+    });
+  } catch (err) {
+    console.error('Failed to persist bot outbound message', err);
+  }
+}
 
 export const webhookRouter = Router();
 
@@ -311,6 +352,56 @@ function filterCatalogByContext(catalog: any[], ctx: any): any[] {
     });
 }
 
+function hasUsefulSearchContext(ctx: any): boolean {
+  return !!(
+    ctx?.brand ||
+    ctx?.model ||
+    ctx?.minYear ||
+    ctx?.maxYear ||
+    ctx?.transmission ||
+    ctx?.fuel ||
+    ctx?.maxPrice
+  );
+}
+
+function sortVehiclesForContext(items: any[], ctx: any): any[] {
+  const maxPrice = Number(ctx?.maxPrice ?? 0) || 0;
+  return [...(items || [])].sort((a, b) => {
+    const ap = Number(a?.priceNumber || 0);
+    const bp = Number(b?.priceNumber || 0);
+
+    if (maxPrice) {
+      const aIn = ap > 0 && ap <= maxPrice ? 1 : 0;
+      const bIn = bp > 0 && bp <= maxPrice ? 1 : 0;
+      if (aIn !== bIn) return bIn - aIn;
+
+      const aGap = ap > 0 ? Math.abs(maxPrice - ap) : Number.MAX_SAFE_INTEGER;
+      const bGap = bp > 0 ? Math.abs(maxPrice - bp) : Number.MAX_SAFE_INTEGER;
+      if (aGap !== bGap) return aGap - bGap;
+    }
+
+    const ay = Number(a?.year || 0);
+    const by = Number(b?.year || 0);
+    if (ay !== by) return by - ay;
+    return ap - bp;
+  });
+}
+
+function getCatalogHitsWithContext(catalog: any[], rawText: string, ctx: any, limit = 6): any[] {
+  const cleanedText = normalize(rawText || '');
+  const filtered = hasUsefulSearchContext(ctx)
+    ? sortVehiclesForContext(filterCatalogByContext(catalog, ctx), ctx)
+    : [];
+
+  const searchedFiltered = filtered.length ? searchCatalog(filtered, rawText, limit) : [];
+  if (searchedFiltered.length) return searchedFiltered.slice(0, limit);
+
+  if (filtered.length) return filtered.slice(0, limit);
+
+  if (!cleanedText) return [];
+  return searchCatalog(catalog, rawText, limit);
+}
+
 function isSedanHatchName(name: string): boolean {
   const n = normalize(name);
   return /(sedan|hatch|onix|gol\b|polo\b|corolla|cronos|fiesta|focus|civic|sentra|versa|etios|logan|clio|208\b|206\b)/.test(n);
@@ -448,6 +539,13 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           } else {
             await sendTextHuman(instance, number, reply);
           }
+
+          await persistBotOutboundMessage({
+            instance,
+            remoteJid,
+            text: reply,
+            imageUrl: imageUrl ?? undefined
+          });
 
           await setState(instance, remoteJid, {
             ...nextState,
@@ -645,7 +743,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // ── Awaiting query from previous turn ───────────────────────────────────
     if (state.stage === 'awaiting_query') {
-      const baseHits = searchCatalog(catalog, rawText, 6);
+      const baseHits = getCatalogHitsWithContext(catalog, rawText, state.search_context, 6);
       const { hits } = applyVehicleGuardrails(rawText, baseHits);
       if (hits.length) {
         if (hits.length === 1) {
@@ -812,7 +910,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         newState.last_intent = 'price_request';
 
       } else if (shouldSearch) {
-        const baseHits = searchCatalog(catalog, rawText, 6);
+        const baseHits = getCatalogHitsWithContext(catalog, rawText, state.search_context, 6);
         const { hits } = applyVehicleGuardrails(rawText, baseHits);
         if (hits.length) {
           if (hits.length === 1) {

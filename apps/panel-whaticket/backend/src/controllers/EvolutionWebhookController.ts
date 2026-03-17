@@ -11,6 +11,7 @@ import Whatsapp from "../models/Whatsapp";
 import { logger } from "../utils/logger";
 import uploadConfig from "../config/upload";
 import { botForwardEvolutionWebhook } from "../services/BotServices/botApi";
+import AppError from "../errors/AppError";
 
 function getText(msg: any): string {
   const m = msg?.message || {};
@@ -272,5 +273,85 @@ export const evolutionWebhook = async (req: Request, res: Response): Promise<Res
   } catch (err: any) {
     logger.error(err);
     return res.status(500).json({ ok: false, error: String(err?.message ?? err) });
+  }
+};
+
+
+type PersistBotMessageBody = {
+  id?: string;
+  instance?: string;
+  remoteJid?: string;
+  text?: string;
+  mediaUrl?: string | null;
+  mediaType?: string | null;
+  fromMe?: boolean;
+  ack?: number;
+  read?: boolean;
+};
+
+export const persistBotMessageWebhook = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const adminToken = String(req.header("x-admin-token") ?? "").trim();
+    const expected = String(process.env.BOT_ADMIN_TOKEN || "").trim();
+    if (!expected || !adminToken || adminToken !== expected) {
+      return res.status(401).json({ ok: false });
+    }
+
+    const body = (req.body || {}) as PersistBotMessageBody;
+    const instanceName = String(body.instance || "").trim();
+    const remoteJid = String(body.remoteJid || "").trim();
+    const msgId = String(body.id || "").trim();
+    const text = String(body.text || "").trim();
+    const mediaUrl = typeof body.mediaUrl === "string" && body.mediaUrl.trim() ? body.mediaUrl.trim() : undefined;
+    const mediaType = typeof body.mediaType === "string" && body.mediaType.trim() ? body.mediaType.trim() : undefined;
+
+    if (!instanceName || !remoteJid || !msgId || (!text && !mediaUrl)) {
+      throw new AppError("ERR_INVALID_BOT_MESSAGE", 400);
+    }
+
+    const whatsapp = await Whatsapp.findOne({ where: { name: instanceName } });
+    if (!whatsapp) {
+      return res.status(200).json({ ok: true, ignored: true, reason: "unknown_instance" });
+    }
+
+    const number = remoteJid.split("@")[0];
+    if (!number) {
+      throw new AppError("ERR_INVALID_REMOTE_JID", 400);
+    }
+
+    const contact = await CreateOrUpdateContactService({
+      name: number,
+      number,
+      profilePicUrl: "",
+      isGroup: false,
+      leadSource: "WA"
+    });
+
+    const ticket = await FindOrCreateTicketService(contact, whatsapp.id, 0);
+    const bodyText = text || (mediaType ? `[${mediaType}]` : "[bot]");
+
+    await ticket.update({
+      lastMessage: bodyText,
+      botMode: "ON"
+    });
+
+    await CreateMessageService({
+      messageData: {
+        id: msgId,
+        ticketId: ticket.id,
+        body: bodyText,
+        fromMe: body.fromMe !== false,
+        read: body.read !== false,
+        ack: Number.isFinite(Number(body.ack)) ? Number(body.ack) : 1,
+        mediaType,
+        mediaUrl
+      }
+    } as any);
+
+    return res.status(200).json({ ok: true, ticketId: ticket.id });
+  } catch (err: any) {
+    logger.error(err);
+    const statusCode = Number(err?.statusCode || err?.status || 500);
+    return res.status(statusCode).json({ ok: false, error: String(err?.message ?? err) });
   }
 };
