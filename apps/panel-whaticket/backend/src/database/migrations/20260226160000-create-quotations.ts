@@ -43,7 +43,7 @@ module.exports = {
 
       // Vehicle
       vehicleRefId: {
-        type: DataTypes.INTEGER,
+        type: DataTypes.STRING,
         allowNull: true
       },
       vehicleLabel: {

@@ -275,8 +275,8 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
     }));
 
     return res.json({ vehicles });
-  } catch {
-    // Best-effort: never crash the panel.
+  } catch (err) {
+    console.error("[vehicles#index] lookup failed", err);
     return res.json({ vehicles: [] });
   }
 };    

@@ -155,6 +155,8 @@ export default function QuotationsManager() {
     setVehicleOptions([]);
     setContactOptions([]);
     setDialogOpen(true);
+    loadVehicles("");
+    loadContacts("");
   };
 
   const openEdit = (q) => {
@@ -174,6 +176,8 @@ export default function QuotationsManager() {
       status: q?.status ?? "draft",
     });
     setDialogOpen(true);
+    loadVehicles("");
+    loadContacts("");
   };
 
   const closeDialog = () => {
@@ -202,6 +206,7 @@ export default function QuotationsManager() {
       let resolvedContactPhone = String(form.contactPhone || "").trim();
       let resolvedVehicleLabel = String(form.vehicleLabel || "").trim();
       let resolvedVehicleData = form.vehicleData || null;
+      let payloadPrice = form.price ? Number(form.price) : undefined;
 
       if (!resolvedContactName && form.contactId) {
         const found = contactOptions.find((c) => String(c.id) === String(form.contactId));
@@ -224,19 +229,25 @@ export default function QuotationsManager() {
         if (found) {
           resolvedVehicleLabel = found.label || resolvedVehicleLabel;
           resolvedVehicleData = found.raw || resolvedVehicleData;
+          if (payloadPrice === undefined && Number.isFinite(Number(found?.raw?.precio ?? found?.raw?.price))) {
+            payloadPrice = Number(found.raw?.precio ?? found.raw?.price);
+          }
         } else {
           try {
             const data = await safeGet("/vehicles", {
-              params: { q: form.vehicleId, searchParam: form.vehicleId, limit: 25 },
+              params: { id: form.vehicleId, limit: 1 },
             });
             const list = data?.vehicles || data?.rows || data?.data || [];
             const match = (list || []).find((v) => String(v.id) === String(form.vehicleId));
             if (match) {
               resolvedVehicleLabel = buildVehicleLabel(match) || resolvedVehicleLabel;
               resolvedVehicleData = match;
+              if (!form.price && Number.isFinite(Number(match?.precio ?? match?.price))) {
+                payloadPrice = Number(match?.precio ?? match?.price);
+              }
             }
-          } catch {
-            // best-effort
+          } catch (err) {
+            console.error("[quotations] vehicle lookup by id failed", err);
           }
         }
       }
@@ -253,8 +264,8 @@ export default function QuotationsManager() {
         vehicleLabel: resolvedVehicleLabel || undefined,
         vehicleData: resolvedVehicleData || undefined,
         currency: form.currency,
-        basePrice: form.price ? Number(form.price) : undefined,
-        totalPrice: form.price ? Number(form.price) : undefined,
+        basePrice: payloadPrice,
+        totalPrice: payloadPrice,
         notes: form.notes || undefined,
         status: form.status,
       };
@@ -304,14 +315,11 @@ export default function QuotationsManager() {
 
   const loadVehicles = async (q) => {
     const query = (q ?? "").trim();
-    if (!query) {
-      setVehicleOptions([]);
-      return;
-    }
+    const params = query ? { q: query, searchParam: query, limit: 25 } : { limit: 20 };
     setLookupLoading(true);
     try {
       // Backend contract: /vehicles?q=... -> { vehicles: [] }
-      const data = await safeGet("/vehicles", { params: { q: query, searchParam: query, limit: 25 } });
+      const data = await safeGet("/vehicles", { params });
       const list =
         (Array.isArray(data) ? data : null) ||
         data?.vehicles ||
@@ -338,16 +346,11 @@ export default function QuotationsManager() {
 
   const loadContacts = async (q) => {
     const query = (q ?? "").trim();
-    if (!query) {
-      setContactOptions([]);
-      return;
-    }
+    const params = query ? { searchParam: query, pageNumber: 1, pageSize: 25 } : { pageNumber: 1, pageSize: 20 };
     setLookupLoading(true);
     try {
       // Backend contract: /contacts?searchParam=... -> { contacts: [] }
-      const data = await safeGet("/contacts", {
-        params: { searchParam: query, pageNumber: 1, pageSize: 25 },
-      });
+      const data = await safeGet("/contacts", { params });
       const list =
         (Array.isArray(data) ? data : null) ||
         data?.contacts ||

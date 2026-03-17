@@ -58,21 +58,57 @@ export type DemandRecontact = {
   sentAt: string;
 };
 
-type VehicleSource = {
-  cols: Set<string>;
+type ColumnMap = {
   id: string;
-  title?: string;
   brand?: string;
   model?: string;
-  year?: string;
+  version?: string;
+  title?: string;
   price?: string;
   currency?: string;
+  year?: string;
   slug?: string;
   permalink?: string;
   pictures?: string;
   updatedAt?: string;
   transmission?: string;
 };
+
+type VehicleSource = {
+  schema: string;
+  table: string;
+  columns: string[];
+  map: ColumnMap;
+};
+
+const CANDIDATE_TABLES = [
+  'vehicles',
+  'Vehicles',
+  'vehicle',
+  'autos',
+  'cars',
+  'car_stock',
+  'stock_vehicles',
+  'catalog',
+  'vehiculos',
+];
+
+const COL_SYNONYMS: Record<keyof Omit<ColumnMap, 'id'>, string[]> = {
+  brand: ['brand', 'marca', 'make'],
+  model: ['model', 'modelo'],
+  version: ['version', 'trim', 'variant', 'versión', 'version_name'],
+  title: ['title', 'nombre', 'name', 'descripcion', 'description'],
+  price: ['price', 'precio', 'valor', 'amount'],
+  currency: ['currency', 'moneda', 'currency_code'],
+  year: ['year', 'anio', 'año', 'model_year'],
+  slug: ['slug'],
+  permalink: ['permalink', 'url', 'link'],
+  pictures: ['pictures', 'images', 'fotos', 'photos'],
+  updatedAt: ['updated_at', 'updatedat'],
+  transmission: ['transmission', 'caja', 'gearbox'],
+};
+
+const ID_SYNONYMS = ['id', 'vehicle_id', 'uuid', 'uid'];
 
 let vehicleSourceCache: { at: number; source: VehicleSource | null } = { at: 0, source: null };
 const VEHICLE_SOURCE_CACHE_MS = 60_000;
@@ -91,9 +127,13 @@ function qi(ident: string): string {
   return `"${String(ident).replace(/"/g, '""')}"`;
 }
 
-function pickCol(cols: Set<string>, candidates: string[]): string | undefined {
-  for (const c of candidates) {
-    if (cols.has(c.toLowerCase())) return c;
+function pickFirstPresent(columns: string[], synonyms: string[]): string | undefined {
+  const set = new Set(columns.map((c) => c.toLowerCase()));
+  for (const s of synonyms) {
+    if (set.has(s.toLowerCase())) {
+      const original = columns.find((c) => c.toLowerCase() === s.toLowerCase());
+      return original || s;
+    }
   }
   return undefined;
 }
@@ -104,80 +144,143 @@ async function getVehicleSource(): Promise<VehicleSource | null> {
     return vehicleSourceCache.source;
   }
 
-  const r = await pool.query(
-    `select column_name from information_schema.columns where table_schema='public' and table_name='vehicles'`
-  );
-  const cols = new Set((r.rows ?? []).map((row: any) => String(row.column_name || '').toLowerCase()).filter(Boolean));
-  if (!cols.size) {
-    vehicleSourceCache = { at: now, source: null };
-    return null;
+  try {
+    const tablesR = await pool.query(
+      `
+      select table_schema, table_name
+      from information_schema.tables
+      where table_type = 'BASE TABLE'
+        and table_schema not in ('pg_catalog','information_schema')
+        and table_name = any($1::text[])
+      order by
+        case when table_schema = 'public' then 0 else 1 end,
+        table_schema asc,
+        table_name asc
+      `,
+      [CANDIDATE_TABLES]
+    );
+
+    const tables = (tablesR.rows ?? []).map((r: any) => ({
+      schema: String(r.table_schema || 'public'),
+      table: String(r.table_name || ''),
+    })).filter((r: any) => r.table);
+
+    const preferred = [{ schema: 'public', table: 'vehicles' }, ...tables];
+
+    for (const t of preferred) {
+      const colsR = await pool.query(
+        `
+        select column_name
+        from information_schema.columns
+        where table_schema = $1 and table_name = $2
+        `,
+        [t.schema, t.table]
+      );
+
+      const cols = (colsR.rows ?? []).map((row: any) => String(row.column_name)).filter(Boolean);
+      if (!cols.length) continue;
+
+      const idCol = pickFirstPresent(cols, ID_SYNONYMS);
+      if (!idCol) continue;
+
+      const map: ColumnMap = {
+        id: idCol,
+        brand: pickFirstPresent(cols, COL_SYNONYMS.brand),
+        model: pickFirstPresent(cols, COL_SYNONYMS.model),
+        version: pickFirstPresent(cols, COL_SYNONYMS.version),
+        title: pickFirstPresent(cols, COL_SYNONYMS.title),
+        price: pickFirstPresent(cols, COL_SYNONYMS.price),
+        currency: pickFirstPresent(cols, COL_SYNONYMS.currency),
+        year: pickFirstPresent(cols, COL_SYNONYMS.year),
+        slug: pickFirstPresent(cols, COL_SYNONYMS.slug),
+        permalink: pickFirstPresent(cols, COL_SYNONYMS.permalink),
+        pictures: pickFirstPresent(cols, COL_SYNONYMS.pictures),
+        updatedAt: pickFirstPresent(cols, COL_SYNONYMS.updatedAt),
+        transmission: pickFirstPresent(cols, COL_SYNONYMS.transmission),
+      };
+
+      const looksLikeVehicles = !!(map.title || map.version || (map.brand && map.model));
+      const hasPriceOrYear = !!(map.price || map.year);
+      if (!looksLikeVehicles || !hasPriceOrYear) continue;
+
+      const source: VehicleSource = { schema: t.schema, table: t.table, columns: cols, map };
+      vehicleSourceCache = { at: now, source };
+      return source;
+    }
+  } catch (e) {
+    console.error('[demands] detect vehicle source failed', e);
   }
 
-  const source: VehicleSource = {
-    cols,
-    id: pickCol(cols, ['id', 'vehicle_id', 'uuid']) || 'id',
-    title: pickCol(cols, ['title', 'name', 'nombre', 'version']),
-    brand: pickCol(cols, ['brand', 'marca']),
-    model: pickCol(cols, ['model', 'modelo']),
-    year: pickCol(cols, ['year', 'anio', 'año']),
-    price: pickCol(cols, ['price', 'precio', 'amount']),
-    currency: pickCol(cols, ['currency', 'moneda']),
-    slug: pickCol(cols, ['slug']),
-    permalink: pickCol(cols, ['permalink', 'url']),
-    pictures: pickCol(cols, ['pictures', 'images']),
-    updatedAt: pickCol(cols, ['updated_at']),
-    transmission: pickCol(cols, ['transmission', 'caja'])
-  };
+  vehicleSourceCache = { at: now, source: null };
+  return null;
+}
 
-  vehicleSourceCache = { at: now, source };
-  return source;
+function buildVehicleTitle(row: any) {
+  return String(
+    row.title || row.version || [row.brand, row.model, row.year].filter(Boolean).join(' ')
+  ).trim();
 }
 
 async function listVehiclesForScan(since?: Date) {
   const source = await getVehicleSource();
   if (!source) return [];
 
+  const { schema, table, map } = source;
+  const brandExpr = map.brand ? qi(map.brand) : `NULL::text`;
+  const modelExpr = map.model ? qi(map.model) : `NULL::text`;
+  const titleExpr = map.title
+    ? qi(map.title)
+    : map.version
+      ? qi(map.version)
+      : `TRIM(CONCAT(COALESCE(${brandExpr}::text, ''), ' ', COALESCE(${modelExpr}::text, '')))`;
+  const yearExpr = map.year ? `${qi(map.year)}::int` : `NULL::int`;
+  const priceExpr = map.price ? `NULLIF(${qi(map.price)}::text, '')::numeric` : `NULL::numeric`;
+  const currencyExpr = map.currency ? `COALESCE(${qi(map.currency)}::text, 'ARS')` : `'ARS'::text`;
+
   const fields = [
-    `${qi(source.id)} as id`,
-    source.title ? `${qi(source.title)} as title` : `NULL::text as title`,
-    source.brand ? `${qi(source.brand)} as brand` : `NULL::text as brand`,
-    source.model ? `${qi(source.model)} as model` : `NULL::text as model`,
-    source.year ? `${qi(source.year)} as year` : `NULL::int as year`,
-    source.price ? `${qi(source.price)} as price` : `NULL::numeric as price`,
-    source.currency ? `${qi(source.currency)} as currency` : `'ARS'::text as currency`,
-    source.slug ? `${qi(source.slug)} as slug` : `NULL::text as slug`,
-    source.permalink ? `${qi(source.permalink)} as permalink` : `NULL::text as permalink`,
-    source.pictures ? `${qi(source.pictures)} as pictures` : `NULL::jsonb as pictures`,
-    source.transmission ? `${qi(source.transmission)} as transmission` : `NULL::text as transmission`
+    `${qi(map.id)}::text as id`,
+    `${titleExpr} as title`,
+    `${brandExpr} as brand`,
+    `${modelExpr} as model`,
+    `${yearExpr} as year`,
+    `${priceExpr} as price`,
+    `${currencyExpr} as currency`,
+    map.slug ? `${qi(map.slug)} as slug` : `NULL::text as slug`,
+    map.permalink ? `${qi(map.permalink)} as permalink` : `NULL::text as permalink`,
+    map.pictures ? `${qi(map.pictures)} as pictures` : `NULL::jsonb as pictures`,
+    map.transmission ? `${qi(map.transmission)} as transmission` : `NULL::text as transmission`
   ];
 
   const where: string[] = [];
   const params: any[] = [];
-  if (since && source.updatedAt) {
+  if (since && map.updatedAt) {
     params.push(since);
-    where.push(`${qi(source.updatedAt)} >= $${params.length}`);
+    where.push(`${qi(map.updatedAt)} >= $${params.length}`);
   }
 
   const sql = `
     select ${fields.join(', ')}
-    from public.vehicles
+    from ${qi(schema)}.${qi(table)}
     ${where.length ? `where ${where.join(' and ')}` : ''}
-    limit 500
+    order by ${map.updatedAt ? `${qi(map.updatedAt)} desc nulls last,` : ''} ${qi(map.id)} desc
+    limit 2000
   `;
   const r = await pool.query(sql, params);
-  return (r.rows ?? []).map((row: any) => ({
+  const rows = (r.rows ?? []).map((row: any) => ({
     id: String(row.id),
-    title: row.title,
+    title: buildVehicleTitle(row),
     brand: row.brand,
     model: row.model,
     year: row.year ? Number(row.year) : null,
-    price: row.price,
-    currency: row.currency,
+    price: row.price == null ? null : Number(row.price),
+    currency: String(row.currency || 'ARS').toUpperCase(),
     slug: row.slug,
     permalink: row.permalink,
     pictures: row.pictures,
     transmission: row.transmission
   }));
+  console.log(`[demands] scan source=${schema}.${table} vehicles=${rows.length} since=${since ? since.toISOString() : 'all'}`);
+  return rows;
 }
 
 async function getVehiclesByIds(vehicleIds: string[]) {
@@ -186,34 +289,43 @@ async function getVehiclesByIds(vehicleIds: string[]) {
   const source = await getVehicleSource();
   if (!source) return new Map<string, any>();
 
-  const fields = [
-    `${qi(source.id)} as id`,
-    source.title ? `${qi(source.title)} as title` : `NULL::text as title`,
-    source.brand ? `${qi(source.brand)} as brand` : `NULL::text as brand`,
-    source.model ? `${qi(source.model)} as model` : `NULL::text as model`,
-    source.year ? `${qi(source.year)} as year` : `NULL::int as year`,
-    source.price ? `${qi(source.price)} as price` : `NULL::numeric as price`,
-    source.currency ? `${qi(source.currency)} as currency` : `'ARS'::text as currency`,
-    source.slug ? `${qi(source.slug)} as slug` : `NULL::text as slug`,
-    source.permalink ? `${qi(source.permalink)} as permalink` : `NULL::text as permalink`,
-    source.pictures ? `${qi(source.pictures)} as pictures` : `NULL::jsonb as pictures`
-  ];
+  const { schema, table, map } = source;
+  const brandExpr = map.brand ? qi(map.brand) : `NULL::text`;
+  const modelExpr = map.model ? qi(map.model) : `NULL::text`;
+  const titleExpr = map.title
+    ? qi(map.title)
+    : map.version
+      ? qi(map.version)
+      : `TRIM(CONCAT(COALESCE(${brandExpr}::text, ''), ' ', COALESCE(${modelExpr}::text, '')))`;
+  const yearExpr = map.year ? `${qi(map.year)}::int` : `NULL::int`;
+  const priceExpr = map.price ? `NULLIF(${qi(map.price)}::text, '')::numeric` : `NULL::numeric`;
+  const currencyExpr = map.currency ? `COALESCE(${qi(map.currency)}::text, 'ARS')` : `'ARS'::text`;
 
   const sql = `
-    select ${fields.join(', ')}
-    from public.vehicles
-    where ${qi(source.id)}::text = any($1::text[])
+    select
+      ${qi(map.id)}::text as id,
+      ${titleExpr} as title,
+      ${brandExpr} as brand,
+      ${modelExpr} as model,
+      ${yearExpr} as year,
+      ${priceExpr} as price,
+      ${currencyExpr} as currency,
+      ${map.slug ? qi(map.slug) : 'NULL::text'} as slug,
+      ${map.permalink ? qi(map.permalink) : 'NULL::text'} as permalink,
+      ${map.pictures ? qi(map.pictures) : 'NULL::jsonb'} as pictures
+    from ${qi(schema)}.${qi(table)}
+    where ${qi(map.id)}::text = any($1::text[])
   `;
   const r = await pool.query(sql, [ids]);
   return new Map(
     (r.rows ?? []).map((row: any) => [String(row.id), {
       id: String(row.id),
-      title: row.title,
+      title: buildVehicleTitle(row),
       brand: row.brand,
       model: row.model,
       year: row.year ? Number(row.year) : null,
-      price: row.price,
-      currency: row.currency,
+      price: row.price == null ? null : Number(row.price),
+      currency: String(row.currency || 'ARS').toUpperCase(),
       slug: row.slug,
       permalink: row.permalink,
       pictures: row.pictures
@@ -297,7 +409,7 @@ function mapDemandRow(row: any): VehicleDemand {
     contactName: row.contact_name,
     phone: row.phone,
     notifyOnMatch: Boolean(row.notify_on_match),
-    notifyMinScore: Number(row.notify_min_score ?? 0.72),
+    notifyMinScore: Number(row.notify_min_score ?? 0.58),
     notifyCooldownMin: Number(row.notify_cooldown_min ?? 240),
     lastNotifiedAt: row.last_notified_at ? row.last_notified_at.toISOString?.() ?? String(row.last_notified_at) : null,
     matchTemplate: row.match_template ?? null,
@@ -345,7 +457,7 @@ export async function createVehicleDemand(input: any): Promise<VehicleDemand> {
   const maxPrice = input.maxPrice !== undefined && input.maxPrice !== null ? Number(input.maxPrice) : null;
   const currency = input.currency ? String(input.currency).trim().toUpperCase() : null;
   const notifyOnMatch = input.notifyOnMatch !== undefined ? Boolean(input.notifyOnMatch) : true;
-  const notifyMinScore = Number.isFinite(Number(input.notifyMinScore)) ? Number(input.notifyMinScore) : 0.72;
+  const notifyMinScore = Number.isFinite(Number(input.notifyMinScore)) ? Number(input.notifyMinScore) : 0.58;
   const notifyCooldownMin = Number.isFinite(Number(input.notifyCooldownMin)) ? Number(input.notifyCooldownMin) : 240;
   const matchTemplate = typeof input.matchTemplate === 'string' ? input.matchTemplate : null;
   const recontactEnabled = input.recontactEnabled !== undefined ? Boolean(input.recontactEnabled) : false;
@@ -532,7 +644,7 @@ function buildMatchMessage(demand: VehicleDemand, vehicles: any[], scores: numbe
 }
 
 export async function scanRecentVehiclesForDemandMatches(params: { since: Date; threshold: number }) {
-  const threshold = clamp01(Number(params.threshold ?? 0.62));
+  const threshold = clamp01(Number(params.threshold ?? 0.45));
   const since = params.since;
 
   const demandsR = await pool.query(`select * from vehicle_demands where status='open'`);
@@ -582,9 +694,14 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
         }
       }
 
-      const sim = textSim(dSet, vTok.get(String(v.id)) ?? new Set());
-      score += sim * 0.30;
+      const vSet = expandTokens(vTok.get(String(v.id)) ?? new Set());
+      const sim = textSim(dSet, vSet);
+      score += sim * 0.35;
       reasons.textSim = Math.round(sim * 100) / 100;
+      if (!d.brand && !d.model && sim >= 0.22) {
+        score += 0.08;
+        reasons.genericIntentBoost = true;
+      }
 
       const vy = v.year ? Number(v.year) : null;
       if (vy && (d.minYear || d.maxYear)) {
@@ -605,7 +722,7 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
         if (Number.isFinite(vp) && vp > 0) {
           if (vp <= d.maxPrice) {
             const ratio = vp / d.maxPrice;
-            score += ratio >= 0.75 ? 0.10 : 0.06;
+            score += ratio >= 0.75 ? 0.12 : 0.08;
             reasons.price = 'ok';
           } else {
             const over = (vp - d.maxPrice) / d.maxPrice;
@@ -620,7 +737,7 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
         const vt = norm(String(v.transmission ?? v.title ?? ''));
         const syns = [dt, ...(SYNONYMS[dt] ?? [])];
         if (syns.some((s) => vt.includes(norm(s)))) {
-          score += 0.05;
+          score += 0.07;
           reasons.transmission = true;
         }
       }

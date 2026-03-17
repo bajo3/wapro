@@ -337,7 +337,7 @@ adminRouter.get('/vehicle-demands/:id/recontacts', async (req, res) => {
 adminRouter.post('/vehicle-demands/scan', async (req, res) => {
   try {
     const sinceMinutes = Number(req.body?.sinceMinutes ?? 60);
-    const threshold = Number(req.body?.threshold ?? 0.62);
+    const threshold = Number(req.body?.threshold ?? 0.45);
     const since = new Date(Date.now() - Math.max(1, sinceMinutes) * 60_000);
     const result = await scanRecentVehiclesForDemandMatches({ since, threshold });
     return res.json({ ok: true, since: since.toISOString(), ...result });

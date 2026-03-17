@@ -21,7 +21,8 @@ const ListContactsService = async ({
   pageNumber = "1",
   pageSize = "20"
 }: Request): Promise<Response> => {
-  const normalizedSearch = searchParam.toLowerCase().trim();
+  const normalizedSearch = String(searchParam || "").toLowerCase().trim();
+  const digitsSearch = normalizedSearch.replace(/\D/g, "");
   const parsedPageNumber = Number(pageNumber);
   const parsedPageSize = Number(pageSize);
   const currentPage =
@@ -33,18 +34,35 @@ const ListContactsService = async ({
       ? Math.min(Math.floor(parsedPageSize), 100)
       : 20;
 
-  const whereCondition = {
-    [Op.or]: [
-      {
-        name: Sequelize.where(
-          Sequelize.fn("LOWER", Sequelize.col("name")),
-          "LIKE",
-          `%${normalizedSearch}%`
-        )
-      },
-      { number: { [Op.like]: `%${normalizedSearch}%` } }
-    ]
-  };
+  const whereCondition = normalizedSearch
+    ? {
+        [Op.or]: [
+          {
+            name: Sequelize.where(
+              Sequelize.fn("LOWER", Sequelize.col("name")),
+              "LIKE",
+              `%${normalizedSearch}%`
+            )
+          },
+          { number: { [Op.like]: `%${normalizedSearch}%` } },
+          ...(digitsSearch
+            ? [
+                Sequelize.where(
+                  Sequelize.fn(
+                    "regexp_replace",
+                    Sequelize.col("number"),
+                    "[^0-9]",
+                    "",
+                    "g"
+                  ),
+                  "LIKE",
+                  `%${digitsSearch}%`
+                )
+              ]
+            : [])
+        ]
+      }
+    : {};
 
   const offset = limit * (currentPage - 1);
 

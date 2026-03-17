@@ -47,8 +47,8 @@ class Quotation extends Model<Quotation> {
   contact: Contact;
 
   // Vehicle
-  @Column(DataType.INTEGER)
-  vehicleRefId: number;
+  @Column(DataType.STRING)
+  vehicleRefId: string;
 
   @Column(DataType.STRING)
   vehicleLabel: string;
