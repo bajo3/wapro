@@ -1,6 +1,7 @@
 import { pool } from './db.js';
 import { env } from '../lib/env.js';
-import { evolutionSendText } from './evolution.js';
+import { extractLeadFields } from './extract.js';
+import { sendTextAndPersist } from './panelPersistence.js';
 
 export type DemandStatus = 'open' | 'closed';
 
@@ -72,6 +73,7 @@ type ColumnMap = {
   pictures?: string;
   updatedAt?: string;
   transmission?: string;
+  fuel?: string;
 };
 
 type VehicleSource = {
@@ -106,6 +108,7 @@ const COL_SYNONYMS: Record<keyof Omit<ColumnMap, 'id'>, string[]> = {
   pictures: ['pictures', 'images', 'fotos', 'photos'],
   updatedAt: ['updated_at', 'updatedat'],
   transmission: ['transmission', 'caja', 'gearbox'],
+  fuel: ['fuel', 'combustible'],
 };
 
 const ID_SYNONYMS = ['id', 'vehicle_id', 'uuid', 'uid'];
@@ -197,6 +200,7 @@ async function getVehicleSource(): Promise<VehicleSource | null> {
         pictures: pickFirstPresent(cols, COL_SYNONYMS.pictures),
         updatedAt: pickFirstPresent(cols, COL_SYNONYMS.updatedAt),
         transmission: pickFirstPresent(cols, COL_SYNONYMS.transmission),
+        fuel: pickFirstPresent(cols, COL_SYNONYMS.fuel),
       };
 
       const looksLikeVehicles = !!(map.title || map.version || (map.brand && map.model));
@@ -248,7 +252,8 @@ async function listVehiclesForScan(since?: Date) {
     map.slug ? `${qi(map.slug)} as slug` : `NULL::text as slug`,
     map.permalink ? `${qi(map.permalink)} as permalink` : `NULL::text as permalink`,
     map.pictures ? `${qi(map.pictures)} as pictures` : `NULL::jsonb as pictures`,
-    map.transmission ? `${qi(map.transmission)} as transmission` : `NULL::text as transmission`
+    map.transmission ? `${qi(map.transmission)} as transmission` : `NULL::text as transmission`,
+    map.fuel ? `${qi(map.fuel)} as fuel` : `NULL::text as fuel`
   ];
 
   const where: string[] = [];
@@ -277,7 +282,8 @@ async function listVehiclesForScan(since?: Date) {
     slug: row.slug,
     permalink: row.permalink,
     pictures: row.pictures,
-    transmission: row.transmission
+    transmission: row.transmission,
+    fuel: row.fuel
   }));
   console.log(`[demands] scan source=${schema}.${table} vehicles=${rows.length} since=${since ? since.toISOString() : 'all'}`);
   return rows;
@@ -312,7 +318,8 @@ async function getVehiclesByIds(vehicleIds: string[]) {
       ${currencyExpr} as currency,
       ${map.slug ? qi(map.slug) : 'NULL::text'} as slug,
       ${map.permalink ? qi(map.permalink) : 'NULL::text'} as permalink,
-      ${map.pictures ? qi(map.pictures) : 'NULL::jsonb'} as pictures
+      ${map.pictures ? qi(map.pictures) : 'NULL::jsonb'} as pictures,
+      ${map.fuel ? qi(map.fuel) : 'NULL::text'} as fuel
     from ${qi(schema)}.${qi(table)}
     where ${qi(map.id)}::text = any($1::text[])
   `;
@@ -328,7 +335,8 @@ async function getVehiclesByIds(vehicleIds: string[]) {
       currency: String(row.currency || 'ARS').toUpperCase(),
       slug: row.slug,
       permalink: row.permalink,
-      pictures: row.pictures
+      pictures: row.pictures,
+      fuel: row.fuel
     }])
   );
 }
@@ -390,6 +398,43 @@ function textSim(a: Set<string>, b: Set<string>): number {
 
 function clamp01(x: number) {
   return Math.max(0, Math.min(1, x));
+}
+
+function inferVehicleFuel(vehicle: any): string {
+  const txt = norm(`${vehicle?.fuel ?? ''} ${vehicle?.title ?? ''}`);
+  if (!txt) return '';
+  if (txt.includes('gnc') || txt.includes('gas natural')) return 'gnc';
+  if (txt.includes('diesel') || txt.includes('gasoil') || txt.includes('turbodiesel')) return 'diesel';
+  if (txt.includes('nafta') || txt.includes('gasolina') || txt.includes('naftero')) return 'nafta';
+  if (txt.includes('hibrid') || txt.includes('hybrid')) return 'hibrido';
+  if (txt.includes('electr') || /\bev\b/.test(txt)) return 'electrico';
+  return '';
+}
+
+function inferVehicleBodywork(vehicle: any): string {
+  const txt = norm(`${vehicle?.title ?? ''} ${vehicle?.brand ?? ''} ${vehicle?.model ?? ''}`);
+  if (!txt) return '';
+  if (/\b(suv|crossover|todoterreno|4x4|awd|4wd)\b/.test(txt)) return 'suv';
+  if (/\b(pickup|pick up|doble cabina)\b/.test(txt)) return 'pickup';
+  if (/\b(sedan|4 puertas)\b/.test(txt)) return 'sedan';
+  if (/\b(hatch|hatchback|3 puertas)\b/.test(txt)) return 'hatch';
+  if (/\b(furgon|utilitario)\b/.test(txt)) return 'furgon';
+  return '';
+}
+
+function inferDemandContext(demand: VehicleDemand) {
+  const extracted = extractLeadFields(String(demand.query || ''));
+  return {
+    brand: demand.brand || extracted.brand || undefined,
+    model: demand.model || extracted.model || undefined,
+    transmission: demand.transmission || extracted.transmission || undefined,
+    minYear: demand.minYear ?? extracted.minYear ?? undefined,
+    maxYear: demand.maxYear ?? extracted.maxYear ?? undefined,
+    maxPrice: demand.maxPrice ?? extracted.maxPrice ?? extracted.amount ?? undefined,
+    fuel: extracted.fuel || (extracted.gnc ? 'gnc' : undefined),
+    bodywork: extracted.bodywork || undefined,
+    gnc: extracted.gnc === true
+  };
 }
 
 function mapDemandRow(row: any): VehicleDemand {
@@ -656,12 +701,13 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
 
   const vTok = new Map<string, Set<string>>();
   for (const v of vehicles) {
-    const txt = `${v.title ?? ''} ${v.brand ?? ''} ${v.model ?? ''} ${v.transmission ?? ''}`;
+    const txt = `${v.title ?? ''} ${v.brand ?? ''} ${v.model ?? ''} ${v.transmission ?? ''} ${v.fuel ?? ''} ${inferVehicleBodywork(v)}`;
     vTok.set(String(v.id), tokenSet(txt));
   }
 
   for (const d of demands) {
-    const demandText = [d.query, d.brand, d.model, d.transmission].filter(Boolean).join(' ');
+    const demandCtx = inferDemandContext(d);
+    const demandText = [d.query, demandCtx.brand, demandCtx.model, demandCtx.transmission, demandCtx.fuel, demandCtx.bodywork].filter(Boolean).join(' ');
     const dSet = expandTokens(tokenSet(demandText));
     const candidates: { matchId: number; vehicle: any; score: number }[] = [];
 
@@ -669,8 +715,8 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
       const reasons: any = {};
       let score = 0;
 
-      if (d.brand && v.brand) {
-        const db = norm(d.brand);
+      if (demandCtx.brand && v.brand) {
+        const db = norm(demandCtx.brand);
         const vb = norm(v.brand);
         if (db === vb) {
           score += 0.25;
@@ -681,8 +727,8 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
         }
       }
 
-      if (d.model && v.model) {
-        const dm = norm(d.model);
+      if (demandCtx.model && v.model) {
+        const dm = norm(demandCtx.model);
         const vm = norm(String(v.model ?? ''));
         const vt = norm(String(v.title ?? ''));
         if (dm === vm) {
@@ -698,15 +744,15 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
       const sim = textSim(dSet, vSet);
       score += sim * 0.35;
       reasons.textSim = Math.round(sim * 100) / 100;
-      if (!d.brand && !d.model && sim >= 0.22) {
+      if (!demandCtx.brand && !demandCtx.model && sim >= 0.22) {
         score += 0.08;
         reasons.genericIntentBoost = true;
       }
 
       const vy = v.year ? Number(v.year) : null;
-      if (vy && (d.minYear || d.maxYear)) {
-        const minY = d.minYear ?? d.maxYear ?? vy;
-        const maxY = d.maxYear ?? d.minYear ?? vy;
+      if (vy && (demandCtx.minYear || demandCtx.maxYear)) {
+        const minY = demandCtx.minYear ?? demandCtx.maxYear ?? vy;
+        const maxY = demandCtx.maxYear ?? demandCtx.minYear ?? vy;
         let yScore = 0;
         if (vy >= minY && vy <= maxY) yScore = 1;
         else {
@@ -717,28 +763,64 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
         reasons.year = { vy, minY, maxY, yScore: Math.round(yScore * 100) / 100 };
       }
 
-      if (d.maxPrice && v.price) {
+      if (demandCtx.maxPrice && v.price) {
         const vp = Number(v.price);
         if (Number.isFinite(vp) && vp > 0) {
-          if (vp <= d.maxPrice) {
-            const ratio = vp / d.maxPrice;
+          if (vp <= demandCtx.maxPrice) {
+            const ratio = vp / demandCtx.maxPrice;
             score += ratio >= 0.75 ? 0.12 : 0.08;
             reasons.price = 'ok';
           } else {
-            const over = (vp - d.maxPrice) / d.maxPrice;
+            const over = (vp - demandCtx.maxPrice) / demandCtx.maxPrice;
             score -= Math.min(0.10, over * 0.15);
             reasons.price = `over_${Math.round(over * 100)}pct`;
           }
         }
       }
 
-      if (d.transmission) {
-        const dt = norm(d.transmission);
+      if (demandCtx.transmission) {
+        const dt = norm(demandCtx.transmission);
         const vt = norm(String(v.transmission ?? v.title ?? ''));
         const syns = [dt, ...(SYNONYMS[dt] ?? [])];
         if (syns.some((s) => vt.includes(norm(s)))) {
           score += 0.07;
           reasons.transmission = true;
+        } else if (vt) {
+          score -= 0.03;
+          reasons.transmission = 'mismatch';
+        }
+      }
+
+      if (demandCtx.fuel) {
+        const vehicleFuel = inferVehicleFuel(v);
+        const demandFuel = norm(String(demandCtx.fuel));
+        if (vehicleFuel && vehicleFuel === demandFuel) {
+          score += 0.08;
+          reasons.fuel = vehicleFuel;
+        } else if (vehicleFuel && demandFuel) {
+          score -= 0.05;
+          reasons.fuel = `mismatch_${vehicleFuel}`;
+        }
+      } else if (demandCtx.gnc) {
+        const vehicleFuel = inferVehicleFuel(v);
+        if (vehicleFuel === 'gnc') {
+          score += 0.08;
+          reasons.gnc = true;
+        } else if (vehicleFuel) {
+          score -= 0.05;
+          reasons.gnc = 'mismatch';
+        }
+      }
+
+      if (demandCtx.bodywork) {
+        const vehicleBodywork = inferVehicleBodywork(v);
+        const demandBodywork = norm(String(demandCtx.bodywork));
+        if (vehicleBodywork && vehicleBodywork === demandBodywork) {
+          score += 0.08;
+          reasons.bodywork = vehicleBodywork;
+        } else if (vehicleBodywork && demandBodywork) {
+          score -= 0.04;
+          reasons.bodywork = `mismatch_${vehicleBodywork}`;
         }
       }
 
@@ -772,7 +854,7 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
         try {
           const number = String(d.remoteJid).split('@')[0];
           const msg = buildMatchMessage(d, top.map((c) => c.vehicle), top.map((c) => c.score));
-          await evolutionSendText(d.instance, number, msg);
+          await sendTextAndPersist(d.instance, d.remoteJid, msg);
           notificationsSent += 1;
           await pool.query(`update vehicle_demand_matches set notified_at = now() where id = any($1::bigint[])`, [top.map((x) => x.matchId)]);
           await pool.query(`update vehicle_demands set last_notified_at = now(), updated_at=now() where id = $1`, [d.id]);
@@ -845,7 +927,7 @@ export async function runRecontactJob() {
 
       if (matchBlock && !tpl.includes('{match}')) msg = `${msg}${matchBlock}`;
 
-      await evolutionSendText(d.instance!, number, msg);
+      await sendTextAndPersist(d.instance!, d.remoteJid!, msg);
       sent += 1;
 
       try {

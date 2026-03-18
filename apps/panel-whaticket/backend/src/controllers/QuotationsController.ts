@@ -13,16 +13,47 @@ const normalizePhone = (phone: any): string => {
   return String(phone || "").replace(/\D/g, "").trim();
 };
 
+const normalizeVehicleToken = (value: any): string => String(value ?? "").trim();
+
+const normalizeVehicleCompare = (value: any): string =>
+  normalizeVehicleToken(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const uniqueVehicleParts = (parts: any[]): string[] => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of parts) {
+    const value = normalizeVehicleToken(part);
+    const key = normalizeVehicleCompare(value);
+    if (!value || !key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+};
+
 const buildVehicleLabelFromData = (data: any): string => {
   if (!data || typeof data !== "object") return "";
-  return String(
-    data.label ||
-    data.name ||
-    data.title ||
-    [data.marca || data.brand, data.modelo || data.model, data.version, data.year]
-      .filter(Boolean)
-      .join(" ")
-  ).trim();
+  const brand = normalizeVehicleToken(data.marca || data.brand);
+  const model = normalizeVehicleToken(data.modelo || data.model);
+  const year = normalizeVehicleToken(data.year);
+  const version = normalizeVehicleToken(data.version);
+  const title = normalizeVehicleToken(data.title || data.name);
+
+  const base = uniqueVehicleParts([brand, model, year]);
+  const baseNorm = normalizeVehicleCompare(base.join(" "));
+  const versionNorm = normalizeVehicleCompare(version);
+  const titleNorm = normalizeVehicleCompare(title);
+  const extras: string[] = [];
+  if (version && versionNorm && !baseNorm.includes(versionNorm)) extras.push(version);
+  if (title && titleNorm && !baseNorm.includes(titleNorm) && !extras.some(x => normalizeVehicleCompare(x) === titleNorm)) extras.push(title);
+
+  const label = uniqueVehicleParts([...base, ...extras]).join(" ").trim();
+  return label || normalizeVehicleToken(data.label) || title || uniqueVehicleParts([brand, model, version, year]).join(" ").trim();
 };
 
 const toNumber = (v: any, def = 0): number => {
@@ -155,6 +186,7 @@ export const create = async (req: Request, res: Response): Promise<Response> => 
   let clientName = String(body.clientName || body.contactName || "").trim();
   let clientPhone = String(body.clientPhone || body.contactPhone || "").trim();
   let vehicleLabel = String(body.vehicleLabel || body.vehicle || "").trim();
+  const derivedVehicleLabel = buildVehicleLabelFromData(body.vehicleData);
 
   if (!clientName && body.contactId) {
     const c = await Contact.findByPk(body.contactId as any);
@@ -164,8 +196,8 @@ export const create = async (req: Request, res: Response): Promise<Response> => 
     }
   }
 
-  if (!vehicleLabel) {
-    vehicleLabel = buildVehicleLabelFromData(body.vehicleData);
+  if (!vehicleLabel || vehicleLabel.split(/\s+/).length <= 2 || !/[a-z]/i.test(vehicleLabel)) {
+    vehicleLabel = derivedVehicleLabel || vehicleLabel;
   }
 
   if (!clientName) throw new AppError("ERR_QUOTATION_CLIENT_REQUIRED", 400);
@@ -250,6 +282,7 @@ export const update = async (req: Request, res: Response): Promise<Response> => 
   let nextClientName = body.clientName ?? body.contactName ?? quotation.clientName;
   let nextClientPhone = body.clientPhone ?? body.contactPhone ?? quotation.clientPhone;
   let nextVehicleLabel = body.vehicleLabel ?? body.vehicle ?? quotation.vehicleLabel;
+  const nextDerivedVehicleLabel = buildVehicleLabelFromData(body.vehicleData ?? quotation.vehicleData);
 
   if ((!nextClientName || !String(nextClientName).trim()) && (body.contactId ?? quotation.contactId)) {
     const c = await Contact.findByPk((body.contactId ?? quotation.contactId) as any);
@@ -259,8 +292,8 @@ export const update = async (req: Request, res: Response): Promise<Response> => 
     }
   }
 
-  if (!nextVehicleLabel || !String(nextVehicleLabel).trim()) {
-    nextVehicleLabel = buildVehicleLabelFromData(body.vehicleData ?? quotation.vehicleData);
+  if (!nextVehicleLabel || !String(nextVehicleLabel).trim() || String(nextVehicleLabel).trim().split(/\s+/).length <= 2) {
+    nextVehicleLabel = nextDerivedVehicleLabel || nextVehicleLabel;
   }
 
   const patch: any = {

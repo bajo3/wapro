@@ -1,8 +1,7 @@
 import { Router } from 'express';
-import fetch from 'node-fetch';
 import type { Request, Response } from 'express';
 import { env } from '../lib/env.js';
-import { evolutionSendPresence, evolutionSendText, evolutionSendImage } from '../services/evolution.js';
+import { evolutionSendPresence } from '../services/evolution.js';
 import { getCatalog, searchCatalog, formatItemLine } from '../services/catalog.js';
 import { getState, setState, seenDedupe, markDedupe } from '../services/state.js';
 import { getContactRule, setContactRule } from '../services/contacts.js';
@@ -26,45 +25,7 @@ import type { ConvState } from '../services/state.js';
 import { computeLeadScore, leadLabel } from '../services/lead.js';
 
 import { getFinanceApr, simulateFinancing, formatArs } from '../services/finance.js';
-
-async function persistBotOutboundMessage(params: {
-  instance: string;
-  remoteJid: string;
-  text: string;
-  imageUrl?: string;
-}) {
-  const backendUrl = String(process.env.BACKEND_URL || '').replace(/\/$/, '');
-  const adminToken = String(process.env.BOT_ADMIN_TOKEN || '').trim();
-  if (!backendUrl || !adminToken || !params.text?.trim()) return;
-
-  const number = String(params.remoteJid || '').split('@')[0];
-  if (!number) return;
-
-  const syntheticId = `bot-${params.instance}-${number}-${Date.now()}-${hashString(`${params.text}|${params.imageUrl || ''}`)}`;
-
-  try {
-    await fetch(`${backendUrl}/webhooks/bot/messages`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-admin-token': adminToken
-      },
-      body: JSON.stringify({
-        id: syntheticId,
-        instance: params.instance,
-        remoteJid: params.remoteJid,
-        text: params.text,
-        mediaUrl: params.imageUrl || null,
-        mediaType: params.imageUrl ? 'image' : null,
-        fromMe: true,
-        ack: 1,
-        read: true
-      })
-    });
-  } catch (err) {
-    console.error('Failed to persist bot outbound message', err);
-  }
-}
+import { sendImageAndPersist, sendTextAndPersist } from '../services/panelPersistence.js';
 
 export const webhookRouter = Router();
 
@@ -150,10 +111,6 @@ function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (b - a + 1)) + a;
 }
 
-/**
- * Compute a simple SHA1 hash for a given string. Used to detect
- * repeated replies and avoid sending the same fallback over and over.
- */
 function hashString(str: string): string {
   return createHash('sha1').update(str).digest('hex');
 }
@@ -192,9 +149,9 @@ function sleep(ms: number): Promise<void> {
  * Optionally split longer multi-line replies into two WhatsApp messages.
  * This tends to feel more human and reduces "wall of text".
  */
-async function sendTextHuman(instance: string, number: string, reply: string): Promise<void> {
+async function sendTextHuman(instance: string, remoteJid: string, reply: string): Promise<void> {
   if (!env.splitReplies) {
-    await evolutionSendText(instance, number, reply);
+    await sendTextAndPersist(instance, remoteJid, reply);
     return;
   }
 
@@ -204,13 +161,13 @@ async function sendTextHuman(instance: string, number: string, reply: string): P
   if (lines.length >= 3 && chance(p)) {
     const first = lines[0];
     const rest = lines.slice(1).join('\n');
-    await evolutionSendText(instance, number, first);
+    await sendTextAndPersist(instance, remoteJid, first);
     await sleep(randInt(700, 1200));
-    await evolutionSendText(instance, number, rest);
+    await sendTextAndPersist(instance, remoteJid, rest);
     return;
   }
 
-  await evolutionSendText(instance, number, reply);
+  await sendTextAndPersist(instance, remoteJid, reply);
 }
 
 /**
@@ -309,6 +266,7 @@ function mergeSearchContext(prev: any, extracted: any) {
   if (extracted?.maxYear) next.maxYear = extracted.maxYear;
   if (extracted?.transmission) next.transmission = extracted.transmission;
   if (extracted?.fuel) next.fuel = extracted.fuel;
+  if (extracted?.gnc !== undefined && extracted?.gnc !== null) next.gnc = extracted.gnc;
   if (extracted?.bodywork) next.bodywork = extracted.bodywork;
   if (extracted?.maxPrice) next.maxPrice = extracted.maxPrice;
   if (extracted?.amount && !next.maxPrice) {
@@ -319,6 +277,51 @@ function mergeSearchContext(prev: any, extracted: any) {
   return next;
 }
 
+
+function getItemText(it: any): string {
+  return [
+    it?.name,
+    it?.title,
+    it?.description,
+    it?.category,
+    it?.brand,
+    it?.model,
+    it?.version,
+    it?.transmission,
+    it?.fuel,
+    it?.engine,
+    it?.color
+  ].filter(Boolean).join(' ');
+}
+
+function inferFuelFromItem(it: any): string {
+  const explicit = normalize(String(it?.fuel || ''));
+  if (explicit) {
+    if (explicit.includes('gnc')) return 'gnc';
+    if (explicit.includes('diesel') || explicit.includes('gasoil')) return 'diesel';
+    if (explicit.includes('nafta') || explicit.includes('gasolina')) return 'nafta';
+    if (explicit.includes('hibr')) return 'hibrido';
+    if (explicit.includes('elect')) return 'electrico';
+  }
+  const txt = normalize(getItemText(it));
+  if (/(?:^|\s)gnc(?:\s|$)|gas natural/.test(txt)) return 'gnc';
+  if (/(?:^|\s)(diesel|gasoil|turbodiesel)(?:\s|$)/.test(txt)) return 'diesel';
+  if (/(?:^|\s)(nafta|gasolina|naftero)(?:\s|$)/.test(txt)) return 'nafta';
+  if (/hibrid|hybrid/.test(txt)) return 'hibrido';
+  if (/electr|\bev\b/.test(txt)) return 'electrico';
+  return '';
+}
+
+function inferBodyworkFromItem(it: any): string {
+  const txt = normalize(getItemText(it));
+  if (/(?:^|\s)(suv|crossover|todoterreno|4x4|awd|4wd)(?:\s|$)/.test(txt)) return 'suv';
+  if (/(?:^|\s)(pickup|pick up|pick-up|doble cabina)(?:\s|$)/.test(txt)) return 'pickup';
+  if (/(?:^|\s)(sedan|sedan 4 puertas|4 puertas)(?:\s|$)/.test(txt)) return 'sedan';
+  if (/(?:^|\s)(hatch|hatchback|3 puertas)(?:\s|$)/.test(txt)) return 'hatch';
+  if (/(?:^|\s)(furgon|utilitario)(?:\s|$)/.test(txt)) return 'furgon';
+  return '';
+}
+
 function filterCatalogByContext(catalog: any[], ctx: any): any[] {
   const brand = ctx?.brand ? normalize(String(ctx.brand)) : '';
   const model = ctx?.model ? normalize(String(ctx.model)) : '';
@@ -326,6 +329,8 @@ function filterCatalogByContext(catalog: any[], ctx: any): any[] {
   const maxYear = Number(ctx?.maxYear ?? 0) || undefined;
   const tx = ctx?.transmission ? normalize(String(ctx.transmission)) : '';
   const fuel = ctx?.fuel ? normalize(String(ctx.fuel)) : '';
+  const bodywork = ctx?.bodywork ? normalize(String(ctx.bodywork)) : '';
+  const wantsGnc = ctx?.gnc === true || fuel === 'gnc';
   const maxPrice = Number(ctx?.maxPrice ?? 0) || undefined;
 
   return (catalog || [])
@@ -333,18 +338,17 @@ function filterCatalogByContext(catalog: any[], ctx: any): any[] {
     .filter((it) => {
       const b = it?.brand ? normalize(String(it.brand)) : normalize(String(it?.category || ''));
       const m = it?.model ? normalize(String(it.model)) : normalize(String(it?.name || ''));
+      const itemTx = normalize(String(it?.transmission || ''));
+      const itemFuel = inferFuelFromItem(it);
+      const itemBodywork = inferBodyworkFromItem(it);
       if (brand && !b.includes(brand)) return false;
       if (model && !m.includes(model)) return false;
       if (minYear && Number(it?.year || 0) && Number(it.year) < minYear) return false;
       if (maxYear && Number(it?.year || 0) && Number(it.year) > maxYear) return false;
-      if (tx) {
-        const itTx = normalize(String(it?.transmission || ''));
-        if (itTx && !itTx.includes(tx)) return false;
-      }
-      if (fuel) {
-        const itFuel = normalize(String(it?.fuel || ''));
-        if (itFuel && !itFuel.includes(fuel)) return false;
-      }
+      if (tx && itemTx && !itemTx.includes(tx)) return false;
+      if (fuel && itemFuel && itemFuel !== fuel) return false;
+      if (wantsGnc && itemFuel && itemFuel !== 'gnc') return false;
+      if (bodywork && itemBodywork && itemBodywork !== bodywork) return false;
       if (maxPrice && Number(it?.priceNumber || 0)) {
         if (Number(it.priceNumber) > maxPrice) return false;
       }
@@ -360,6 +364,8 @@ function hasUsefulSearchContext(ctx: any): boolean {
     ctx?.maxYear ||
     ctx?.transmission ||
     ctx?.fuel ||
+    ctx?.bodywork ||
+    ctx?.gnc === true ||
     ctx?.maxPrice
   );
 }
@@ -535,17 +541,10 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         const sentIso = new Date().toISOString();
         try {
           if (imageUrl) {
-            await evolutionSendImage(instance, number, imageUrl, reply);
+            await sendImageAndPersist(instance, remoteJid, imageUrl, reply);
           } else {
-            await sendTextHuman(instance, number, reply);
+            await sendTextHuman(instance, remoteJid, reply);
           }
-
-          await persistBotOutboundMessage({
-            instance,
-            remoteJid,
-            text: reply,
-            imageUrl: imageUrl ?? undefined
-          });
 
           await setState(instance, remoteJid, {
             ...nextState,
@@ -665,7 +664,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     // ── Multi-turn refinement: if we just showed product results and user adds filters,
     // refine using accumulated search_context instead of starting from scratch.
     const prevIntent = String((state as any).last_intent || '');
-    const hasSearchCtx = !!(state.search_context && (state.search_context.brand || state.search_context.model));
+    const hasSearchCtx = !!(state.search_context && hasUsefulSearchContext(state.search_context));
     const looksLikeRefineOnly = !/(busco|quiero|tenes|tienes|hay|mostrame|mostrar|opcion|opci[oó]n)/i.test(rawText)
       && /\b(20\d{2}|19\d{2}|manual|autom[aá]t|cvt|dsg|nafta|diesel|gasoil|gnc|suv|pickup|hatch|sedan|hasta|m[aá]ximo|palos|mil|usd|dolares?)\b/i.test(rawText);
 

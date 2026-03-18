@@ -198,6 +198,56 @@ function qi(ident: string): string {
   return `"${String(ident).replace(/"/g, '""')}"`;
 }
 
+
+function normalizeLabelToken(value: any): string {
+  return String(value ?? "").trim();
+}
+
+function normalizeForCompare(value: any): string {
+  return normalizeLabelToken(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function compactUnique(parts: Array<any>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of parts) {
+    const value = normalizeLabelToken(part);
+    const key = normalizeForCompare(value);
+    if (!value || !key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
+function buildVehicleLabel(row: any): string {
+  if (!row || typeof row !== "object") return "";
+  const brand = normalizeLabelToken(row.brand ?? row.marca);
+  const model = normalizeLabelToken(row.model ?? row.modelo);
+  const year = normalizeLabelToken(row.year);
+  const version = normalizeLabelToken(row.version);
+  const title = normalizeLabelToken(row.title ?? row.name);
+
+  const base = compactUnique([brand, model, year]);
+  const titleNorm = normalizeForCompare(title);
+  const versionNorm = normalizeForCompare(version);
+  const baseNorm = normalizeForCompare(base.join(" "));
+
+  const extras: string[] = [];
+  if (version && versionNorm && !baseNorm.includes(versionNorm)) extras.push(version);
+  if (title && titleNorm && !baseNorm.includes(titleNorm) && !extras.some((x) => normalizeForCompare(x) === titleNorm)) {
+    extras.push(title);
+  }
+
+  const label = compactUnique([...base, ...extras]).join(" ").trim();
+  return label || title || compactUnique([brand, model, version, year]).join(" ").trim();
+}
+
 export const index = async (req: Request, res: Response): Promise<Response> => {
   const { q = "", searchParam = "", id = "", limit = "200" } = req.query as Query;
   const lim = Math.min(Math.max(parseInt(String(limit), 10) || 200, 1), 1000);
@@ -220,6 +270,7 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
       : map.version
         ? qi(map.version)
         : `TRIM(CONCAT(${brandExpr}, ' ', ${modelExpr}))`;
+    const versionExpr = map.version ? qi(map.version) : "''";
 
     const priceExpr = map.price ? `COALESCE(${qi(map.price)}, 0)` : "0";
     const currencyExpr = map.currency ? `COALESCE(${qi(map.currency)}, 'USD')` : `'USD'`;
@@ -227,7 +278,7 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
 
     const whereParts: string[] = [];
     if (exactId) {
-      whereParts.push(`${qi(map.id)} = :exactId`);
+      whereParts.push(`${qi(map.id)}::text = :exactId`);
     }
     if (term) {
       const orParts: string[] = [];
@@ -247,6 +298,7 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
         ${brandExpr} as brand,
         ${modelExpr} as model,
         ${titleExpr} as title,
+        ${versionExpr} as version,
         ${priceExpr} as price,
         ${currencyExpr} as currency,
         ${yearExpr} as year
@@ -264,15 +316,22 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
       },
     });
 
-    const vehicles = (Array.isArray(rows) ? rows : []).map((v: any) => ({
-      id: v.id,
-      marca: String(v.brand || "").trim(),
-      modelo: String(v.model || "").trim(),
-      version: String(v.title || "").trim(),
-      precio: Number(v.price) || 0,
-      currency: String(v.currency || "USD").toUpperCase(),
-      year: v.year ?? null,
-    }));
+    const vehicles = (Array.isArray(rows) ? rows : []).map((v: any) => {
+      const base = {
+        id: String(v.id ?? "").trim(),
+        marca: String(v.brand || "").trim(),
+        modelo: String(v.model || "").trim(),
+        version: String(v.version || "").trim(),
+        title: String(v.title || "").trim(),
+        precio: Number(v.price) || 0,
+        currency: String(v.currency || "USD").toUpperCase(),
+        year: v.year ?? null,
+      };
+      return {
+        ...base,
+        label: buildVehicleLabel(base)
+      };
+    });
 
     return res.json({ vehicles });
   } catch (err) {

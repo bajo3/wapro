@@ -12,12 +12,12 @@ import { env } from "./lib/env.js";
 import { migrate } from "./services/db.js";
 import { webhookRouter } from "./routes/webhooks.js";
 import { adminRouter } from "./routes/admin.js";
-import { evolutionSendText } from "./services/evolution.js";
 import { getSocket } from "./services/socket.js";
 import { setState } from "./services/state.js";
 import { getConversationRule } from "./services/rules.js";
 import { getContactRule } from "./services/contacts.js";
 import { scanRecentVehiclesForDemandMatches, runRecontactJob } from "./services/demands.js";
+import { sendTextAndPersist } from "./services/panelPersistence.js";
 
 async function main() {
   await migrate();
@@ -168,7 +168,7 @@ async function main() {
         const followupText = `Hola 👋 ¿seguís interesado/a en ${query}? ¡Me queda stock hoy!`;
         try {
           // Send follow-up
-          await evolutionSendText(instance, remoteJid.split('@')[0], followupText);
+          await sendTextAndPersist(instance, remoteJid, followupText);
           // Update state
           const iso = new Date().toISOString();
           const newState = {
