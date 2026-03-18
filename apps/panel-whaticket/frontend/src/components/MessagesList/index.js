@@ -375,7 +375,10 @@ const MessagesList = ({ ticketId, isGroup }) => {
   useEffect(() => {
     const socket = openSocket();
 
-    socket.on("connect", () => socket.emit("joinChatBox", ticketId));
+    // FIX: join immediately (socket may already be connected on mount)
+    // AND re-join on every reconnect so we never miss messages.
+    socket.emit("joinChatBox", `${ticketId}`);
+    socket.on("connect", () => socket.emit("joinChatBox", `${ticketId}`));
 
     socket.on("appMessage", (data) => {
       if (data.action === "create") {
@@ -389,7 +392,8 @@ const MessagesList = ({ ticketId, isGroup }) => {
     });
 
     return () => {
-      socket.emit("leaveChatBox", ticketId);
+      socket.emit("leaveChatBox", `${ticketId}`);
+      socket.off("connect");
       socket.off("appMessage");
     };
   }, [ticketId]);

@@ -26,6 +26,7 @@ import { computeLeadScore, leadLabel } from '../services/lead.js';
 
 import { getFinanceApr, simulateFinancing, formatArs } from '../services/finance.js';
 import { sendImageAndPersist, sendTextAndPersist } from '../services/panelPersistence.js';
+import { askGPT, buildCarDealershipSystemPrompt } from '../services/gpt.js';
 
 export const webhookRouter = Router();
 
@@ -938,21 +939,78 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         }
 
       } else {
-        // Fallback: try full-text knowledge search before giving up
-        const kResults = await searchKnowledge(rawText, 1);
+        // Fallback 1: full-text knowledge search
+        const kResults = await searchKnowledge(rawText, 2);
         if (kResults.length > 0 && kResults[0].rank > 0) {
           reply = kResults[0].snippet;
           newState.last_intent = `knowledge_${kResults[0].type}`;
           (newState as any).last_sources = [{ type: kResults[0].type, id: kResults[0].id }];
         } else {
-          reply = pickOne([
-            'Dale 🙂 ¿Qué vehículo o producto estabas buscando?',
-            '¿En qué te puedo ayudar? Si me decís marca/modelo o presupuesto, te busco opciones.',
-            'Decime qué buscás y te paso opciones y precios 🔍'
-          ]);
-          newState.stage = 'awaiting_query';
-          newState.last_intent = 'fallback';
-          isFallback = true;
+          // Fallback 2: GPT-4o — respuesta inteligente con contexto del catálogo y FAQs
+          try {
+            // Build a compact catalog summary (top 12 items max to stay within context)
+            const catalogSummary = catalog.slice(0, 12).map((it: any) => {
+              const price = it.priceFormatted ?? (it.priceNumber ? `$${it.priceNumber.toLocaleString('es-AR')}` : '');
+              return `- ${it.brand ?? ''} ${it.model ?? ''} ${it.year ?? ''} ${it.version ?? ''} ${price ? `(${price})` : ''}`.replace(/\s+/g, ' ').trim();
+            }).filter(Boolean).join('\n');
+
+            // Build a compact FAQ summary
+            const { faqs: cachedFaqs } = await (async () => {
+              const r = await import('../services/intelligence.js');
+              const allFaqs = await r.listFaq();
+              return { faqs: allFaqs.filter((f: any) => f.enabled && !f.draft).slice(0, 8) };
+            })();
+            const faqSummary = cachedFaqs.map((f: any) =>
+              `P: ${(f.triggers ?? []).join(' / ') || f.title ?? ''}\nR: ${String(f.answer ?? '').slice(0, 200)}`
+            ).join('\n\n');
+
+            // Include recent conversation turns as history (up to 4 turns)
+            const history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+            const turns = (state as any).gpt_history ?? [];
+            for (const t of turns.slice(-4)) {
+              history.push({ role: t.role, content: t.content });
+            }
+
+            const systemPrompt = buildCarDealershipSystemPrompt({
+              dealershipName: process.env.DEALERSHIP_NAME ?? undefined,
+              catalogSummary: catalogSummary || undefined,
+              faqSummary: faqSummary || undefined
+            });
+
+            const gptReply = await askGPT({ systemPrompt, userMessage: rawText, history });
+
+            if (gptReply) {
+              reply = gptReply;
+              newState.last_intent = 'gpt_fallback';
+              // Persist conversation history for next turns (keep last 6 turns)
+              const newHistory = [
+                ...turns,
+                { role: 'user', content: rawText },
+                { role: 'assistant', content: gptReply }
+              ].slice(-12);
+              (newState as any).gpt_history = newHistory;
+            } else {
+              // GPT not configured or failed — generic fallback
+              reply = pickOne([
+                'Dale 🙂 ¿Qué vehículo o producto estabas buscando?',
+                '¿En qué te puedo ayudar? Si me decís marca/modelo o presupuesto, te busco opciones.',
+                'Decime qué buscás y te paso opciones y precios 🔍'
+              ]);
+              newState.stage = 'awaiting_query';
+              newState.last_intent = 'fallback';
+              isFallback = true;
+            }
+          } catch (gptErr) {
+            console.error('[webhooks] GPT fallback error:', gptErr);
+            reply = pickOne([
+              'Dale 🙂 ¿Qué vehículo o producto estabas buscando?',
+              '¿En qué te puedo ayudar? Si me decís marca/modelo o presupuesto, te busco opciones.',
+              'Decime qué buscás y te paso opciones y precios 🔍'
+            ]);
+            newState.stage = 'awaiting_query';
+            newState.last_intent = 'fallback';
+            isFallback = true;
+          }
         }
       }
     }

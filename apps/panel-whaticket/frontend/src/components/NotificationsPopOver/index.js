@@ -82,6 +82,8 @@ const NotificationsPopOver = () => {
 	useEffect(() => {
 		const socket = openSocket();
 
+		// FIX: join immediately if already connected, and re-join on reconnect
+		socket.emit("joinNotification");
 		socket.on("connect", () => socket.emit("joinNotification"));
 
 		socket.on("ticket", data => {

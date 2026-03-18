@@ -80,6 +80,15 @@ export const env = (() => {
     catalogCacheTtlMs: Number(process.env.CATALOG_CACHE_TTL_MS ?? String(5 * 60 * 1000)),
     catalogFetchTimeoutMs: Number(process.env.CATALOG_FETCH_TIMEOUT_MS ?? '4000'),
     // Evolution API request timeout
-    evolutionFetchTimeoutMs: Number(process.env.EVOLUTION_FETCH_TIMEOUT_MS ?? '8000')
+    evolutionFetchTimeoutMs: Number(process.env.EVOLUTION_FETCH_TIMEOUT_MS ?? '8000'),
+
+    // ── OpenAI / GPT ──────────────────────────────────────────────────────────
+    // Set OPENAI_API_KEY to enable GPT-4o intelligent fallback responses.
+    // Without it the bot falls back to generic static replies.
+    openAiApiKey: process.env.OPENAI_API_KEY?.trim() || undefined,
+    openAiModel: process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini',
+
+    // Optional: name shown to GPT in the system prompt (e.g. "Jesús Díaz Automotores")
+    dealershipName: process.env.DEALERSHIP_NAME?.trim() || undefined
   };
 })();
