@@ -38,7 +38,7 @@ export async function persistBotOutboundMessage(params: {
   const syntheticId = `bot-${params.instance}-${number}-${Date.now()}-${hashString(`${text}|${imageUrl || ''}`)}`;
 
   try {
-    await fetch(`${backendUrl}/webhooks/bot/messages`, {
+    const response = await fetch(`${backendUrl}/webhooks/bot/messages`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -56,6 +56,17 @@ export async function persistBotOutboundMessage(params: {
         read: params.read !== false
       })
     });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      console.error('Failed to persist bot outbound message', {
+        status: response.status,
+        statusText: response.statusText,
+        body,
+        instance: params.instance,
+        remoteJid
+      });
+    }
   } catch (err) {
     console.error('Failed to persist bot outbound message', err);
   }

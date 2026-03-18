@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import { Op } from "sequelize";
 import fs from "fs";
 import path from "path";
 import fetch from "node-fetch";
@@ -7,11 +8,13 @@ import CreateOrUpdateContactService from "../services/ContactServices/CreateOrUp
 import FindOrCreateTicketService from "../services/TicketServices/FindOrCreateTicketService";
 import CreateMessageService from "../services/MessageServices/CreateMessageService";
 import TrainingMessage from "../models/TrainingMessage";
+import Ticket from "../models/Ticket";
 import Whatsapp from "../models/Whatsapp";
 import { logger } from "../utils/logger";
 import uploadConfig from "../config/upload";
 import { botForwardEvolutionWebhook } from "../services/BotServices/botApi";
 import AppError from "../errors/AppError";
+import { getIO } from "../libs/socket";
 
 function getText(msg: any): string {
   const m = msg?.message || {};
@@ -64,6 +67,25 @@ function isAllowedNumber(number: string): boolean {
   if (block.size && block.has(number)) return false;
   if (allow.size) return allow.has(number);
   return true;
+}
+
+
+async function findBestTicketForBotMessage(contactId: number, whatsappId: number): Promise<Ticket | null> {
+  const openOrPending = await Ticket.findOne({
+    where: {
+      contactId,
+      whatsappId,
+      status: { [Op.in]: ["open", "pending"] }
+    },
+    order: [["updatedAt", "DESC"], ["id", "DESC"]]
+  });
+
+  if (openOrPending) return openOrPending;
+
+  return Ticket.findOne({
+    where: { contactId, whatsappId },
+    order: [["updatedAt", "DESC"], ["id", "DESC"]]
+  });
 }
 
 function guessExt(mediaType?: string): string {
@@ -327,18 +349,24 @@ export const persistBotMessageWebhook = async (req: Request, res: Response): Pro
       leadSource: "WA"
     });
 
-    const ticket = await FindOrCreateTicketService(contact, whatsapp.id, 0);
+    let ticket = await findBestTicketForBotMessage(contact.id, whatsapp.id);
+    if (!ticket) {
+      ticket = await FindOrCreateTicketService(contact, whatsapp.id, 0);
+    }
+
     const bodyText = text || (mediaType ? `[${mediaType}]` : "[bot]");
 
     await ticket.update({
       lastMessage: bodyText,
-      botMode: "ON"
+      botMode: "ON",
+      unreadMessages: 0
     });
 
-    await CreateMessageService({
+    const message = await CreateMessageService({
       messageData: {
         id: msgId,
         ticketId: ticket.id,
+        contactId: contact.id,
         body: bodyText,
         fromMe: body.fromMe !== false,
         read: body.read !== false,
@@ -348,7 +376,13 @@ export const persistBotMessageWebhook = async (req: Request, res: Response): Pro
       }
     } as any);
 
-    return res.status(200).json({ ok: true, ticketId: ticket.id });
+    const io = getIO();
+    io.to(ticket.status).to(ticket.id.toString()).to("notification").emit("ticket", {
+      action: "update",
+      ticket
+    });
+
+    return res.status(200).json({ ok: true, ticketId: ticket.id, messageId: message.id });
   } catch (err: any) {
     logger.error(err);
     const statusCode = Number(err?.statusCode || err?.status || 500);
