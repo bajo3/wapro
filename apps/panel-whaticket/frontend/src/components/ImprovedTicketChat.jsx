@@ -1,5 +1,9 @@
 import React, { useMemo, useState } from "react";
 import clsx from "clsx";
+import { toast } from "react-toastify";
+
+import api from "../services/api";
+import toastError from "../errors/toastError";
 
 import {
   Calendar,
@@ -35,6 +39,7 @@ export default function ImprovedTicketChat({
 }) {
   const history = useHistory();
   const [showQuickReplies, setShowQuickReplies] = useState(true);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
 
   const displayName = contact?.name || "Contacto";
   const phone = contact?.number || contact?.phone || "";
@@ -82,6 +87,28 @@ export default function ImprovedTicketChat({
 
   const prefill = (text) => {
     window.dispatchEvent(new CustomEvent("tickets:prefill", { detail: { text } }));
+  };
+
+  const submitAgentFeedback = async (verdict) => {
+    if (!ticketId || !agentData || feedbackLoading) return;
+    setFeedbackLoading(true);
+    try {
+      await api.post(`/tickets/${ticketId}/agent-feedback`, {
+        verdict,
+        finalReply: verdict === "edited" ? null : agentData?.suggestedReply || null
+      });
+      toast.success(
+        verdict === "approved"
+          ? "Feedback guardado: sugerencia aprobada"
+          : verdict === "handoff"
+            ? "Feedback guardado: derivación sugerida"
+            : "Feedback guardado"
+      );
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setFeedbackLoading(false);
+    }
   };
 
   return (
@@ -281,6 +308,35 @@ export default function ImprovedTicketChat({
                   >
                     Usar sugerencia
                   </button>
+                  <button
+                    type="button"
+                    disabled={feedbackLoading}
+                    onClick={() => submitAgentFeedback("approved")}
+                    className="rounded-auto-lg border border-auto-border bg-auto-surface px-3 py-1.5 text-xs font-medium text-auto-text hover:bg-auto-panel2 disabled:opacity-50"
+                  >
+                    👍 Correcta
+                  </button>
+                  <button
+                    type="button"
+                    disabled={feedbackLoading}
+                    onClick={() => submitAgentFeedback("rejected")}
+                    className="rounded-auto-lg border border-auto-border bg-auto-surface px-3 py-1.5 text-xs font-medium text-auto-text hover:bg-auto-panel2 disabled:opacity-50"
+                  >
+                    👎 No sirve
+                  </button>
+                  {agentData?.handoffRecommended ? (
+                    <button
+                      type="button"
+                      disabled={feedbackLoading}
+                      onClick={() => submitAgentFeedback("handoff")}
+                      className="rounded-auto-lg border border-auto-border bg-auto-surface px-3 py-1.5 text-xs font-medium text-auto-text hover:bg-auto-panel2 disabled:opacity-50"
+                    >
+                      Derivar a humano
+                    </button>
+                  ) : null}
+                </div>
+                <div className="mt-2 text-[11px] text-auto-muted">
+                  Este feedback se guarda para mejorar el agente con ejemplos reales del equipo.
                 </div>
               </div>
             ) : null}

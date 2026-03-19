@@ -17,6 +17,7 @@ import TrainingMessage from "../models/TrainingMessage";
 import PipelineStage from "../models/PipelineStage";
 import TicketStageHistory from "../models/TicketStageHistory";
 import Quotation from "../models/Quotation";
+import AgentFeedback from "../models/AgentFeedback";
 
 // eslint-disable-next-line
 const dbConfig = require("../config/database");
@@ -42,7 +43,8 @@ const models = [
   TrainingMessage,
   PipelineStage,
   TicketStageHistory,
-  Quotation
+  Quotation,
+  AgentFeedback
 ];
 
 sequelize.addModels(models);

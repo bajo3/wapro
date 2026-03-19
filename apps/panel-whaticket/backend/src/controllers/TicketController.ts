@@ -10,6 +10,7 @@ import SendWhatsAppMessage from "../services/WbotServices/SendWhatsAppMessage";
 import ShowWhatsAppService from "../services/WhatsappService/ShowWhatsAppService";
 import formatBody from "../helpers/Mustache";
 import { botDeleteConversationRule, botSetConversationMode } from "../services/BotServices/botApi";
+import AgentFeedback from "../models/AgentFeedback";
 
 type IndexQuery = {
   searchParam: string;
@@ -261,4 +262,48 @@ export const remove = async (
   });
 
   return res.status(200).json({ message: "ticket deleted" });
+};
+
+
+export const createAgentFeedback = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  const { ticketId } = req.params;
+  const { verdict, note, finalReply } = req.body || {};
+
+  const allowed = new Set(["approved", "rejected", "edited", "handoff"]);
+  const cleanVerdict = String(verdict || "").toLowerCase();
+  if (!allowed.has(cleanVerdict)) {
+    return res.status(400).json({ error: "Invalid verdict" });
+  }
+
+  const ticket = await ShowTicketService(ticketId);
+  const agentData = (ticket as any).agentData || {};
+
+  const row = await AgentFeedback.create({
+    source: "ticket_agent_panel",
+    verdict: cleanVerdict,
+    note: note ? String(note) : null,
+    finalReply: finalReply ? String(finalReply) : null,
+    suggestedReply: agentData?.suggestedReply || null,
+    intent: agentData?.intent || null,
+    action: agentData?.action || null,
+    confidence:
+      agentData?.confidence !== undefined && agentData?.confidence !== null
+        ? Number(agentData.confidence)
+        : null,
+    meta: {
+      handoffRecommended: Boolean(agentData?.handoffRecommended),
+      urgency: agentData?.urgency || null,
+      missingFields: Array.isArray(agentData?.missingFields) ? agentData.missingFields : [],
+      internalReason: agentData?.internalReason || null,
+      extracted: agentData?.extracted || null
+    },
+    ticketId: Number(ticketId),
+    contactId: (ticket as any)?.contact?.id || null,
+    userId: Number(req.user?.id) || null
+  });
+
+  return res.status(201).json({ ok: true, row });
 };

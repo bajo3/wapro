@@ -25,6 +25,13 @@ ticketRoutes.put(
   TicketController.updateBotMode
 );
 
+// Seller feedback for the agent suggestions
+ticketRoutes.post(
+  "/tickets/:ticketId/agent-feedback",
+  isAuth,
+  TicketController.createAgentFeedback
+);
+
 // Internal notes (not sent to the customer)
 ticketRoutes.get(
   "/tickets/:ticketId/notes",
