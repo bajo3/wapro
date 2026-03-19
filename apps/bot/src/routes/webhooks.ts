@@ -977,16 +977,30 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               faqSummary: faqSummary || undefined
             });
 
-            const gptReply = await askGPT({ systemPrompt, userMessage: rawText, history });
+            let gptReply: string | null = null;
 
-            if (gptReply) {
-              reply = gptReply;
+            try {
+              console.log("[webhooks] entering GPT fallback");
+
+              gptReply = await askGPT({
+                systemPrompt,
+                userMessage: rawText,
+                history
+              });
+
+              console.log("[webhooks] GPT fallback success:", !!gptReply);
+            } catch (err) {
+              console.log("[webhooks] GPT fallback error:", err);
+            }
+
+            if (gptReply && String(gptReply).trim()) {
+              reply = String(gptReply).trim();
               newState.last_intent = 'gpt_fallback';
               // Persist conversation history for next turns (keep last 6 turns)
               const newHistory = [
                 ...turns,
                 { role: 'user', content: rawText },
-                { role: 'assistant', content: gptReply }
+                { role: 'assistant', content: String(gptReply).trim() }
               ].slice(-12);
               (newState as any).gpt_history = newHistory;
             } else {
