@@ -251,7 +251,7 @@ function detectNeedProfile(rawText: string) {
 }
 
 function isVehicleItem(it: any): boolean {
-  return !!(it && (it.year || it.brand || it.model || (it.category && /auto|autos|veh|car/i.test(String(it.category)) )));
+  return !!(it && (it.year || it.brand || it.model || (it.category && /auto|autos|veh|car/i.test(String(it.category)))));
 }
 
 function isTruckishName(name: string): boolean {
@@ -536,7 +536,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     const scheduleReply = (reply: string, nextState: any, imageUrl?: string) => {
       const delayMs = computeHumanDelay(reply);
-      void evolutionSendPresence(instance, number, 'composing', Math.min(delayMs, 5000)).catch(() => {});
+      void evolutionSendPresence(instance, number, 'composing', Math.min(delayMs, 5000)).catch(() => { });
 
       const timer = setTimeout(async () => {
         const sentIso = new Date().toISOString();
@@ -720,19 +720,19 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         newState.last_intent = row.intent ?? 'playbook';
         (newState as any).last_sources = [{ type: 'playbook', id: row.id }];
         (newState as any).last_variant = `playbook_${row.id}`;
-        void logDecision({ instance, remoteJid, intent: row.intent, confidence: kScore, data: { type: 'playbook', id: row.id } }).catch(() => {});
+        void logDecision({ instance, remoteJid, intent: row.intent, confidence: kScore, data: { type: 'playbook', id: row.id } }).catch(() => { });
 
       } else if (type === 'faq') {
         reply = String(row.answer ?? '');
         newState.last_intent = 'faq';
         (newState as any).last_sources = [{ type: 'faq', id: row.id }];
-        void logDecision({ instance, remoteJid, intent: 'faq', confidence: kScore, data: { type: 'faq', id: row.id } }).catch(() => {});
+        void logDecision({ instance, remoteJid, intent: 'faq', confidence: kScore, data: { type: 'faq', id: row.id } }).catch(() => { });
 
       } else if (type === 'policy') {
         reply = String(row.body ?? '');
         newState.last_intent = 'policy';
         (newState as any).last_sources = [{ type: 'policy', id: row.id }];
-        void logDecision({ instance, remoteJid, intent: 'policy', confidence: kScore, data: { type: 'policy', id: row.id } }).catch(() => {});
+        void logDecision({ instance, remoteJid, intent: 'policy', confidence: kScore, data: { type: 'policy', id: row.id } }).catch(() => { });
       }
 
       if (reply) {
@@ -754,7 +754,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           return;
         }
         reply = [pickOne(['Dale. Mirá opciones 👇', 'Te paso estas opciones 👇', 'Genial, mirá lo que tengo 👇']),
-          ...hits.map((it, i) => formatItemLine(it, i + 1)),
+        ...hits.map((it, i) => formatItemLine(it, i + 1)),
           '', pickOne(['¿Querés alternativas en otro rango de precio?', 'Contame presupuesto y zona y ajusto la búsqueda.', 'Si me decís presupuesto y zona, te recomiendo la mejor.'])
         ].join('\n');
         newState.last_intent = 'product_results';
@@ -921,7 +921,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             return;
           }
           reply = [pickOne(['Te paso opciones 👇', 'Mirá estas opciones 👇', 'Dale. Tengo esto 👇']),
-            ...hits.map((it, i) => formatItemLine(it, i + 1)),
+          ...hits.map((it, i) => formatItemLine(it, i + 1)),
             '', pickOne(['Si me decís presupuesto y zona, te recomiendo la mejor.', '¿Querés alternativas en otro rango?', 'Contame presupuesto y zona para ajustar.'])
           ].join('\n');
           newState.last_intent = 'product_results';
@@ -961,7 +961,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               return { faqs: allFaqs.filter((f: any) => f.enabled && !f.draft).slice(0, 8) };
             })();
             const faqSummary = cachedFaqs.map((f: any) =>
-              `P: ${(f.triggers ?? []).join(' / ') || f.title ?? ''}\nR: ${String(f.answer ?? '').slice(0, 200)}`
+              `P: ${((f.triggers ?? []).join(' / ') || f.title || '')}\nR: ${String(f.answer ?? '').slice(0, 200)}`
             ).join('\n\n');
 
             // Include recent conversation turns as history (up to 4 turns)
