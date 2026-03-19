@@ -186,3 +186,22 @@ Cerrar el tercer paso del loop operativo del agente: ver contexto real del ticke
 - no exportar a test case sin marca de persistencia porque eso genera duplicados difíciles de auditar
 - no medir calidad solo con intuición; dejar métricas visibles evita entrenar a ciegas
 - no revisar feedback aislado sin conversación asociada, porque lleva a entrenar ejemplos engañosos
+
+
+## Hotfix — 2026-03-19 — Build bot TypeScript
+
+### Problema
+- Falló el deploy del servicio `apps/bot` en Railway por error TypeScript `TS5076` en `src/routes/webhooks.ts`.
+- Se mezclaban operadores `||` y `??` en la misma expresión sin paréntesis.
+
+### Fix aplicado
+- Se reescribió la construcción de `faqSummary` para separar el cálculo de `faqTitle` y evitar la mezcla inválida de operadores.
+
+### Archivo tocado
+- `apps/bot/src/routes/webhooks.ts`
+
+### Validación
+- `cd apps/bot && npm run build` ✅
+
+### Error evitado a futuro
+- Cuando haya expresiones con fallback encadenado, separar en variables intermedias si aparece `??` junto con `||` o `&&`.

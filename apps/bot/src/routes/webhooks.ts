@@ -982,10 +982,10 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               const allFaqs = await r.listFaq();
               return { faqs: allFaqs.filter((f: any) => f.enabled && !f.draft).slice(0, 8) };
             })();
-            const faqSummary = cachedFaqs.map((f: any) =>
-              `P: ${(f.triggers ?? []).join(' / ') || f.title ?? ''}\nR: ${String(f.answer ?? '').slice(0, 200)}`
-            ).join('\n\n');
-
+            const faqSummary = cachedFaqs.map((f: any) => {
+              const faqTitle = ((f.triggers ?? []).join(' / ') || f.title || '');
+              return `P: ${faqTitle}\nR: ${String(f.answer ?? '').slice(0, 200)}`;
+            }).join('\n\n');
             const history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
             const turns = (state as any).gpt_history ?? [];
             for (const t of turns.slice(-4)) history.push({ role: t.role, content: t.content });
