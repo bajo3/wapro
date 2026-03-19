@@ -101,3 +101,28 @@ export function buildCarDealershipSystemPrompt(params: {
 
   return lines.join('\n');
 }
+
+
+function extractJsonBlock(text: string): string | null {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start >= 0 && end > start) return raw.slice(start, end + 1);
+  return null;
+}
+
+export async function askGPTJson<T = any>(params: GptParams): Promise<T | null> {
+  const text = await askGPT(params);
+  if (!text) return null;
+  const json = extractJsonBlock(text);
+  if (!json) return null;
+  try {
+    return JSON.parse(json) as T;
+  } catch (err) {
+    console.error('[gpt] json parse error:', err);
+    return null;
+  }
+}

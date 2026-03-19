@@ -43,6 +43,19 @@ export type ConvState = {
   /** Lead score (0..100) recalculated each turn */
   leadScore?: number;
 
+
+  agent?: {
+    intent?: string;
+    confidence?: number;
+    action?: string;
+    urgency?: 'low' | 'medium' | 'high';
+    handoffRecommended?: boolean;
+    suggestedReply?: string;
+    missingFields?: string[];
+    internalReason?: string;
+    updatedAt?: string;
+  };
+
   /** Financing flow state */
   finance?: {
     stage?: 'idle' | 'collecting';

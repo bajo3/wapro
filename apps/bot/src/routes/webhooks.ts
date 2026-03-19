@@ -22,11 +22,13 @@ import {
 import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from '../services/extract.js';
 import { createHash } from 'node:crypto';
 import type { ConvState } from '../services/state.js';
-import { computeLeadScore, leadLabel } from '../services/lead.js';
+import { computeLeadScore, computeLeadScoreBreakdown, leadLabel } from '../services/lead.js';
 
 import { getFinanceApr, simulateFinancing, formatArs } from '../services/finance.js';
 import { sendImageAndPersist, sendTextAndPersist } from '../services/panelPersistence.js';
 import { askGPT, buildCarDealershipSystemPrompt } from '../services/gpt.js';
+import { decideAgentAction } from '../services/agent.js';
+import { upsertLeadProfile } from '../services/leadProfile.js';
 
 export const webhookRouter = Router();
 
@@ -251,7 +253,7 @@ function detectNeedProfile(rawText: string) {
 }
 
 function isVehicleItem(it: any): boolean {
-  return !!(it && (it.year || it.brand || it.model || (it.category && /auto|autos|veh|car/i.test(String(it.category)))));
+  return !!(it && (it.year || it.brand || it.model || (it.category && /auto|autos|veh|car/i.test(String(it.category)) )));
 }
 
 function isTruckishName(name: string): boolean {
@@ -522,7 +524,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     state.search_context_at = nowIso;
 
     // Lead score recalculated each turn.
-    state.leadScore = computeLeadScore(state, extracted, now);
+    const leadBreakdown = computeLeadScoreBreakdown(state, extracted, now);
+    state.leadScore = leadBreakdown.total;
 
     const aggEntry = aggregators.get(key);
     const cleanup = () => {
@@ -536,7 +539,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     const scheduleReply = (reply: string, nextState: any, imageUrl?: string) => {
       const delayMs = computeHumanDelay(reply);
-      void evolutionSendPresence(instance, number, 'composing', Math.min(delayMs, 5000)).catch(() => { });
+      void evolutionSendPresence(instance, number, 'composing', Math.min(delayMs, 5000)).catch(() => {});
 
       const timer = setTimeout(async () => {
         const sentIso = new Date().toISOString();
@@ -572,6 +575,27 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               });
             }
           } catch { /* ignore episode failures */ }
+
+          void upsertLeadProfile({
+            instance,
+            remoteJid,
+            extracted: nextState?.extracted ?? extracted,
+            leadScore: nextState?.leadScore ?? state.leadScore,
+            leadLabel: leadLabel(Number(nextState?.leadScore ?? state.leadScore ?? 0)),
+            decision: nextState?.agent ? {
+              intent: nextState.agent.intent || 'agent_fallback',
+              confidence: Number(nextState.agent.confidence ?? 0),
+              action: nextState.agent.action || 'FOLLOWUP',
+              extracted: {},
+              missingFields: Array.isArray(nextState.agent.missingFields) ? nextState.agent.missingFields : [],
+              vehicleIds: [],
+              urgency: nextState.agent.urgency || 'medium',
+              handoffRecommended: Boolean(nextState.agent.handoffRecommended),
+              suggestedReply: String(nextState.agent.suggestedReply || ''),
+              internalReason: nextState.agent.internalReason || undefined
+            } : null,
+            lastSummary: nextState?.agent?.suggestedReply ?? null
+          });
 
           const sock = getSocket();
           if (sock) {
@@ -695,7 +719,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     let reply = '';
     const { _forceFinancing: _ff, ...stateClean } = state as any;
-    let newState: ConvState = { ...stateClean, stage: 'idle', lastBotAt: nowIso, extracted, last_media: lastMedia } as any;
+    let newState: ConvState = { ...stateClean, stage: 'idle', lastBotAt: nowIso, extracted, last_media: lastMedia, leadScore: leadBreakdown.total, leadScoreBreakdown: leadBreakdown as any } as any;
     let isFallback = false;
 
     // ── INTELLIGENCE LAYER: check FAQ / Policy / Playbook FIRST ────────────
@@ -720,19 +744,19 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         newState.last_intent = row.intent ?? 'playbook';
         (newState as any).last_sources = [{ type: 'playbook', id: row.id }];
         (newState as any).last_variant = `playbook_${row.id}`;
-        void logDecision({ instance, remoteJid, intent: row.intent, confidence: kScore, data: { type: 'playbook', id: row.id } }).catch(() => { });
+        void logDecision({ instance, remoteJid, intent: row.intent, confidence: kScore, data: { type: 'playbook', id: row.id } }).catch(() => {});
 
       } else if (type === 'faq') {
         reply = String(row.answer ?? '');
         newState.last_intent = 'faq';
         (newState as any).last_sources = [{ type: 'faq', id: row.id }];
-        void logDecision({ instance, remoteJid, intent: 'faq', confidence: kScore, data: { type: 'faq', id: row.id } }).catch(() => { });
+        void logDecision({ instance, remoteJid, intent: 'faq', confidence: kScore, data: { type: 'faq', id: row.id } }).catch(() => {});
 
       } else if (type === 'policy') {
         reply = String(row.body ?? '');
         newState.last_intent = 'policy';
         (newState as any).last_sources = [{ type: 'policy', id: row.id }];
-        void logDecision({ instance, remoteJid, intent: 'policy', confidence: kScore, data: { type: 'policy', id: row.id } }).catch(() => { });
+        void logDecision({ instance, remoteJid, intent: 'policy', confidence: kScore, data: { type: 'policy', id: row.id } }).catch(() => {});
       }
 
       if (reply) {
@@ -754,7 +778,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           return;
         }
         reply = [pickOne(['Dale. Mirá opciones 👇', 'Te paso estas opciones 👇', 'Genial, mirá lo que tengo 👇']),
-        ...hits.map((it, i) => formatItemLine(it, i + 1)),
+          ...hits.map((it, i) => formatItemLine(it, i + 1)),
           '', pickOne(['¿Querés alternativas en otro rango de precio?', 'Contame presupuesto y zona y ajusto la búsqueda.', 'Si me decís presupuesto y zona, te recomiendo la mejor.'])
         ].join('\n');
         newState.last_intent = 'product_results';
@@ -921,7 +945,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             return;
           }
           reply = [pickOne(['Te paso opciones 👇', 'Mirá estas opciones 👇', 'Dale. Tengo esto 👇']),
-          ...hits.map((it, i) => formatItemLine(it, i + 1)),
+            ...hits.map((it, i) => formatItemLine(it, i + 1)),
             '', pickOne(['Si me decís presupuesto y zona, te recomiendo la mejor.', '¿Querés alternativas en otro rango?', 'Contame presupuesto y zona para ajustar.'])
           ].join('\n');
           newState.last_intent = 'product_results';
@@ -946,73 +970,96 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           newState.last_intent = `knowledge_${kResults[0].type}`;
           (newState as any).last_sources = [{ type: kResults[0].type, id: kResults[0].id }];
         } else {
-          // Fallback 2: GPT-4o — respuesta inteligente con contexto del catálogo y FAQs
+          // Fallback 2: agente estructurado + GPT clásico
           try {
-            // Build a compact catalog summary (top 12 items max to stay within context)
             const catalogSummary = catalog.slice(0, 12).map((it: any) => {
               const price = it.priceFormatted ?? (it.priceNumber ? `$${it.priceNumber.toLocaleString('es-AR')}` : '');
               return `- ${it.brand ?? ''} ${it.model ?? ''} ${it.year ?? ''} ${it.version ?? ''} ${price ? `(${price})` : ''}`.replace(/\s+/g, ' ').trim();
             }).filter(Boolean).join('\n');
 
-            // Build a compact FAQ summary
             const { faqs: cachedFaqs } = await (async () => {
               const r = await import('../services/intelligence.js');
               const allFaqs = await r.listFaq();
               return { faqs: allFaqs.filter((f: any) => f.enabled && !f.draft).slice(0, 8) };
             })();
             const faqSummary = cachedFaqs.map((f: any) =>
-              `P: ${((f.triggers ?? []).join(' / ') || f.title || '')}\nR: ${String(f.answer ?? '').slice(0, 200)}`
+              `P: ${(f.triggers ?? []).join(' / ') || f.title ?? ''}\nR: ${String(f.answer ?? '').slice(0, 200)}`
             ).join('\n\n');
 
-            // Include recent conversation turns as history (up to 4 turns)
             const history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
             const turns = (state as any).gpt_history ?? [];
-            for (const t of turns.slice(-4)) {
-              history.push({ role: t.role, content: t.content });
-            }
+            for (const t of turns.slice(-4)) history.push({ role: t.role, content: t.content });
 
-            const systemPrompt = buildCarDealershipSystemPrompt({
+            const agentDecision = await decideAgentAction({
               dealershipName: process.env.DEALERSHIP_NAME ?? undefined,
-              catalogSummary: catalogSummary || undefined,
-              faqSummary: faqSummary || undefined
+              userMessage: rawText,
+              history,
+              catalog,
+              faqSummary,
+              extracted,
+              leadScore: state.leadScore
             });
 
-            let gptReply: string | null = null;
-
-            try {
-              console.log("[webhooks] entering GPT fallback");
-
-              gptReply = await askGPT({
-                systemPrompt,
-                userMessage: rawText,
-                history
+            if (agentDecision?.suggestedReply) {
+              reply = agentDecision.suggestedReply;
+              newState.last_intent = `agent_${agentDecision.intent || 'fallback'}`;
+              (newState as any).agent = {
+                intent: agentDecision.intent,
+                confidence: agentDecision.confidence,
+                action: agentDecision.action,
+                urgency: agentDecision.urgency,
+                handoffRecommended: agentDecision.handoffRecommended,
+                suggestedReply: agentDecision.suggestedReply,
+                missingFields: agentDecision.missingFields,
+                internalReason: agentDecision.internalReason,
+                updatedAt: nowIso
+              };
+              (newState as any).missing_fields = agentDecision.missingFields || [];
+              if (agentDecision.handoffRecommended) {
+                try { await setConversationRule(instance, remoteJid, 'HUMAN_ONLY'); } catch {}
+              }
+              void logDecision({
+                instance,
+                remoteJid,
+                intent: newState.last_intent,
+                confidence: agentDecision.confidence,
+                data: {
+                  type: 'agent',
+                  action: agentDecision.action,
+                  urgency: agentDecision.urgency,
+                  handoffRecommended: agentDecision.handoffRecommended,
+                  missingFields: agentDecision.missingFields || [],
+                  reason: agentDecision.internalReason || null
+                }
+              }).catch(() => {});
+            } else {
+              const systemPrompt = buildCarDealershipSystemPrompt({
+                dealershipName: process.env.DEALERSHIP_NAME ?? undefined,
+                catalogSummary: catalogSummary || undefined,
+                faqSummary: faqSummary || undefined
               });
 
-              console.log("[webhooks] GPT fallback success:", !!gptReply);
-            } catch (err) {
-              console.log("[webhooks] GPT fallback error:", err);
-            }
+              const gptReply = await askGPT({ systemPrompt, userMessage: rawText, history });
 
-            if (gptReply && String(gptReply).trim()) {
-              reply = String(gptReply).trim();
-              newState.last_intent = 'gpt_fallback';
-              // Persist conversation history for next turns (keep last 6 turns)
-              const newHistory = [
-                ...turns,
-                { role: 'user', content: rawText },
-                { role: 'assistant', content: String(gptReply).trim() }
-              ].slice(-12);
-              (newState as any).gpt_history = newHistory;
-            } else {
-              // GPT not configured or failed — generic fallback
-              reply = pickOne([
-                'Dale 🙂 ¿Qué vehículo o producto estabas buscando?',
-                '¿En qué te puedo ayudar? Si me decís marca/modelo o presupuesto, te busco opciones.',
-                'Decime qué buscás y te paso opciones y precios 🔍'
-              ]);
-              newState.stage = 'awaiting_query';
-              newState.last_intent = 'fallback';
-              isFallback = true;
+              if (gptReply) {
+                reply = gptReply;
+                newState.last_intent = 'gpt_fallback';
+                const newHistory = [
+                  ...turns,
+                  { role: 'user', content: rawText },
+                  { role: 'assistant', content: gptReply }
+                ].slice(-12);
+                (newState as any).gpt_history = newHistory;
+              } else {
+                reply = pickOne([
+                  'Dale 🙂 ¿Qué vehículo o producto estabas buscando?',
+                  '¿En qué te puedo ayudar? Si me decís marca/modelo o presupuesto, te busco opciones.',
+                  'Decime qué buscás y te paso opciones y precios 🔍'
+                ]);
+                newState.stage = 'awaiting_query';
+                newState.last_intent = 'fallback';
+                isFallback = true;
+              }
             }
           } catch (gptErr) {
             console.error('[webhooks] GPT fallback error:', gptErr);

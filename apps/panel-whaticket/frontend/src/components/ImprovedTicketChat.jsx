@@ -46,6 +46,9 @@ export default function ImprovedTicketChat({
   const assignedTo = ticket?.user?.name || null;
   const waName = ticket?.whatsapp?.name || null;
   const botModeLabel = isHumanOnly ? "Humano" : botMode === "OFF" ? "Off" : "Auto";
+  const agentData = ticket?.agentData || null;
+  const leadScore = Number(ticket?.leadScore || 0) || 0;
+  const leadTemp = leadScore >= 70 ? "Caliente" : leadScore >= 40 ? "Tibio" : "Frío";
 
   const waLink = useMemo(() => {
     const digits = String(phone || "").replace(/[^\d]/g, "");
@@ -233,6 +236,74 @@ export default function ImprovedTicketChat({
           </div>
         </div>
       )}
+
+      {agentData ? (
+        <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-3 md:px-4">
+          <div className="rounded-auto-xl border border-auto-border bg-auto-surface p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full border border-auto-border bg-auto-panel px-2.5 py-1 text-[11px] font-medium text-auto-text">
+                <Sparkles className="h-3.5 w-3.5" /> Agente
+              </span>
+              {agentData?.intent ? (
+                <span className="rounded-full border border-auto-border bg-auto-panel px-2.5 py-1 text-[11px] text-auto-muted">
+                  Intent: {agentData.intent}
+                </span>
+              ) : null}
+              {agentData?.action ? (
+                <span className="rounded-full border border-auto-border bg-auto-panel px-2.5 py-1 text-[11px] text-auto-muted">
+                  Acción: {agentData.action}
+                </span>
+              ) : null}
+              <span className="rounded-full border border-auto-border bg-auto-panel px-2.5 py-1 text-[11px] text-auto-muted">
+                Lead {leadTemp} · {leadScore}
+              </span>
+              {agentData?.confidence !== null && agentData?.confidence !== undefined ? (
+                <span className="rounded-full border border-auto-border bg-auto-panel px-2.5 py-1 text-[11px] text-auto-muted">
+                  Confianza: {Math.round(Number(agentData.confidence || 0) * 100)}%
+                </span>
+              ) : null}
+              {agentData?.handoffRecommended ? (
+                <span className="rounded-full border border-auto-border bg-auto-panel px-2.5 py-1 text-[11px] font-medium text-auto-text">
+                  Recomienda humano
+                </span>
+              ) : null}
+            </div>
+
+            {agentData?.suggestedReply ? (
+              <div className="mt-3 rounded-auto-lg border border-auto-border bg-auto-panel p-3">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-auto-muted">Respuesta sugerida</div>
+                <div className="mt-1 whitespace-pre-wrap text-sm text-auto-text">{agentData.suggestedReply}</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => prefill(agentData.suggestedReply)}
+                    className="rounded-auto-lg border border-auto-border bg-auto-surface px-3 py-1.5 text-xs font-medium text-auto-text hover:bg-auto-panel2"
+                  >
+                    Usar sugerencia
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {(agentData?.missingFields?.length || agentData?.internalReason) ? (
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                {agentData?.missingFields?.length ? (
+                  <div className="rounded-auto-lg border border-auto-border bg-auto-panel p-3">
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-auto-muted">Datos faltantes</div>
+                    <div className="mt-1 text-sm text-auto-text">{agentData.missingFields.join(', ')}</div>
+                  </div>
+                ) : null}
+                {agentData?.internalReason ? (
+                  <div className="rounded-auto-lg border border-auto-border bg-auto-panel p-3">
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-auto-muted">Motivo interno</div>
+                    <div className="mt-1 text-sm text-auto-text">{agentData.internalReason}</div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       <div className="relative min-h-0 flex-1 overflow-hidden bg-auto-surface">
         <MessagesList ticketId={ticketId} isGroup={ticket?.isGroup} />
