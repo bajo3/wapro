@@ -32,6 +32,38 @@ ticketRoutes.post(
   TicketController.createAgentFeedback
 );
 
+
+// Agent feedback management
+ticketRoutes.get(
+  "/agent-feedbacks/stats",
+  isAuth,
+  TicketController.agentFeedbackStats
+);
+
+ticketRoutes.get(
+  "/agent-feedbacks",
+  isAuth,
+  TicketController.listAgentFeedback
+);
+
+ticketRoutes.get(
+  "/agent-feedbacks/:feedbackId",
+  isAuth,
+  TicketController.getAgentFeedbackDetail
+);
+
+ticketRoutes.post(
+  "/agent-feedbacks/:feedbackId/export-example",
+  isAuth,
+  TicketController.exportAgentFeedbackToExample
+);
+
+ticketRoutes.post(
+  "/agent-feedbacks/:feedbackId/export-test-case",
+  isAuth,
+  TicketController.exportAgentFeedbackToTestCase
+);
+
 // Internal notes (not sent to the customer)
 ticketRoutes.get(
   "/tickets/:ticketId/notes",

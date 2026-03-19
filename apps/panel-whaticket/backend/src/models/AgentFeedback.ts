@@ -51,6 +51,18 @@ class AgentFeedback extends Model<AgentFeedback> {
   @Column(DataType.JSONB)
   meta: any;
 
+  @Column(DataType.BOOLEAN)
+  exportedToExample: boolean;
+
+  @Column(DataType.DATE(6))
+  exportedAt: Date;
+
+  @Column(DataType.BOOLEAN)
+  exportedToTestCase: boolean;
+
+  @Column(DataType.DATE(6))
+  exportedToTestCaseAt: Date;
+
   @ForeignKey(() => Contact)
   @Column
   contactId: number;

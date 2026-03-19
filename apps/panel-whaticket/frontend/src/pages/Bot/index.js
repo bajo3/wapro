@@ -16,6 +16,15 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Chip,
 } from "@material-ui/core";
 
 import MainContainer from "../../components/MainContainer";
@@ -85,8 +94,8 @@ const Bot = () => {
   }, [user, history]);
 
   // Tabs: keep stable indices.
-  // 0=general, 1=policies, 2=faqs, 3=playbooks, 4=training, 5=playground, 6=tests, 7=decisions
-  const TAB_KEYS = ["general", "policies", "faqs", "playbooks", "training", "playground", "tests", "decisions"];
+  // 0=general, 1=policies, 2=faqs, 3=playbooks, 4=training, 5=playground, 6=tests, 7=decisions, 8=feedback
+  const TAB_KEYS = ["general", "policies", "faqs", "playbooks", "training", "playground", "tests", "decisions", "feedback"];
 
   const parseTabFromUrl = () => {
     try {
@@ -111,6 +120,12 @@ const Bot = () => {
   const [playbooks, setPlaybooks] = useState([]);
   const [examples, setExamples] = useState([]);
   const [decisions, setDecisions] = useState([]);
+  const [agentFeedbackRows, setAgentFeedbackRows] = useState([]);
+  const [agentFeedbackStats, setAgentFeedbackStats] = useState(null);
+  const [feedbackDetail, setFeedbackDetail] = useState(null);
+  const [feedbackDetailOpen, setFeedbackDetailOpen] = useState(false);
+  const [feedbackVerdictFilter, setFeedbackVerdictFilter] = useState("all");
+  const [feedbackExportFilter, setFeedbackExportFilter] = useState("all");
 
   // Playground
   const [playgroundText, setPlaygroundText] = useState("");
@@ -138,7 +153,11 @@ const Bot = () => {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [s, pol, f, p, e, d, tcs] = await Promise.all([
+      const feedbackParams = { limit: 200 };
+      if (feedbackVerdictFilter !== "all") feedbackParams.verdict = feedbackVerdictFilter;
+      if (feedbackExportFilter !== "all") feedbackParams.exported = feedbackExportFilter === "exported";
+
+      const [s, pol, f, p, e, d, tcs, afr, afs] = await Promise.all([
         api.get("/bot/intelligence/settings"),
         api.get("/bot/intelligence/policies"),
         api.get("/bot/intelligence/faqs"),
@@ -146,6 +165,8 @@ const Bot = () => {
         api.get("/bot/intelligence/examples"),
         api.get("/bot/intelligence/decisions", { params: { limit: 200 } }),
         api.get("/bot/tests/cases"),
+        api.get("/agent-feedbacks", { params: feedbackParams }),
+        api.get("/agent-feedbacks/stats"),
       ]);
 
       setSettingsRaw(JSON.stringify(s.data?.settings ?? {}, null, 2));
@@ -155,6 +176,8 @@ const Bot = () => {
       setExamples(e.data?.examples ?? []);
       setDecisions(d.data?.decisions ?? []);
       setTestCases(tcs.data?.cases ?? []);
+      setAgentFeedbackRows(afr.data?.rows ?? []);
+      setAgentFeedbackStats(afs.data?.stats ?? null);
     } catch (err) {
       toastError(err);
     } finally {
@@ -239,7 +262,7 @@ const Bot = () => {
   useEffect(() => {
     if (user?.profile === "admin") loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.profile]);
+  }, [user?.profile, feedbackVerdictFilter, feedbackExportFilter]);
 
   // Keep URL in sync with selected tab for deep-links and /training redirect.
   useEffect(() => {
@@ -352,6 +375,47 @@ const Bot = () => {
     }
   };
 
+
+  const exportFeedbackToExample = async (row) => {
+    try {
+      await api.post(`/agent-feedbacks/${row.id}/export-example`);
+      toast.success("Feedback exportado como ejemplo");
+      await loadAll();
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const exportFeedbackToTestCase = async (row) => {
+    try {
+      await api.post(`/agent-feedbacks/${row.id}/export-test-case`);
+      toast.success("Feedback exportado como test case");
+      await loadAll();
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const openFeedbackDetail = async (row) => {
+    try {
+      const { data } = await api.get(`/agent-feedbacks/${row.id}`);
+      setFeedbackDetail(data || null);
+      setFeedbackDetailOpen(true);
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const failureRanking = useMemo(() => {
+    const map = agentFeedbackStats?.failureByIntent || {};
+    return Object.entries(map).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 8);
+  }, [agentFeedbackStats]);
+
+  const approvalRanking = useMemo(() => {
+    const map = agentFeedbackStats?.approvedByIntent || {};
+    return Object.entries(map).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 8);
+  }, [agentFeedbackStats]);
+
   const decisionRows = useMemo(() => decisions ?? [], [decisions]);
 
   return (
@@ -380,6 +444,7 @@ const Bot = () => {
           <Tab label="Playground" />
           <Tab label="Tests" />
           <Tab label="Decisions" />
+          <Tab label="Feedback" />
         </Tabs>
         <Divider />
 
@@ -733,6 +798,205 @@ const Bot = () => {
                 ))}
               </TableBody>
             </Table>
+          </TabPanel>
+
+          <TabPanel value={tab} index={8}>
+            <Box display="grid" gridTemplateColumns="repeat(auto-fit, minmax(180px, 1fr))" gridGap={12}>
+              <Paper variant="outlined" style={{ padding: 12 }}>
+                <Typography variant="caption" color="textSecondary">Total feedback</Typography>
+                <Typography variant="h6">{agentFeedbackStats?.total || 0}</Typography>
+              </Paper>
+              <Paper variant="outlined" style={{ padding: 12 }}>
+                <Typography variant="caption" color="textSecondary">Aprobados</Typography>
+                <Typography variant="h6">{agentFeedbackStats?.approved || 0}</Typography>
+              </Paper>
+              <Paper variant="outlined" style={{ padding: 12 }}>
+                <Typography variant="caption" color="textSecondary">Fallos</Typography>
+                <Typography variant="h6">{(agentFeedbackStats?.rejected || 0) + (agentFeedbackStats?.edited || 0) + (agentFeedbackStats?.handoff || 0)}</Typography>
+              </Paper>
+              <Paper variant="outlined" style={{ padding: 12 }}>
+                <Typography variant="caption" color="textSecondary">Confianza promedio</Typography>
+                <Typography variant="h6">{agentFeedbackStats?.avgConfidence ?? 0}</Typography>
+              </Paper>
+              <Paper variant="outlined" style={{ padding: 12 }}>
+                <Typography variant="caption" color="textSecondary">Exportados a examples</Typography>
+                <Typography variant="h6">{agentFeedbackStats?.exportedToExample || 0}</Typography>
+              </Paper>
+              <Paper variant="outlined" style={{ padding: 12 }}>
+                <Typography variant="caption" color="textSecondary">Exportados a tests</Typography>
+                <Typography variant="h6">{agentFeedbackStats?.exportedToTestCase || 0}</Typography>
+              </Paper>
+            </Box>
+
+            <Box mt={2} display="grid" gridTemplateColumns="1fr 1fr" gridGap={16}>
+              <Paper variant="outlined" style={{ padding: 12 }}>
+                <Typography variant="subtitle2" gutterBottom>Intent con más fallos</Typography>
+                {failureRanking.length ? failureRanking.map(([intent, qty]) => (
+                  <Box key={intent} display="flex" justifyContent="space-between" mb={1}>
+                    <Typography variant="body2">{intent}</Typography>
+                    <Chip size="small" label={qty} />
+                  </Box>
+                )) : <Typography variant="body2" color="textSecondary">Sin datos todavía.</Typography>}
+              </Paper>
+
+              <Paper variant="outlined" style={{ padding: 12 }}>
+                <Typography variant="subtitle2" gutterBottom>Intent mejor resueltos</Typography>
+                {approvalRanking.length ? approvalRanking.map(([intent, qty]) => (
+                  <Box key={intent} display="flex" justifyContent="space-between" mb={1}>
+                    <Typography variant="body2">{intent}</Typography>
+                    <Chip size="small" label={qty} />
+                  </Box>
+                )) : <Typography variant="body2" color="textSecondary">Sin datos todavía.</Typography>}
+              </Paper>
+            </Box>
+
+            <Box mt={3} display="flex" alignItems="center" justifyContent="space-between" flexWrap="wrap" gridGap={16}>
+              <Typography variant="subtitle1">Feedback real del agente</Typography>
+              <Box display="flex" gridGap={12} flexWrap="wrap">
+                <FormControl variant="outlined" size="small">
+                  <InputLabel>Veredicto</InputLabel>
+                  <Select
+                    value={feedbackVerdictFilter}
+                    onChange={(e) => setFeedbackVerdictFilter(e.target.value)}
+                    label="Veredicto"
+                    style={{ minWidth: 160 }}
+                  >
+                    <MenuItem value="all">Todos</MenuItem>
+                    <MenuItem value="approved">Aprobados</MenuItem>
+                    <MenuItem value="rejected">Rechazados</MenuItem>
+                    <MenuItem value="edited">Editados</MenuItem>
+                    <MenuItem value="handoff">Handoff</MenuItem>
+                  </Select>
+                </FormControl>
+
+                <FormControl variant="outlined" size="small">
+                  <InputLabel>Exportación</InputLabel>
+                  <Select
+                    value={feedbackExportFilter}
+                    onChange={(e) => setFeedbackExportFilter(e.target.value)}
+                    label="Exportación"
+                    style={{ minWidth: 170 }}
+                  >
+                    <MenuItem value="all">Todos</MenuItem>
+                    <MenuItem value="pending">Pendientes</MenuItem>
+                    <MenuItem value="exported">Exportados</MenuItem>
+                  </Select>
+                </FormControl>
+              </Box>
+            </Box>
+
+            <Box mt={2}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>ID</TableCell>
+                    <TableCell>Fecha</TableCell>
+                    <TableCell>Veredicto</TableCell>
+                    <TableCell>Intent</TableCell>
+                    <TableCell>Acción</TableCell>
+                    <TableCell>Contacto</TableCell>
+                    <TableCell>Sugerida</TableCell>
+                    <TableCell>Final</TableCell>
+                    <TableCell>Exports</TableCell>
+                    <TableCell align="right">Acciones</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {agentFeedbackRows.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell>{row.id}</TableCell>
+                      <TableCell>{row.createdAt ? new Date(row.createdAt).toLocaleString() : "-"}</TableCell>
+                      <TableCell>{row.verdict}</TableCell>
+                      <TableCell>{row.intent || "-"}</TableCell>
+                      <TableCell>{row.action || "-"}</TableCell>
+                      <TableCell>{row.contact?.name || row.contact?.number || "-"}</TableCell>
+                      <TableCell style={{ maxWidth: 220, whiteSpace: "pre-wrap" }}>{row.suggestedReply || "-"}</TableCell>
+                      <TableCell style={{ maxWidth: 220, whiteSpace: "pre-wrap" }}>{row.finalReply || "-"}</TableCell>
+                      <TableCell>
+                        <Box display="flex" flexDirection="column" gridGap={6}>
+                          <Chip size="small" label={row.exportedToExample ? "Example ✓" : "Example -"} />
+                          <Chip size="small" label={row.exportedToTestCase ? "Test ✓" : "Test -"} />
+                        </Box>
+                      </TableCell>
+                      <TableCell align="right">
+                        <Box display="flex" justifyContent="flex-end" gridGap={8} flexWrap="wrap">
+                          <Button size="small" variant="outlined" onClick={() => openFeedbackDetail(row)}>Ver detalle</Button>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="primary"
+                            disabled={Boolean(row.exportedToExample)}
+                            onClick={() => exportFeedbackToExample(row)}
+                          >
+                            {row.exportedToExample ? "Example ✓" : "Exportar example"}
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="primary"
+                            disabled={Boolean(row.exportedToTestCase)}
+                            onClick={() => exportFeedbackToTestCase(row)}
+                          >
+                            {row.exportedToTestCase ? "Test ✓" : "Exportar test"}
+                          </Button>
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
+
+            <Dialog open={feedbackDetailOpen} onClose={() => setFeedbackDetailOpen(false)} fullWidth maxWidth="md">
+              <DialogTitle>Detalle de feedback #{feedbackDetail?.row?.id || ""}</DialogTitle>
+              <DialogContent dividers>
+                <Box display="grid" gridTemplateColumns="1fr 1fr" gridGap={16}>
+                  <Paper variant="outlined" style={{ padding: 12 }}>
+                    <Typography variant="subtitle2" gutterBottom>Resumen</Typography>
+                    <Typography variant="body2"><strong>Veredicto:</strong> {feedbackDetail?.row?.verdict || "-"}</Typography>
+                    <Typography variant="body2"><strong>Intent:</strong> {feedbackDetail?.row?.intent || "-"}</Typography>
+                    <Typography variant="body2"><strong>Acción:</strong> {feedbackDetail?.row?.action || "-"}</Typography>
+                    <Typography variant="body2"><strong>Confianza:</strong> {feedbackDetail?.row?.confidence ?? "-"}</Typography>
+                    <Typography variant="body2"><strong>Contacto:</strong> {feedbackDetail?.row?.contact?.name || feedbackDetail?.row?.contact?.number || "-"}</Typography>
+                    <Typography variant="body2"><strong>Ticket:</strong> #{feedbackDetail?.row?.ticket?.id || "-"} · {feedbackDetail?.row?.ticket?.status || "-"}</Typography>
+                    <Typography variant="body2"><strong>Usuario:</strong> {feedbackDetail?.row?.user?.name || "-"}</Typography>
+                  </Paper>
+
+                  <Paper variant="outlined" style={{ padding: 12 }}>
+                    <Typography variant="subtitle2" gutterBottom>Contexto agente</Typography>
+                    <Typography variant="body2" style={{ whiteSpace: "pre-wrap" }}><strong>Sugerida:</strong> {feedbackDetail?.row?.suggestedReply || "-"}</Typography>
+                    <Box mt={1} />
+                    <Typography variant="body2" style={{ whiteSpace: "pre-wrap" }}><strong>Final:</strong> {feedbackDetail?.row?.finalReply || "-"}</Typography>
+                    <Box mt={1} />
+                    <Typography variant="body2" style={{ whiteSpace: "pre-wrap" }}><strong>Nota:</strong> {feedbackDetail?.row?.note || "-"}</Typography>
+                    <Box mt={1} />
+                    <Typography variant="body2" style={{ whiteSpace: "pre-wrap" }}><strong>Meta:</strong> {JSON.stringify(feedbackDetail?.row?.meta || {}, null, 2)}</Typography>
+                  </Paper>
+                </Box>
+
+                <Box mt={2}>
+                  <Typography variant="subtitle2" gutterBottom>Últimos mensajes del ticket</Typography>
+                  <Paper variant="outlined" style={{ padding: 12, maxHeight: 320, overflowY: "auto" }}>
+                    {(feedbackDetail?.messages || []).map((msg) => (
+                      <Box key={msg.id} mb={1.5}>
+                        <Typography variant="caption" color="textSecondary">
+                          {msg.fromMe ? "Asesor/Bot" : "Cliente"} · {msg.createdAt ? new Date(msg.createdAt).toLocaleString() : "-"}
+                        </Typography>
+                        <Typography variant="body2" style={{ whiteSpace: "pre-wrap" }}>
+                          {msg.body || "[sin texto]"}
+                        </Typography>
+                      </Box>
+                    ))}
+                    {!(feedbackDetail?.messages || []).length && (
+                      <Typography variant="body2" color="textSecondary">Sin mensajes disponibles para este feedback.</Typography>
+                    )}
+                  </Paper>
+                </Box>
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setFeedbackDetailOpen(false)} color="primary">Cerrar</Button>
+              </DialogActions>
+            </Dialog>
           </TabPanel>
 
           <TabPanel value={tab} index={5}>
