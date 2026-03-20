@@ -271,3 +271,52 @@ Corregir cuatro puntos que seguían afectando ventas reales: mensajes del bot po
 - no mezclar ranking semántico con presupuesto sin una regla dura, porque termina recomendando unidades fuera del rango sin avisar
 - no delegar a humano sin mover el ticket de estado, porque operativamente parece seguir “en cola”
 - no dejar mensajes del bot indistinguibles del humano si el objetivo es auditar y mejorar al agente
+
+## 2026-03-20 — Sprint 6 — Agente más vendedor y menos bot
+
+### Objetivo
+Mejorar el oficio comercial del agente: respuestas más naturales, una sola pregunta útil por vez, mejor lectura de cierre/visita/seña/financiación/permuta y resultados más curados.
+
+### Cambios principales
+- se reforzó el prompt estructurado del agente en `apps/bot/src/services/agent.ts`
+- se reforzó el prompt del fallback GPT clásico en `apps/bot/src/services/gpt.ts`
+- se redujo el listado por defecto de vehículos a 2-3 opciones mejor elegidas
+- se mejoró `buildVehicleReply()` para sonar más asesor comercial y explicar mejor alternativas cercanas
+- se agregaron helpers para hacer una sola pregunta útil por vez:
+  - `getNextUsefulSearchQuestion()`
+  - `getNextTradeInQuestion()`
+  - `getNextFinanceQuestion()`
+- se mejoró el fallback de búsqueda sin match claro para pedir un solo dato útil
+- se mejoró el branch de permuta para no pedir todo junto
+- se mejoró el branch de financiación para pedir un solo dato faltante por turno
+- se afinó el scoring comercial para utilitarios, SUV, pickup y autos chicos
+- se fortaleció la inferencia de utilitarios (`partner`, `berlingo`, `kangoo`, `vito`, `sprinter`, etc.)
+- se endureció el tono comercial de respuestas de selección rápida y fallback
+
+### SQL / migraciones
+- no hay migraciones nuevas
+
+### Impacto funcional
+- el bot debería sonar menos robótico y más asesor
+- ante búsquedas generales debería preguntar una sola cosa útil
+- ante presupuesto debería priorizar menos cantidad y más calidad de opciones
+- cuando no haya match exacto debería ofrecer alternativas cercanas con mejor justificación
+- permuta y financiación deberían avanzar más ordenadas y sin pedir demasiadas cosas juntas
+
+### Validación
+- `tsc -p apps/bot/tsconfig.json --noEmit` ✅
+
+### Pendientes al cierre
+- tablero de leads priorizados en panel
+- follow-up automático comercial
+- métricas por vendedor/canal
+- deduplicación inteligente antes de exportar examples/tests
+
+### Riesgos / cuidados
+- validar con conversaciones reales que el handoff por permuta no quede demasiado agresivo para ciertos casos
+- seguir revisando el ranking de alternativas cuando no hay match exacto por modelo
+
+### Errores evitados / lecciones
+- no derivar automáticamente por cualquier mención de financiación
+- evitar listas largas porque empeoran percepción y conversión
+- pedir una sola cosa útil por vez mejora mucho la sensación de conversación humana
