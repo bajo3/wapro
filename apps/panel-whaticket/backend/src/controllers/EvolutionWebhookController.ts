@@ -309,6 +309,9 @@ type PersistBotMessageBody = {
   fromMe?: boolean;
   ack?: number;
   read?: boolean;
+  ticketStatus?: string | null;
+  botMode?: string | null;
+  handoff?: boolean;
 };
 
 export const persistBotMessageWebhook = async (req: Request, res: Response): Promise<Response> => {
@@ -326,6 +329,9 @@ export const persistBotMessageWebhook = async (req: Request, res: Response): Pro
     const text = String(body.text || "").trim();
     const mediaUrl = typeof body.mediaUrl === "string" && body.mediaUrl.trim() ? body.mediaUrl.trim() : undefined;
     const mediaType = typeof body.mediaType === "string" && body.mediaType.trim() ? body.mediaType.trim() : undefined;
+    const requestedStatus = typeof body.ticketStatus === "string" ? body.ticketStatus.trim().toLowerCase() : "";
+    const requestedBotMode = typeof body.botMode === "string" ? body.botMode.trim().toUpperCase() : "";
+    const handoff = body.handoff === true;
 
     if (!instanceName || !remoteJid || !msgId || (!text && !mediaUrl)) {
       throw new AppError("ERR_INVALID_BOT_MESSAGE", 400);
@@ -356,11 +362,29 @@ export const persistBotMessageWebhook = async (req: Request, res: Response): Pro
 
     const bodyText = text || (mediaType ? `[${mediaType}]` : "[bot]");
 
-    await ticket.update({
+    const oldStatus = ticket.status;
+
+    const ticketPatch: any = {
       lastMessage: bodyText,
-      botMode: "ON",
       unreadMessages: 0
-    });
+    };
+
+    if (["pending", "open", "closed"].includes(requestedStatus)) {
+      ticketPatch.status = requestedStatus;
+    }
+    if (["ON", "OFF", "HUMAN_ONLY"].includes(requestedBotMode)) {
+      ticketPatch.botMode = requestedBotMode;
+    }
+    if (handoff) {
+      ticketPatch.status = "open";
+      ticketPatch.botMode = "HUMAN_ONLY";
+    }
+
+    if (!ticket.botMode && !ticketPatch.botMode) {
+      ticketPatch.botMode = "ON";
+    }
+
+    await ticket.update(ticketPatch);
 
     const message = await CreateMessageService({
       messageData: {
@@ -377,6 +401,12 @@ export const persistBotMessageWebhook = async (req: Request, res: Response): Pro
     } as any);
 
     const io = getIO();
+    if (oldStatus && oldStatus !== ticket.status) {
+      io.to(oldStatus).emit("ticket", {
+        action: "delete",
+        ticketId: ticket.id
+      });
+    }
     io.to(ticket.status).to(ticket.id.toString()).to("notification").emit("ticket", {
       action: "update",
       ticket

@@ -185,6 +185,18 @@ const useStyles = makeStyles((theme) => ({
     fontWeight: 500,
   },
 
+  senderBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "2px 6px",
+    borderRadius: 999,
+    fontSize: 10,
+    fontWeight: 600,
+    backgroundColor: "rgba(0,0,0,0.08)",
+    color: "#54656f",
+    marginBottom: 6,
+  },
+
   textContentItem: {
     overflowWrap: "break-word",
     padding: "3px 80px 6px 6px",
@@ -612,6 +624,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
   const renderMessages = () => {
     if (messagesList.length > 0) {
       const viewMessagesList = messagesList.map((message, index) => {
+        const isBotMessage = !!message.fromMe && String(message.id || "").startsWith("bot-");
         if (!message.fromMe) {
           return (
             <React.Fragment key={message.id}>
@@ -670,6 +683,9 @@ const MessagesList = ({ ticketId, isGroup }) => {
                     [classes.textContentItemDeleted]: message.isDeleted,
                   })}
                 >
+                  {isBotMessage && (
+                    <span className={classes.senderBadge}>Bot</span>
+                  )}
                   {message.isDeleted && (
                     <Block
                       color="disabled"

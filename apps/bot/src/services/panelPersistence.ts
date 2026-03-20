@@ -24,6 +24,9 @@ export async function persistBotOutboundMessage(params: {
   mediaType?: string | null;
   ack?: number;
   read?: boolean;
+  ticketStatus?: 'pending' | 'open' | 'closed';
+  botMode?: 'ON' | 'OFF' | 'HUMAN_ONLY';
+  handoff?: boolean;
 }) {
   const backendUrl = String(process.env.BACKEND_URL || '').replace(/\/$/, '');
   const adminToken = String(process.env.BOT_ADMIN_TOKEN || '').trim();
@@ -53,7 +56,10 @@ export async function persistBotOutboundMessage(params: {
         mediaType: params.mediaType ?? (imageUrl ? 'image' : null),
         fromMe: true,
         ack: Number.isFinite(Number(params.ack)) ? Number(params.ack) : 1,
-        read: params.read !== false
+        read: params.read !== false,
+        ticketStatus: params.ticketStatus ?? null,
+        botMode: params.botMode ?? null,
+        handoff: Boolean(params.handoff)
       })
     });
 
@@ -72,21 +78,57 @@ export async function persistBotOutboundMessage(params: {
   }
 }
 
-export async function sendTextAndPersist(instance: string, remoteJidOrNumber: string, text: string) {
+export async function sendTextAndPersist(
+  instance: string,
+  remoteJidOrNumber: string,
+  text: string,
+  options?: {
+    ticketStatus?: 'pending' | 'open' | 'closed';
+    botMode?: 'ON' | 'OFF' | 'HUMAN_ONLY';
+    handoff?: boolean;
+  }
+) {
   const remoteJid = normalizeRemoteJid(remoteJidOrNumber);
   const number = extractNumber(remoteJid);
   const body = String(text || '').trim();
   if (!number || !body) return;
   await evolutionSendText(instance, number, body);
-  await persistBotOutboundMessage({ instance, remoteJid, text: body, mediaType: null });
+  await persistBotOutboundMessage({
+    instance,
+    remoteJid,
+    text: body,
+    mediaType: null,
+    ticketStatus: options?.ticketStatus,
+    botMode: options?.botMode,
+    handoff: options?.handoff
+  });
 }
 
-export async function sendImageAndPersist(instance: string, remoteJidOrNumber: string, imageUrl: string, caption?: string) {
+export async function sendImageAndPersist(
+  instance: string,
+  remoteJidOrNumber: string,
+  imageUrl: string,
+  caption?: string,
+  options?: {
+    ticketStatus?: 'pending' | 'open' | 'closed';
+    botMode?: 'ON' | 'OFF' | 'HUMAN_ONLY';
+    handoff?: boolean;
+  }
+) {
   const remoteJid = normalizeRemoteJid(remoteJidOrNumber);
   const number = extractNumber(remoteJid);
   const url = String(imageUrl || '').trim();
   const text = String(caption || '').trim();
   if (!number || !url) return;
   await evolutionSendImage(instance, number, url, text || undefined);
-  await persistBotOutboundMessage({ instance, remoteJid, text, imageUrl: url, mediaType: 'image' });
+  await persistBotOutboundMessage({
+    instance,
+    remoteJid,
+    text,
+    imageUrl: url,
+    mediaType: 'image',
+    ticketStatus: options?.ticketStatus,
+    botMode: options?.botMode,
+    handoff: options?.handoff
+  });
 }

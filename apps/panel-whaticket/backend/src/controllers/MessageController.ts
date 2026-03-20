@@ -49,7 +49,7 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
   if (!ticket.userId) {
     const userId = Number(req.user.id);
     if (Number.isFinite(userId)) {
-      await ticket.update({ userId, status: ticket.status === "closed" ? "open" : ticket.status });
+      await ticket.update({ userId, status: ticket.status === "closed" || ticket.status === "pending" ? "open" : ticket.status });
     }
   }
 

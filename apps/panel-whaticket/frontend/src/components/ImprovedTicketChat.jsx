@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useContext } from "react";
 import clsx from "clsx";
 import { toast } from "react-toastify";
 
@@ -17,6 +17,8 @@ import {
   UserRound,
 } from "lucide-react";
 import { useHistory } from "react-router-dom";
+
+import { AuthContext } from "../context/Auth/AuthContext";
 
 import MessagesList from "./MessagesList";
 // Replace the Material‑UI based MessageInput with a simplified Tailwind component.
@@ -38,6 +40,10 @@ export default function ImprovedTicketChat({
   className,
 }) {
   const history = useHistory();
+  // Access the authenticated user so we can assign tickets when moving
+  // from the queue to working or closing.  Without the user context
+  // the API cannot record who is responsible for the ticket.
+  const { user } = useContext(AuthContext);
   const [showQuickReplies, setShowQuickReplies] = useState(true);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
 
@@ -61,6 +67,36 @@ export default function ImprovedTicketChat({
     const normalized = digits.startsWith("54") ? digits : `54${digits}`;
     return `https://wa.me/${normalized}`;
   }, [phone]);
+
+  /**
+   * Update the ticket status based on the operator selection.
+   * When moving a ticket to "open" or "closed" we assign the current
+   * operator (user) so that responsibility is clear.  When moving back
+   * to "pending" the userId is cleared so the ticket returns to the
+   * general queue.  After updating the status, we navigate away from
+   * the chat when it is no longer in the working state.  Any errors are
+   * surfaced via toast.
+   */
+  const handleChangeStatus = async (nextStatus) => {
+    try {
+      const trimmed = String(nextStatus || "").toLowerCase();
+      if (!ticket?.id) return;
+      // Determine the new owner: when moving to open/closed assign to current user,
+      // otherwise clear assignment.
+      const nextUserId = trimmed === "open" || trimmed === "closed" ? user?.id || null : null;
+      await api.put(`/tickets/${ticket.id}`, {
+        status: trimmed,
+        userId: nextUserId,
+      });
+      // If the ticket is sent back to the queue or closed then return to
+      // the tickets list.  Otherwise remain in the chat view.
+      if (trimmed !== "open") {
+        history.push("/tickets");
+      }
+    } catch (err) {
+      toastError(err);
+    }
+  };
 
   const QUICK_REPLIES = useMemo(
     () => [
@@ -216,6 +252,20 @@ export default function ImprovedTicketChat({
               <Sparkles className="h-4 w-4" />
               <span>Rápidos</span>
             </button>
+
+            {/* Status selector: allows operators to move tickets between queue, working and closed. */}
+            {ticket?.id ? (
+              <select
+                value={statusKey}
+                onChange={(e) => handleChangeStatus(e.target.value)}
+                className="inline-flex h-9 items-center rounded-auto-lg border border-auto-border bg-auto-surface px-2 text-xs font-medium text-auto-text hover:bg-auto-panel2"
+                title="Cambiar estado del ticket"
+              >
+                <option value="pending">En cola</option>
+                <option value="open">Trabajando</option>
+                <option value="closed">Cerrado</option>
+              </select>
+            ) : null}
 
             <span className="inline-flex h-9 items-center rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-muted">
               Bot: {botModeLabel}

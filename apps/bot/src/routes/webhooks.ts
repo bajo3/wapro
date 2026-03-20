@@ -152,9 +152,14 @@ function sleep(ms: number): Promise<void> {
  * Optionally split longer multi-line replies into two WhatsApp messages.
  * This tends to feel more human and reduces "wall of text".
  */
-async function sendTextHuman(instance: string, remoteJid: string, reply: string): Promise<void> {
+async function sendTextHuman(
+  instance: string,
+  remoteJid: string,
+  reply: string,
+  options?: { ticketStatus?: 'pending' | 'open' | 'closed'; botMode?: 'ON' | 'OFF' | 'HUMAN_ONLY'; handoff?: boolean }
+): Promise<void> {
   if (!env.splitReplies) {
-    await sendTextAndPersist(instance, remoteJid, reply);
+    await sendTextAndPersist(instance, remoteJid, reply, options);
     return;
   }
 
@@ -164,13 +169,13 @@ async function sendTextHuman(instance: string, remoteJid: string, reply: string)
   if (lines.length >= 3 && chance(p)) {
     const first = lines[0];
     const rest = lines.slice(1).join('\n');
-    await sendTextAndPersist(instance, remoteJid, first);
+    await sendTextAndPersist(instance, remoteJid, first, options);
     await sleep(randInt(700, 1200));
-    await sendTextAndPersist(instance, remoteJid, rest);
+    await sendTextAndPersist(instance, remoteJid, rest, options);
     return;
   }
 
-  await sendTextAndPersist(instance, remoteJid, reply);
+  await sendTextAndPersist(instance, remoteJid, reply, options);
 }
 
 /**
@@ -321,7 +326,7 @@ function inferBodyworkFromItem(it: any): string {
   if (/(?:^|\s)(pickup|pick up|pick-up|doble cabina)(?:\s|$)/.test(txt)) return 'pickup';
   if (/(?:^|\s)(sedan|sedan 4 puertas|4 puertas)(?:\s|$)/.test(txt)) return 'sedan';
   if (/(?:^|\s)(hatch|hatchback|3 puertas)(?:\s|$)/.test(txt)) return 'hatch';
-  if (/(?:^|\s)(furgon|utilitario)(?:\s|$)/.test(txt)) return 'furgon';
+  if (/(?:^|\s)(furgon|utilitario|partner|berlingo|kangoo|vito|sprinter|ducato|master)(?:\s|$)/.test(txt)) return 'furgon';
   return '';
 }
 
@@ -396,7 +401,7 @@ function sortVehiclesForContext(items: any[], ctx: any): any[] {
   });
 }
 
-function getCatalogHitsWithContext(catalog: any[], rawText: string, ctx: any, limit = 6): any[] {
+function getCatalogHitsWithContext(catalog: any[], rawText: string, ctx: any, limit = 3): any[] {
   const cleanedText = normalize(rawText || '');
   const filtered = hasUsefulSearchContext(ctx)
     ? sortVehiclesForContext(filterCatalogByContext(catalog, ctx), ctx)
@@ -434,6 +439,209 @@ function applyVehicleGuardrails(rawText: string, hits: any[]): { hits: any[]; ch
   }
 
   return { hits, changed: false };
+}
+
+function hasStructuredSearchNeed(extracted: any): boolean {
+  return Boolean(
+    extracted?.brand ||
+    extracted?.model ||
+    extracted?.bodywork ||
+    extracted?.fuel ||
+    extracted?.transmission ||
+    extracted?.maxPrice ||
+    extracted?.amount ||
+    extracted?.minYear ||
+    extracted?.maxYear ||
+    extracted?.year
+  );
+}
+
+function scoreVehicleForContext(it: any, ctx: any, rawText: string): number {
+  let score = 0;
+  const itemText = normalize(getItemText(it));
+  const brand = ctx?.brand ? normalize(String(ctx.brand)) : '';
+  const model = ctx?.model ? normalize(String(ctx.model)) : '';
+  const tx = ctx?.transmission ? normalize(String(ctx.transmission)) : '';
+  const fuel = ctx?.fuel ? normalize(String(ctx.fuel)) : '';
+  const bodywork = ctx?.bodywork ? normalize(String(ctx.bodywork)) : '';
+  const maxPrice = Number(ctx?.maxPrice ?? 0) || 0;
+  const price = Number(it?.priceNumber || 0) || 0;
+  const year = Number(it?.year || 0) || 0;
+  const itemBodywork = inferBodyworkFromItem(it);
+  const prof = detectNeedProfile(rawText);
+  const wantsUtility = /(partner|berlingo|kangoo|furgon|utilitario|vito|sprinter|ducato|master)/i.test(rawText);
+
+  if (brand && itemText.includes(brand)) score += 40;
+  if (model && itemText.includes(model)) score += 55;
+  if (tx && normalize(String(it?.transmission || '')).includes(tx)) score += 14;
+  if (fuel && inferFuelFromItem(it) === fuel) score += 12;
+  if (bodywork && itemBodywork === bodywork) score += 10;
+  if (wantsUtility && itemBodywork === 'furgon') score += 18;
+  if (prof.wantsSuv && itemBodywork === 'suv') score += 16;
+  if ((prof.wantsPickup || prof.wantsTruck) && itemBodywork === 'pickup') score += 16;
+  if (prof.wantsSmall && ['sedan', 'hatch'].includes(itemBodywork)) score += 12;
+
+  if (maxPrice && price > 0) {
+    if (price <= maxPrice) score += 35;
+    else score -= Math.min(45, Math.round((price - maxPrice) / Math.max(maxPrice, 1) * 100));
+  }
+
+  if (year && ctx?.minYear && year >= Number(ctx.minYear)) score += 8;
+  if (year && ctx?.maxYear && year <= Number(ctx.maxYear)) score += 8;
+
+  const queryTokens = normalize(rawText).split(/\s+/).filter((t) => t.length >= 3);
+  for (const token of queryTokens) {
+    if (itemText.includes(token)) score += 2;
+  }
+
+  return score;
+}
+
+function getVehicleMatches(catalog: any[], rawText: string, ctx: any, limit = 3): {
+  hits: any[];
+  nearby: any[];
+  usedBudgetFallback: boolean;
+  hasBudget: boolean;
+} {
+  const baseFiltered = filterCatalogByContext(catalog, { ...ctx, maxPrice: undefined });
+  const strictFiltered = filterCatalogByContext(catalog, ctx);
+  const hasBudget = Boolean(Number(ctx?.maxPrice ?? 0));
+
+  const withScore = (items: any[]) =>
+    [...items]
+      .map((it) => ({ it, score: scoreVehicleForContext(it, ctx, rawText) }))
+      .sort((a, b) => b.score - a.score)
+      .map((row) => row.it);
+
+  const strictSeed = strictFiltered.length ? strictFiltered : [];
+  const searchedStrict = strictSeed.length ? searchCatalog(strictSeed, rawText, Math.max(limit * 2, 8)) : [];
+  const strictRanked = withScore(searchedStrict.length ? searchedStrict : strictSeed).slice(0, limit);
+
+  if (strictRanked.length > 0) {
+    return { hits: strictRanked, nearby: [], usedBudgetFallback: false, hasBudget };
+  }
+
+  if (!hasBudget) {
+    const searched = searchCatalog(baseFiltered.length ? baseFiltered : catalog, rawText, Math.max(limit * 2, 8));
+    const ranked = withScore(searched.length ? searched : (baseFiltered.length ? baseFiltered : catalog)).slice(0, limit);
+    return { hits: ranked, nearby: [], usedBudgetFallback: false, hasBudget };
+  }
+
+  const nearby = withScore(baseFiltered.filter((it) => Number(it?.priceNumber || 0) > Number(ctx.maxPrice || 0)))
+    .slice(0, Math.min(3, limit));
+
+  return { hits: [], nearby, usedBudgetFallback: nearby.length > 0, hasBudget };
+}
+
+function summarizeSearchContext(ctx: any): string {
+  const parts: string[] = [];
+  if (ctx?.brand) parts.push(String(ctx.brand));
+  if (ctx?.model) parts.push(String(ctx.model));
+  if (ctx?.bodywork) parts.push(String(ctx.bodywork));
+  if (ctx?.transmission) parts.push(String(ctx.transmission));
+  if (ctx?.fuel) parts.push(String(ctx.fuel));
+  return parts.join(' · ');
+}
+
+function getNextUsefulSearchQuestion(ctx: any): string {
+  if (!ctx?.brand && !ctx?.model) return '¿Qué marca o modelo tenés en mente?';
+  if (!ctx?.maxPrice) return '¿Hasta qué presupuesto querés mirar?';
+  if (!ctx?.bodywork) return '¿Lo querés auto, SUV, pickup o utilitario?';
+  if (!ctx?.transmission) return '¿Preferís manual o automático?';
+  return '¿Querés que lo afine por año o por tipo de uso?';
+}
+
+function getNextTradeInQuestion(missing: string[]): string {
+  if (missing.includes('tradeInYear')) return '¿De qué año es tu usado?';
+  if (missing.includes('tradeInKm')) return '¿Cuántos km tiene?';
+  if (missing.includes('gnc')) return '¿Tiene GNC?';
+  return '¿Qué vehículo tenés para entregar (marca/modelo)?';
+}
+
+function getNextFinanceQuestion(missing: string[]): string {
+  if (missing.includes('precio')) return '¿Cuál es el precio del vehículo que querés financiar?';
+  if (missing.includes('entrada')) return '¿De cuánto sería la entrada? Si es sin anticipo, decime 0.';
+  return '¿En cuántas cuotas querés simularlo?';
+}
+
+function explainAlternativeReason(it: any, ctx: any): string {
+  const parts: string[] = [];
+  if (ctx?.brand && normalize(String(it?.brand || '')).includes(normalize(String(ctx.brand)))) parts.push('mantiene la marca');
+  if (ctx?.bodywork && inferBodyworkFromItem(it) === String(ctx.bodywork)) parts.push(`es ${ctx.bodywork}`);
+  if (ctx?.transmission && normalize(String(it?.transmission || '')).includes(normalize(String(ctx.transmission)))) parts.push(`viene con ${ctx.transmission}`);
+  if (ctx?.fuel && inferFuelFromItem(it) === String(ctx.fuel)) parts.push(`usa ${ctx.fuel}`);
+  return parts[0] || 'es de lo más cercano a lo que pedís';
+}
+
+function buildVehicleReply(rawText: string, matches: { hits: any[]; nearby: any[]; usedBudgetFallback: boolean; hasBudget: boolean }, ctx: any): string {
+  const budget = Number(ctx?.maxPrice ?? 0) || 0;
+  const budgetTxt = budget > 0 ? `ARS ${budget.toLocaleString('es-AR')}` : null;
+  const contextTxt = summarizeSearchContext(ctx);
+
+  if (matches.hits.length === 1) {
+    const item = matches.hits[0];
+    const intro = budgetTxt
+      ? `Bien, dentro de ${budgetTxt} la que mejor te cierra es esta:`
+      : 'Bien, la que mejor te encaja es esta:';
+    return `${intro}
+${formatItemLine(item, 1)}
+
+Si querés, avanzamos con visita, financiación o te paso una alternativa parecida.`;
+  }
+
+  if (matches.hits.length > 1) {
+    const intro = budgetTxt
+      ? `Bien, hasta ${budgetTxt} me quedaría con estas ${matches.hits.length}:`
+      : contextTxt
+        ? `Perfecto, para ${contextTxt} me quedaría con estas ${matches.hits.length}:`
+        : pickOne([
+            'Perfecto, me quedaría con estas opciones:',
+            'Para lo que buscás, estas son las que más sentido tienen:',
+            'Estas son las que mejor te cierran hoy:'
+          ]);
+
+    return [
+      intro,
+      ...matches.hits.slice(0, 3).map((it, i) => formatItemLine(it, i + 1)),
+      '',
+      pickOne([
+        'Si querés, te digo cuál elegiría yo según uso o presupuesto.',
+        'Si querés, te separo la más conveniente y la vemos juntos.',
+        'Si te gustó una, te paso más detalle o coordinamos para verla.'
+      ])
+    ].join('\n');
+  }
+
+  if (matches.usedBudgetFallback && matches.nearby.length) {
+    const top = matches.nearby.slice(0, 3);
+    const reason = explainAlternativeReason(top[0], ctx);
+    return [
+      budgetTxt
+        ? `Dentro de ${budgetTxt} no tengo un match exacto, pero te dejo 2 o 3 cercanas porque ${reason}:`
+        : 'No tengo un match exacto, pero te dejo 2 o 3 alternativas cercanas que te pueden servir:',
+      ...top.map((it, i) => formatItemLine(it, i + 1)),
+      '',
+      'Si querés, te sigo buscando algo más económico o lo afino por marca, año o tipo de uso.'
+    ].join('\n');
+  }
+
+  return '';
+}
+
+function findReferencedVehicle(catalog: any[], rawText: string, ctx: any): any | null {
+  const normText = normalize(rawText);
+  const candidates = getVehicleMatches(catalog, rawText, { ...ctx, maxPrice: undefined }, 3).hits;
+  if (candidates.length) return candidates[0];
+  return catalog.find((it) => normalize(getItemText(it)).includes(normText)) || null;
+}
+
+function describeTradeIn(extracted: any): string {
+  const model = extracted?.tradeInModel || extracted?.model || '';
+  const year = extracted?.tradeInYear || extracted?.year || '';
+  const km = extracted?.tradeInKm !== undefined && extracted?.tradeInKm !== null
+    ? `${Number(extracted.tradeInKm).toLocaleString('es-AR')} km`
+    : '';
+  return [model, year, km].filter(Boolean).join(' ').trim();
 }
 
 /**
@@ -524,7 +732,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     state.search_context_at = nowIso;
 
     // Lead score recalculated each turn.
-    const leadBreakdown = computeLeadScoreBreakdown(state, extracted, now);
+    const leadBreakdown = computeLeadScoreBreakdown({ ...state, last_query: rawText }, extracted, now);
     state.leadScore = leadBreakdown.total;
 
     const aggEntry = aggregators.get(key);
@@ -537,17 +745,26 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     const lastMedia = (aggEntry as any)?.lastMedia ?? null;
 
-    const scheduleReply = (reply: string, nextState: any, imageUrl?: string) => {
+    const scheduleReply = (reply: string, nextState: any, options?: { imageUrl?: string; handoff?: boolean }) => {
       const delayMs = computeHumanDelay(reply);
       void evolutionSendPresence(instance, number, 'composing', Math.min(delayMs, 5000)).catch(() => {});
 
       const timer = setTimeout(async () => {
         const sentIso = new Date().toISOString();
+        const shouldMoveToHuman = Boolean(options?.handoff || nextState?.agent?.handoffRecommended || nextState?.last_intent === 'handoff');
         try {
-          if (imageUrl) {
-            await sendImageAndPersist(instance, remoteJid, imageUrl, reply);
+          if (options?.imageUrl) {
+            await sendImageAndPersist(instance, remoteJid, options.imageUrl, reply, shouldMoveToHuman ? {
+              handoff: true,
+              ticketStatus: 'open',
+              botMode: 'HUMAN_ONLY'
+            } : undefined);
           } else {
-            await sendTextHuman(instance, remoteJid, reply);
+            await sendTextHuman(instance, remoteJid, reply, shouldMoveToHuman ? {
+              handoff: true,
+              ticketStatus: 'open',
+              botMode: 'HUMAN_ONLY'
+            } : undefined);
           }
 
           await setState(instance, remoteJid, {
@@ -599,7 +816,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
           const sock = getSocket();
           if (sock) {
-            sock.emit('send.message', { instance, number, text: reply, imageUrl: imageUrl ?? null });
+            sock.emit('send.message', { instance, number, text: reply, imageUrl: options?.imageUrl ?? null });
           }
         } catch (err) {
           console.error(err);
@@ -623,9 +840,13 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       return;
     }
 
+    const catalog = await getCatalog();
+
     // ── Handoff detection ───────────────────────────────────────────────────
-    const wantsHandoff = /(comprar|reservar|se[ñn]a[rl]|pagar|quiero\s*ya|transferencia|me\s+lo\s+llevo|cerramos)/i.test(rawText);
+    const wantsHandoff = /(comprar|reservar|reserva|se[ñn]a(?:r|rl|lo)?|pagar|quiero\s*ya|transferencia|me\s+lo\s+llevo|cerramos|quiero\s+verlo|quiero\s+ese|vamos\s+con|agendar|coordinar|puedo\s+ir|voy\s+ma[nñ]ana|me\s+interesa\s+ese|visita|ver\s+el\s+auto|probarlo|test\s*drive|parte\s+de\s+pago|permuta|entrego\s+mi\s+auto)/i.test(rawText);
     if (wantsHandoff) {
+      const selectedVehicle = findReferencedVehicle(catalog, rawText, state.search_context);
+      const tradeInSummary = describeTradeIn(extracted);
       try {
         await setConversationRule(instance, remoteJid, 'HUMAN_ONLY');
         const pairs = Object.entries(extracted || {})
@@ -638,17 +859,42 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         console.error('Failed to set conversation rule on handoff', err);
       }
       const handoffVariants = [
-        'Perfecto 🙌 Te paso con un asesor para cerrarlo rápido. Decime tu nombre y zona.',
-        '¡Excelente! 🎉 Te conecto con un asesor ahora. ¿Cuál es tu nombre?',
-        'Buenísimo 🤝 Un asesor te contacta enseguida para cerrarlo.'
+        [
+          selectedVehicle ? `Perfecto, ya tomo interés por el ${selectedVehicle.name}.` : 'Perfecto, ya tomo tu interés.',
+          tradeInSummary ? `También dejo anotado que entregás ${tradeInSummary}.` : '',
+          extracted?.name && extracted?.city
+            ? `Ahora te sigue un asesor para avanzar desde ${extracted.city}.`
+            : 'Te paso con un asesor para avanzar con esto ahora. Decime tu nombre y zona.'
+        ].filter(Boolean).join(' '),
+        [
+          selectedVehicle ? `Buenísimo, vamos con ${selectedVehicle.name}.` : 'Buenísimo, avanzamos con eso.',
+          tradeInSummary ? `Tu usado ${tradeInSummary} queda cargado como parte de pago.` : '',
+          extracted?.name
+            ? `En un momento te escribe un asesor para seguir la operación, ${extracted.name}.`
+            : 'En un momento te escribe un asesor para seguir la operación.'
+        ].filter(Boolean).join(' ')
       ];
-      scheduleReply(pickOne(handoffVariants), {
-        ...state, stage: 'idle', last_intent: 'handoff', extracted, missing_fields: []
-      });
+      const handoffReply = pickOne(handoffVariants);
+      scheduleReply(handoffReply, {
+        ...state,
+        stage: 'idle',
+        last_intent: 'handoff',
+        extracted,
+        missing_fields: [],
+        agent: {
+          intent: 'handoff',
+          confidence: 0.95,
+          action: 'ESCALATE_HUMAN',
+          urgency: 'high',
+          handoffRecommended: true,
+          suggestedReply: handoffReply,
+          missingFields: [],
+          internalReason: selectedVehicle ? `interes_concreto:${selectedVehicle.id}` : 'intencion_de_cierre',
+          updatedAt: nowIso
+        }
+      }, { handoff: true });
       return;
     }
-
-    const catalog = await getCatalog();
 
     // ── Financing flow continuation ───────────────────────────────────────
     if (state.finance?.stage === 'collecting') {
@@ -674,13 +920,13 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         const selectedId = lastHits[opt - 1];
         const item = catalog.find((x) => x.id === selectedId);
         if (item) {
-          const detailReply = `Dale. Opción ${opt}:\n${formatItemLine(item, opt)}\n\n¿Querés coordinar una visita o te paso más info?`;
-          scheduleReply(detailReply, { ...state, stage: 'idle', last_intent: 'option_selected' } as any, (item as any).image ?? undefined);
+          const detailReply = `Bien, de las que viste me quedaría con esta:\n${formatItemLine(item, opt)}\n\nSi querés, coordinamos visita, te veo financiación o te tomo la permuta.`;
+          scheduleReply(detailReply, { ...state, stage: 'idle', last_intent: 'option_selected' } as any, { imageUrl: (item as any).image ?? undefined });
           return;
         }
       }
       if (asksPriceQuick && !opt) {
-        scheduleReply(`¿De cuál opción querés el precio? (1-${Math.min(lastHits.length, 6)})`,
+        scheduleReply(`¿De cuál opción querés el precio? (1-${Math.min(lastHits.length, 3)})`,
           { ...state, stage: 'idle', last_intent: 'ask_price_which' } as any);
         return;
       }
@@ -696,8 +942,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     if ((prevIntent === 'product_results' || prevIntent === 'product_results_single') && hasSearchCtx && looksLikeRefineOnly) {
       const refined = filterCatalogByContext(catalog, state.search_context);
       const baseHits = refined.length > 0
-        ? refined.slice(0, 6)
-        : searchCatalog(catalog, rawText, 6);
+        ? refined.slice(0, 3)
+        : searchCatalog(catalog, rawText, 3);
       const { hits } = applyVehicleGuardrails(rawText, baseHits);
 
       if (hits.length) {
@@ -708,7 +954,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           stage: 'idle',
           last_intent: 'product_results',
           last_query: (state.last_query || '') + ' | refine: ' + rawText,
-          last_hits: hits.map((it) => it.id).slice(0, 6),
+          last_hits: hits.map((it) => it.id).slice(0, 3),
           last_hits_at: nowIso,
           extracted
         } as any;
@@ -767,28 +1013,27 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // ── Awaiting query from previous turn ───────────────────────────────────
     if (state.stage === 'awaiting_query') {
-      const baseHits = getCatalogHitsWithContext(catalog, rawText, state.search_context, 6);
-      const { hits } = applyVehicleGuardrails(rawText, baseHits);
-      if (hits.length) {
-        if (hits.length === 1) {
-          const item = hits[0];
-          const detailReply = `Dale. Mirá:\n${formatItemLine(item, 1)}\n\n¿Te interesa? Puedo coordinar visita o pasarte más info.`;
+      const rawMatches = getVehicleMatches(catalog, rawText, state.search_context, 3);
+      const guarded = applyVehicleGuardrails(rawText, rawMatches.hits);
+      const matches = { ...rawMatches, hits: guarded.hits };
+      if (matches.hits.length || matches.usedBudgetFallback) {
+        if (matches.hits.length === 1 && !matches.usedBudgetFallback) {
+          const item = matches.hits[0];
+          const detailReply = buildVehicleReply(rawText, matches, state.search_context);
           const nextState: ConvState = { ...state, stage: 'idle', last_intent: 'product_results_single', last_query: rawText, last_hits: [item.id], last_hits_at: nowIso };
-          scheduleReply(detailReply, nextState, (item as any).image ?? undefined);
+          scheduleReply(detailReply, nextState, { imageUrl: (item as any).image ?? undefined });
           return;
         }
-        reply = [pickOne(['Dale. Mirá opciones 👇', 'Te paso estas opciones 👇', 'Genial, mirá lo que tengo 👇']),
-          ...hits.map((it, i) => formatItemLine(it, i + 1)),
-          '', pickOne(['¿Querés alternativas en otro rango de precio?', 'Contame presupuesto y zona y ajusto la búsqueda.', 'Si me decís presupuesto y zona, te recomiendo la mejor.'])
-        ].join('\n');
+        reply = buildVehicleReply(rawText, matches, state.search_context);
         newState.last_intent = 'product_results';
         newState.last_query = rawText;
-        newState.last_hits = hits.map((it) => it.id).slice(0, 6);
+        newState.last_hits = (matches.hits.length ? matches.hits : matches.nearby).map((it) => it.id).slice(0, 3);
         newState.last_hits_at = nowIso;
       } else {
+        const nextQuestion = getNextUsefulSearchQuestion({ ...(state.search_context || {}), ...extracted });
         reply = lastMedia && !String(rawText || '').trim()
-          ? 'Te vi la imagen 👍 ¿qué modelo/marca estás buscando o cuál es tu presupuesto?'
-          : pickOne(['No lo encontré 😕 ¿Me decís marca/modelo o para qué lo usarías?', 'No me aparece ese modelo. ¿Tenés presupuesto aproximado?', 'No lo veo en el catálogo. ¿Qué uso le das y rango de precio?']);
+          ? 'Te vi la imagen. ¿Qué modelo o marca querés mirar?'
+          : `No encontré algo lógico todavía. ${nextQuestion}`;
         newState.last_intent = 'no_match';
         newState.last_query = rawText;
         isFallback = true;
@@ -799,20 +1044,20 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       const isSmallTalk = /(te\s*amo|te\s*amoo|amor|jaja+|😂|🤣|😍|❤️|😘)/i.test(rawText);
       const asksDemand = /(busco|estoy\s+buscando|necesi+to\s+(un\s+)?auto|quiero\s+(un\s+)?(auto|coche|camioneta)|me\s+interesa(?:ría)?\s+un)/i.test(rawText);
       const asksFinancing = /(financ|cuota|cr[eé]dito|prestamo|pr[eé]stamo|banco|entrada|anticipo)/i.test(rawText) || !!(state as any)._forceFinancing;
-      const asksTradeIn = /(permuta|canje|parte\s+de\s+pago|doy\s+el\s+m[íi]o|entrego\s+el\s+auto|mi\s+(auto|coche))/i.test(rawText);
-      const asksPrice = /(precio|cuanto|vale|valor|sale|financi|cuota|entrega)/i.test(rawText);
+      const asksTradeIn = /(permuta|canje|parte\s+de\s+pago|doy\s+el\s+m[íi]o|entrego\s+el\s+auto|mi\s+(auto|coche)|tengo\s+un\s+[a-z0-9]+)/i.test(rawText);
+      const asksPrice = /(precio|cuanto|vale|valor|sale|financi|cuota|entrega|presupuesto|hasta\s+\d|millones|palos)/i.test(rawText);
       const looksLikeVehicleQuery = /(auto|autos|coche|camioneta|pick\s*up|suv|fiat|ford|volkswagen|vw|renault|toyota|chevrolet|peugeot|jeep|honda|nissan|cronos|gol|amarok|hilux|duster|onix|corolla|km\b|a[ñn]os?\b|modelo\b|nafta|diesel|gnc|manual|automat)/i.test(rawText);
       const looksLikeGamingQuery = /(ps5|play\s*5|xbox|consola|auricular|headset|monitor|notebook|silla|joystick|teclado|mouse)/i.test(rawText);
       const normText = normalize(rawText);
       const hasContent = normText.length >= 3 && /[a-z0-9]/i.test(normText);
       const stage = state.stage as ConvState['stage'];
-      const shouldSearch = stage === 'awaiting_query' || looksLikeGamingQuery || looksLikeVehicleQuery || (asksPrice && hasContent);
+      const shouldSearch = stage === 'awaiting_query' || looksLikeGamingQuery || looksLikeVehicleQuery || hasStructuredSearchNeed(extracted) || (asksPrice && hasContent);
 
       if (isGreeting) {
         const greetVariants = [
-          '¡Buenas 😄! ¿Qué estás buscando hoy?',
-          '¡Hola! Decime qué necesitás y te paso opciones.',
-          '¡Hola! ¿Qué andás buscando? Contame marca, modelo o presupuesto.'
+          '¡Hola! ¿Cómo va? Contame qué auto estás buscando y te doy una mano.',
+          '¡Buenas! Decime qué tenés en mente — marca, presupuesto o tipo de vehículo — y te paso lo mejor.',
+          '¡Hola! Si querés decime presupuesto o marca y te filtro opciones en serio.'
         ];
         reply = pickOne(greetVariants);
         newState.stage = 'awaiting_query';
@@ -823,16 +1068,9 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         newState.stage = 'idle';
         newState.last_intent = 'smalltalk';
 
-      } else if (asksDemand && !looksLikeVehicleQuery) {
-        // User explicitly says they're looking — acknowledge and ask for details
-        reply = [
-          '¡Perfecto! Para encontrarte las mejores opciones necesito saber:\n',
-          '• ¿Qué marca/modelo tenés en mente?',
-          '• ¿Rango de año?',
-          '• ¿Presupuesto aproximado?',
-          '• ¿Automático o manual?',
-          '\nContame lo que puedas y busco 🔍'
-        ].join('\n');
+      } else if (asksDemand && !looksLikeVehicleQuery && !hasStructuredSearchNeed(extracted)) {
+        const nextQuestion = getNextUsefulSearchQuestion(state.search_context || {});
+        reply = `Perfecto. ${nextQuestion}`;
         newState.stage = 'awaiting_query';
         newState.last_intent = 'demand_intake';
 
@@ -863,11 +1101,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         if (finance.downPayment === undefined || finance.downPayment === null) missing.push('entrada');
 
         if (missing.length > 0) {
-          const parts: string[] = [];
-          if (missing.includes('precio')) parts.push('• ¿Cuál es el **precio** del vehículo? (ej: 13.800.000)');
-          if (missing.includes('entrada')) parts.push('• ¿De cuánto sería la **entrada**? (si es 0, decime 0)');
-          if (missing.includes('cuotas')) parts.push('• ¿En cuántas **cuotas/meses**? (ej: 36)');
-          reply = `Dale, te la simulo. Necesito:\n${parts.join('\n')}`;
+          reply = `Dale, te la simulo. ${getNextFinanceQuestion(missing)}`;
           (newState as any).missing_fields = missing;
           newState.finance = finance;
         } else {
@@ -914,48 +1148,51 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         const required = requiredFieldsForIntent('permuta');
         const missing = computeMissingFields(required, extracted);
         if (missing.length > 0) {
-          reply = buildMissingQuestions(required, missing);
+          const knownTradeIn = describeTradeIn(extracted);
+          reply = [
+            knownTradeIn ? `Perfecto, ya tomo ${knownTradeIn} como parte de pago.` : 'Perfecto, podemos tomar tu usado como parte de pago.',
+            getNextTradeInQuestion(missing)
+          ].filter(Boolean).join(' ');
           (newState as any).missing_fields = missing;
         } else {
           const model = extracted.tradeInModel ?? extracted.model ?? '';
           const year = extracted.tradeInYear ?? extracted.year ?? '';
           const km = extracted.tradeInKm !== undefined ? ` con ${extracted.tradeInKm.toLocaleString('es-AR')} km` : '';
-          reply = `Perfecto, tomamos ${model} ${year}${km} en parte de pago. ¿Querés que te busque opciones con ese canje?`;
+          reply = `Perfecto, tomo ${model} ${year}${km} como parte de pago. Si querés, te busco 2 o 3 opciones que cierren mejor con esa permuta.`;
         }
         newState.last_intent = 'tradein';
 
       } else if (asksPrice) {
         reply = pickOne([
-          'Dale. ¿De qué producto/modelo querés precio?',
-          '¡Ok! Decime la marca/modelo y te consigo el precio.',
-          'Decime el modelo para chequear el precio.'
+          'Decime qué modelo viste y te confirmo precio y disponibilidad.',
+          'Pasame marca o modelo y te lo chequeo bien.',
+          'Si me decís la unidad o al menos la marca, te respondo más preciso.'
         ]);
         newState.stage = 'awaiting_query';
         newState.last_intent = 'price_request';
 
       } else if (shouldSearch) {
-        const baseHits = getCatalogHitsWithContext(catalog, rawText, state.search_context, 6);
-        const { hits } = applyVehicleGuardrails(rawText, baseHits);
-        if (hits.length) {
-          if (hits.length === 1) {
-            const item = hits[0];
-            const detailReply = `Dale. Mirá:\n${formatItemLine(item, 1)}\n\n¿Te interesa? Puedo coordinar visita o buscar alternativas.`;
+        const rawMatches = getVehicleMatches(catalog, rawText, state.search_context, 3);
+        const guarded = applyVehicleGuardrails(rawText, rawMatches.hits);
+        const matches = { ...rawMatches, hits: guarded.hits };
+        if (matches.hits.length || matches.usedBudgetFallback) {
+          if (matches.hits.length === 1 && !matches.usedBudgetFallback) {
+            const item = matches.hits[0];
+            const detailReply = buildVehicleReply(rawText, matches, state.search_context);
             const nextState: ConvState = { ...state, stage: 'idle', last_intent: 'product_results_single', last_query: rawText, last_hits: [item.id], last_hits_at: nowIso };
-            scheduleReply(detailReply, nextState, (item as any).image ?? undefined);
+            scheduleReply(detailReply, nextState, { imageUrl: (item as any).image ?? undefined });
             return;
           }
-          reply = [pickOne(['Te paso opciones 👇', 'Mirá estas opciones 👇', 'Dale. Tengo esto 👇']),
-            ...hits.map((it, i) => formatItemLine(it, i + 1)),
-            '', pickOne(['Si me decís presupuesto y zona, te recomiendo la mejor.', '¿Querés alternativas en otro rango?', 'Contame presupuesto y zona para ajustar.'])
-          ].join('\n');
+          reply = buildVehicleReply(rawText, matches, state.search_context);
           newState.last_intent = 'product_results';
           newState.last_query = rawText;
-          newState.last_hits = hits.map((it) => it.id).slice(0, 6);
+          newState.last_hits = (matches.hits.length ? matches.hits : matches.nearby).map((it) => it.id).slice(0, 3);
           newState.last_hits_at = nowIso;
         } else {
+          const nextQuestion = getNextUsefulSearchQuestion({ ...(state.search_context || {}), ...extracted });
           reply = lastMedia && !String(rawText || '').trim()
-            ? 'Te vi la imagen 👍 ¿qué modelo/marca o rango de precio buscás?'
-            : pickOne(['No lo encontré 😕 ¿Me decís marca/modelo o para qué lo usarías?', 'No me aparece. ¿Tenés presupuesto aproximado?', 'No lo veo ahora. ¿Qué uso le das y rango de precio?']);
+            ? 'Te vi la imagen. ¿Qué modelo o marca querés mirar?'
+            : `No encontré un match claro todavía. ${nextQuestion}`;
           newState.last_intent = 'no_match';
           newState.last_query = rawText;
           newState.stage = 'awaiting_query';
@@ -1052,9 +1289,9 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 (newState as any).gpt_history = newHistory;
               } else {
                 reply = pickOne([
-                  'Dale 🙂 ¿Qué vehículo o producto estabas buscando?',
-                  '¿En qué te puedo ayudar? Si me decís marca/modelo o presupuesto, te busco opciones.',
-                  'Decime qué buscás y te paso opciones y precios 🔍'
+                  '¡Buenas! ¿Qué auto tenés en mente?',
+                  'Contame marca o presupuesto y te filtro algo lógico.',
+                  'Decime qué querés mirar y te ayudo a elegir bien.'
                 ]);
                 newState.stage = 'awaiting_query';
                 newState.last_intent = 'fallback';
@@ -1064,9 +1301,9 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           } catch (gptErr) {
             console.error('[webhooks] GPT fallback error:', gptErr);
             reply = pickOne([
-              'Dale 🙂 ¿Qué vehículo o producto estabas buscando?',
-              '¿En qué te puedo ayudar? Si me decís marca/modelo o presupuesto, te busco opciones.',
-              'Decime qué buscás y te paso opciones y precios 🔍'
+              '¡Buenas! ¿Qué auto tenés en mente?',
+              'Contame marca o presupuesto y te filtro algo lógico.',
+              'Decime qué querés mirar y te ayudo a elegir bien.'
             ]);
             newState.stage = 'awaiting_query';
             newState.last_intent = 'fallback';

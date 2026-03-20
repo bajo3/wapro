@@ -150,12 +150,26 @@ export default function TicketsSidebarAutos({
 
         if (!mounted) return;
 
-        const list = Array.isArray(data?.tickets)
+        const listRaw = Array.isArray(data?.tickets)
           ? data.tickets
           : Array.isArray(data)
             ? data
             : [];
-        setTickets(list);
+        // New: sort tickets by last update descending so that the most recent
+        // conversations appear at the top of the list.  Without an explicit
+        // sort here the order returned from the backend can vary depending on
+        // database and query semantics, which makes it harder to quickly find
+        // active leads.  Sorting client‑side avoids any breaking changes in the
+        // API and provides a consistent ordering for the operator.  When
+        // updatedAt is missing we fall back to the creation timestamp.  We
+        // duplicate the array before sorting to avoid mutating the data from
+        // the backend.
+        const sorted = [...listRaw].sort((a, b) => {
+          const at = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
+          const bt = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
+          return bt - at;
+        });
+        setTickets(sorted);
       } catch (err) {
         toastError(err);
       } finally {
