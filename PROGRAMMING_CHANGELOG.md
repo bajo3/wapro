@@ -205,3 +205,69 @@ Cerrar el tercer paso del loop operativo del agente: ver contexto real del ticke
 
 ### Error evitado a futuro
 - Cuando haya expresiones con fallback encadenado, separar en variables intermedias si aparece `??` junto con `||` o `&&`.
+
+---
+
+## 2026-03-19 — Sprint fix comercial — agente menos bot, cola inicial y handoff operativo
+
+### Objetivo
+Corregir cuatro puntos que seguían afectando ventas reales: mensajes del bot poco visibles en tickets, ranking flojo por presupuesto/marca, tono robótico y transición incompleta de cola a asesor.
+
+### Cambios principales
+- se reforzó la persistencia de mensajes salientes del bot hacia el panel con metadata adicional de operación:
+  - `ticketStatus`
+  - `botMode`
+  - `handoff`
+- cuando el bot detecta intención fuerte de cierre o derivación humana, ahora el ticket puede pasar automáticamente de `pending` a `open` y quedar en `HUMAN_ONLY`
+- se endureció el filtrado comercial de vehículos:
+  - si el cliente marca presupuesto, primero se muestran unidades dentro del rango
+  - si no hay match real, recién ahí se muestran cercanas por arriba con aviso explícito
+  - se prioriza más fuerte marca/modelo/transmisión/combustible/año
+- se mejoró la detección de cierre:
+  - reserva
+  - seña
+  - visita
+  - “quiero ese”
+  - “puedo ir”
+  - “vamos con”
+- se mejoró la detección de permuta/usado a entregar
+- se humanizaron respuestas críticas:
+  - saludo
+  - búsqueda
+  - precio
+  - permuta
+  - handoff
+- en el panel, los mensajes del bot se distinguen con badge `Bot` cuando vienen persistidos con id sintético `bot-*`
+- cuando el operador manda mensaje o toma ticket pendiente, el ticket pasa a `open`
+
+### Archivos tocados
+- `apps/bot/src/routes/webhooks.ts`
+- `apps/bot/src/services/panelPersistence.ts`
+- `apps/bot/src/services/agent.ts`
+- `apps/bot/src/services/gpt.ts`
+- `apps/bot/src/services/extract.ts`
+- `apps/panel-whaticket/backend/src/controllers/EvolutionWebhookController.ts`
+- `apps/panel-whaticket/backend/src/controllers/MessageController.ts`
+- `apps/panel-whaticket/backend/src/services/TicketServices/UpdateTicketService.ts`
+- `apps/panel-whaticket/frontend/src/components/MessagesList/index.js`
+
+### Impacto funcional esperado
+- los chats nuevos siguen en cola mientras responde el agente
+- cuando el bot detecta intención de cierre y deriva a humano, el ticket ya no debería quedar visualmente “en cola”
+- el vendedor debería ver con más claridad qué contestó el bot y distinguirlo del humano
+- el bot debería respetar mejor presupuestos como “hasta 15 millones”
+- el bot debería responder de forma más natural y menos robótica
+- la permuta y la intención de seña/reserva deberían empujar más fuerte a derivación humana
+
+### Validación realizada
+- `cd apps/bot && tsc -p tsconfig.json --noEmit` ✅
+
+### Riesgos / cuidados
+- para ver persistencia completa del bot en tickets sigue siendo obligatorio tener bien configurados `BACKEND_URL` y `BOT_ADMIN_TOKEN`
+- el badge `Bot` en el panel depende de que los mensajes persistidos mantengan el prefijo sintético `bot-`
+- el backend del panel no quedó compilado de punta a punta en este entorno porque arrastra tests/deps externas fuera del alcance del fix
+
+### Errores evitados / lecciones
+- no mezclar ranking semántico con presupuesto sin una regla dura, porque termina recomendando unidades fuera del rango sin avisar
+- no delegar a humano sin mover el ticket de estado, porque operativamente parece seguir “en cola”
+- no dejar mensajes del bot indistinguibles del humano si el objetivo es auditar y mejorar al agente

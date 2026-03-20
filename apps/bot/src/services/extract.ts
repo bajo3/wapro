@@ -342,6 +342,7 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
   const tradeIn = detectTradeIn(t);
   if (tradeIn) {
     out.tradeIn = true;
+    out.hasTradeIn = true;
     if (tradeIn.tradeInModel) out.tradeInModel = tradeIn.tradeInModel;
     if (tradeIn.tradeInYear) out.tradeInYear = tradeIn.tradeInYear;
     if (tradeIn.tradeInKm !== undefined) out.tradeInKm = tradeIn.tradeInKm;
