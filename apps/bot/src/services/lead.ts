@@ -15,6 +15,7 @@ export type LeadScoreBreakdown = {
     financingIntent: number;
     tradeInIntent: number;
     repeatInterest: number;
+    budgetDefined: number;
   };
 };
 
@@ -44,6 +45,7 @@ export function computeLeadScoreBreakdown(state: ConvState, extracted: Record<st
   const text = String(state.last_query || '').toLowerCase();
   const hasFinancing = !!extracted?.cuotas || !!extracted?.percent;
   const hasTradeIn = extracted?.hasTradeIn === true || !!extracted?.tradeInModel;
+  const hasBudget = !!(extracted?.maxPrice || extracted?.amount);
   const hasUrgencyWords = /(reserv|seña|transfer|hoy|ya|visita|test drive|probar|cierro|cerramos|contado)/i.test(text);
   const hasBuyingIntentWords = /(precio|cuanto|vale|disponible|mostrame|busco|quiero|financio|permuta|usado|0km)/i.test(text);
 
@@ -54,7 +56,8 @@ export function computeLeadScoreBreakdown(state: ConvState, extracted: Record<st
     responsiveness: 0,
     financingIntent: hasFinancing ? 12 : 0,
     tradeInIntent: hasTradeIn ? 10 : 0,
-    repeatInterest: Math.min(11, Math.max(0, msgCount - 1) * 2)
+    repeatInterest: Math.min(11, Math.max(0, msgCount - 1) * 2),
+    budgetDefined: hasBudget ? 8 : 0  // tener presupuesto definido = señal de compra real
   };
 
   if (!Number.isNaN(lastUserAt)) {

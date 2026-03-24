@@ -272,14 +272,20 @@ function mergeSearchContext(prev: any, extracted: any) {
   if (extracted?.model) next.model = extracted.model;
   if (extracted?.minYear) next.minYear = extracted.minYear;
   if (extracted?.maxYear) next.maxYear = extracted.maxYear;
+  if (extracted?.year) next.year = extracted.year;
   if (extracted?.transmission) next.transmission = extracted.transmission;
   if (extracted?.fuel) next.fuel = extracted.fuel;
   if (extracted?.gnc !== undefined && extracted?.gnc !== null) next.gnc = extracted.gnc;
   if (extracted?.bodywork) next.bodywork = extracted.bodywork;
+  if (extracted?.color) next.color = extracted.color;
+  if (extracted?.useCase) next.useCase = extracted.useCase;
+  if (extracted?.city) next.city = extracted.city;
+  if (extracted?.name) next.name = extracted.name;
+  // Budget: maxPrice explícito siempre gana; amount como techo implícito si no había maxPrice
   if (extracted?.maxPrice) next.maxPrice = extracted.maxPrice;
-  if (extracted?.amount && !next.maxPrice) {
-    // If the user only said a number, treat it as "max price" in search context.
-    next.maxPrice = extracted.amount;
+  if (extracted?.amount) {
+    next.amount = extracted.amount;
+    if (!next.maxPrice) next.maxPrice = extracted.amount;
   }
   if (extracted?.currency) next.currency = extracted.currency;
   return next;
@@ -339,7 +345,8 @@ function filterCatalogByContext(catalog: any[], ctx: any): any[] {
   const fuel = ctx?.fuel ? normalize(String(ctx.fuel)) : '';
   const bodywork = ctx?.bodywork ? normalize(String(ctx.bodywork)) : '';
   const wantsGnc = ctx?.gnc === true || fuel === 'gnc';
-  const maxPrice = Number(ctx?.maxPrice ?? 0) || undefined;
+  // v3: ctx.amount como fallback de maxPrice para filtrado
+  const maxPrice = Number(ctx?.maxPrice ?? ctx?.amount ?? 0) || undefined;
 
   return (catalog || [])
     .filter((it) => isVehicleItem(it))
@@ -464,7 +471,8 @@ function scoreVehicleForContext(it: any, ctx: any, rawText: string): number {
   const tx = ctx?.transmission ? normalize(String(ctx.transmission)) : '';
   const fuel = ctx?.fuel ? normalize(String(ctx.fuel)) : '';
   const bodywork = ctx?.bodywork ? normalize(String(ctx.bodywork)) : '';
-  const maxPrice = Number(ctx?.maxPrice ?? 0) || 0;
+  // v3: usar ctx.amount como fallback de maxPrice para scoring
+  const maxPrice = Number(ctx?.maxPrice ?? ctx?.amount ?? 0) || 0;
   const price = Number(it?.priceNumber || 0) || 0;
   const year = Number(it?.year || 0) || 0;
   const itemBodywork = inferBodyworkFromItem(it);
@@ -486,8 +494,15 @@ function scoreVehicleForContext(it: any, ctx: any, rawText: string): number {
     else score -= Math.min(45, Math.round((price - maxPrice) / Math.max(maxPrice, 1) * 100));
   }
 
+  // Año exacto: bonus extra si el ítem tiene exactamente el año pedido
+  if (ctx?.year && year && year === Number(ctx.year)) score += 18;
   if (year && ctx?.minYear && year >= Number(ctx.minYear)) score += 8;
   if (year && ctx?.maxYear && year <= Number(ctx.maxYear)) score += 8;
+
+  // useCase scoring: preferir utilitarios para remis, sedans para city, etc.
+  if (ctx?.useCase === 'remis' && ['sedan', 'hatch'].includes(itemBodywork)) score += 10;
+  if (ctx?.useCase === 'campo' && itemBodywork === 'pickup') score += 12;
+  if (ctx?.useCase === 'familiar' && itemBodywork === 'suv') score += 8;
 
   const queryTokens = normalize(rawText).split(/\s+/).filter((t) => t.length >= 3);
   for (const token of queryTokens) {
@@ -545,7 +560,7 @@ function summarizeSearchContext(ctx: any): string {
 
 function getNextUsefulSearchQuestion(ctx: any): string {
   if (!ctx?.brand && !ctx?.model) return '¿Qué marca o modelo tenés en mente?';
-  if (!ctx?.maxPrice) return '¿Hasta qué presupuesto querés mirar?';
+  if (!ctx?.maxPrice && !ctx?.amount) return '¿Hasta qué presupuesto querés mirar?';
   if (!ctx?.bodywork) return '¿Lo querés auto, SUV, pickup o utilitario?';
   if (!ctx?.transmission) return '¿Preferís manual o automático?';
   return '¿Querés que lo afine por año o por tipo de uso?';
@@ -574,15 +589,32 @@ function explainAlternativeReason(it: any, ctx: any): string {
 }
 
 function buildVehicleReply(rawText: string, matches: { hits: any[]; nearby: any[]; usedBudgetFallback: boolean; hasBudget: boolean }, ctx: any): string {
-  const budget = Number(ctx?.maxPrice ?? 0) || 0;
-  const budgetTxt = budget > 0 ? `ARS ${budget.toLocaleString('es-AR')}` : null;
+  const budget = Number(ctx?.maxPrice ?? ctx?.amount ?? 0) || 0;
+  // Formato legible: "ARS 30 M" en vez de "ARS 30.000.000"
+  const budgetTxt = budget > 0
+    ? (budget >= 1_000_000
+        ? `ARS ${(budget / 1_000_000) % 1 === 0 ? budget / 1_000_000 : (budget / 1_000_000).toFixed(1)} M`
+        : `ARS ${budget.toLocaleString('es-AR')}`)
+    : null;
   const contextTxt = summarizeSearchContext(ctx);
+
+  // Frase de confirmación cuando hay contexto rico (marca/modelo + presupuesto)
+  const hasRichContext = !!(ctx?.brand || ctx?.model) && !!(ctx?.maxPrice || ctx?.amount);
+  const confirmationParts: string[] = [];
+  if (hasRichContext) {
+    if (ctx?.brand && ctx?.model) confirmationParts.push(`${ctx.brand} ${ctx.model}`);
+    else if (ctx?.brand) confirmationParts.push(ctx.brand);
+    else if (ctx?.model) confirmationParts.push(ctx.model);
+    if (budgetTxt) confirmationParts.push(`hasta ${budgetTxt}`);
+    if (ctx?.transmission) confirmationParts.push(`caja ${ctx.transmission}`);
+  }
+  const confirmationLine = confirmationParts.length ? `Entendido, buscás ${confirmationParts.join(', ')}. ` : '';
 
   if (matches.hits.length === 1) {
     const item = matches.hits[0];
     const intro = budgetTxt
-      ? `Bien, dentro de ${budgetTxt} la que mejor te cierra es esta:`
-      : 'Bien, la que mejor te encaja es esta:';
+      ? `${confirmationLine}Dentro de ${budgetTxt} la que mejor te cierra es esta:`
+      : `${confirmationLine}La que mejor te encaja es esta:`;
     return `${intro}
 ${formatItemLine(item, 1)}
 
@@ -590,15 +622,17 @@ Si querés, avanzamos con visita, financiación o te paso una alternativa pareci
   }
 
   if (matches.hits.length > 1) {
-    const intro = budgetTxt
-      ? `Bien, hasta ${budgetTxt} me quedaría con estas ${matches.hits.length}:`
-      : contextTxt
-        ? `Perfecto, para ${contextTxt} me quedaría con estas ${matches.hits.length}:`
-        : pickOne([
-            'Perfecto, me quedaría con estas opciones:',
-            'Para lo que buscás, estas son las que más sentido tienen:',
-            'Estas son las que mejor te cierran hoy:'
-          ]);
+    const intro = confirmationLine
+      ? `${confirmationLine}Mirá estas opciones:`
+      : budgetTxt
+        ? `Bien, hasta ${budgetTxt} me quedaría con estas ${matches.hits.length}:`
+        : contextTxt
+          ? `Perfecto, para ${contextTxt} me quedaría con estas ${matches.hits.length}:`
+          : pickOne([
+              'Perfecto, me quedaría con estas opciones:',
+              'Para lo que buscás, estas son las que más sentido tienen:',
+              'Estas son las que mejor te cierran hoy:'
+            ]);
 
     return [
       intro,
@@ -617,7 +651,7 @@ Si querés, avanzamos con visita, financiación o te paso una alternativa pareci
     const reason = explainAlternativeReason(top[0], ctx);
     return [
       budgetTxt
-        ? `Dentro de ${budgetTxt} no tengo un match exacto, pero te dejo 2 o 3 cercanas porque ${reason}:`
+        ? `${confirmationLine}Dentro de ${budgetTxt} no tengo un match exacto, pero te dejo 2 o 3 cercanas porque ${reason}:`
         : 'No tengo un match exacto, pero te dejo 2 o 3 alternativas cercanas que te pueden servir:',
       ...top.map((it, i) => formatItemLine(it, i + 1)),
       '',
@@ -710,6 +744,9 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     // Context timeout (30 min): if idle too long, drop accumulated search/finance context.
     const lastUserAtMs = stateRaw.last_user_at ? Date.parse(stateRaw.last_user_at) : NaN;
     const contextExpired = !Number.isNaN(lastUserAtMs) && now - lastUserAtMs > 30 * 60 * 1000;
+    // v3: si el contexto expiró pero el cliente vuelve con un saludo, recuperar resumen
+    // para reanudación natural ("Hola, volviste a preguntar por Corolla ARS 30 M")
+    const staleContext = contextExpired ? stateRaw.search_context : undefined;
 
     const state: ConvState = {
       ...stateRaw,
@@ -1054,12 +1091,28 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       const shouldSearch = stage === 'awaiting_query' || looksLikeGamingQuery || looksLikeVehicleQuery || hasStructuredSearchNeed(extracted) || (asksPrice && hasContent);
 
       if (isGreeting) {
-        const greetVariants = [
-          '¡Hola! ¿Cómo va? Contame qué auto estás buscando y te doy una mano.',
-          '¡Buenas! Decime qué tenés en mente — marca, presupuesto o tipo de vehículo — y te paso lo mejor.',
-          '¡Hola! Si querés decime presupuesto o marca y te filtro opciones en serio.'
-        ];
-        reply = pickOne(greetVariants);
+        // v3: si el cliente vuelve después de que el contexto expiró, recordarle su búsqueda anterior
+        if (staleContext && (staleContext.brand || staleContext.model || staleContext.maxPrice)) {
+          const parts: string[] = [];
+          if (staleContext.brand && staleContext.model) parts.push(`${staleContext.brand} ${staleContext.model}`);
+          else if (staleContext.brand) parts.push(staleContext.brand);
+          else if (staleContext.model) parts.push(staleContext.model);
+          if (staleContext.maxPrice) {
+            const amt = staleContext.maxPrice;
+            parts.push(`hasta ARS ${amt >= 1_000_000 ? (amt / 1_000_000) + ' M' : amt.toLocaleString('es-AR')}`);
+          }
+          reply = `¡Hola! Bienvenido de vuelta. La última vez estabas buscando ${parts.join(' ')}. ¿Seguís con eso o te puedo ayudar con otra cosa?`;
+          // Restaurar el contexto anterior para esta nueva sesión
+          state.search_context = staleContext;
+          newState.search_context = staleContext;
+        } else {
+          const greetVariants = [
+            '¡Hola! ¿Cómo va? Contame qué auto estás buscando y te doy una mano.',
+            '¡Buenas! Decime qué tenés en mente — marca, presupuesto o tipo de vehículo — y te paso lo mejor.',
+            '¡Hola! Si querés decime presupuesto o marca y te filtro opciones en serio.'
+          ];
+          reply = pickOne(greetVariants);
+        }
         newState.stage = 'awaiting_query';
         newState.last_intent = 'greeting';
 
@@ -1225,7 +1278,10 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             }).join('\n\n');
             const history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
             const turns = (state as any).gpt_history ?? [];
-            for (const t of turns.slice(-4)) history.push({ role: t.role, content: t.content });
+            for (const t of turns.slice(-6)) history.push({ role: t.role, content: t.content });
+
+            // Merge search_context + extracted para que el agente tenga el contexto completo acumulado
+            const mergedExtracted = { ...(state.search_context ?? {}), ...extracted };
 
             const agentDecision = await decideAgentAction({
               dealershipName: process.env.DEALERSHIP_NAME ?? undefined,
@@ -1233,7 +1289,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               history,
               catalog,
               faqSummary,
-              extracted,
+              extracted: mergedExtracted,
               leadScore: state.leadScore
             });
 
@@ -1252,6 +1308,13 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 updatedAt: nowIso
               };
               (newState as any).missing_fields = agentDecision.missingFields || [];
+              // v3: persistir historial también cuando responde el agente estructurado
+              const existingHistory = (state as any).gpt_history ?? [];
+              (newState as any).gpt_history = [
+                ...existingHistory,
+                { role: 'user', content: rawText },
+                { role: 'assistant', content: agentDecision.suggestedReply }
+              ].slice(-12);
               if (agentDecision.handoffRecommended) {
                 try { await setConversationRule(instance, remoteJid, 'HUMAN_ONLY'); } catch {}
               }
@@ -1325,12 +1388,39 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       }
     }
 
-    // ── Anti-repeat fallback: vary the question ────────────────────────────
+    // ── Anti-repeat fallback: vary the question (v3 — filtrado por campos conocidos) ──
     const lastFallbackAt = (state as any).last_fallback_at;
     if (isFallback && lastFallbackAt) {
       const lastFb = Date.parse(lastFallbackAt);
       if (!Number.isNaN(lastFb) && now - lastFb < env.fallbackCooldownMs) {
-        reply = pickOne(['¿Tenés alguna marca o modelo en mente?', '¿Cuál es tu presupuesto aproximado?', '¿Para qué lo vas a usar?']);
+        // Construir lista de preguntas filtrando las que ya fueron respondidas
+        const ctx = state.search_context ?? {};
+        const fallbackQuestions: string[] = [];
+
+        // Solo preguntar marca/modelo si no se conoce ninguno de los dos
+        if (!ctx.brand && !ctx.model) {
+          fallbackQuestions.push('¿Tenés alguna marca o modelo en mente?');
+        }
+        // Solo preguntar presupuesto si no se tiene maxPrice ni amount
+        if (!ctx.maxPrice && !ctx.amount) {
+          fallbackQuestions.push('¿Cuál es tu presupuesto aproximado?');
+        }
+        // Solo preguntar uso si no se conoce
+        if (!ctx.useCase && !ctx.bodywork) {
+          fallbackQuestions.push('¿Para qué lo vas a usar?');
+        }
+        // Preguntas adicionales si los básicos ya están cubiertos
+        if (ctx.brand && !ctx.transmission) {
+          fallbackQuestions.push('¿Preferís caja manual o automática?');
+        }
+        if (ctx.brand && !ctx.minYear && !ctx.year) {
+          fallbackQuestions.push('¿De qué año lo buscás aproximadamente?');
+        }
+
+        if (fallbackQuestions.length > 0) {
+          reply = pickOne(fallbackQuestions);
+        }
+        // Si todos los campos básicos ya están: no cambiar el reply (usar el fallback original)
         isFallback = false;
       }
     }

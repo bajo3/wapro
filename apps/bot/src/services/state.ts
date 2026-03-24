@@ -36,7 +36,18 @@ export type ConvState = {
     bodywork?: string;
     maxPrice?: number;
     currency?: 'ARS' | 'USD' | string;
+    // Extended fields (v3)
+    year?: number;
+    useCase?: string;
+    city?: string;
+    name?: string;
+    gnc?: boolean;
+    color?: string;
+    amount?: number;
   };
+
+  /** All extracted lead fields accumulated across turns */
+  extracted?: Record<string, any>;
   /** ISO timestamp when search_context was last updated */
   search_context_at?: string;
 

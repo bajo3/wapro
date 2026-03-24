@@ -1,18 +1,14 @@
 /**
  * extract.ts — Extracción estructurada de campos desde texto libre en español.
  *
- * Mejoras v2:
- *  - Detección de marca/modelo por diccionario (40+ marcas)
- *  - Presupuesto en múltiples formatos (USD/ARS, "13 palos", "800 mil")
- *  - Año con rangos ("entre 2018 y 2021", "del 2020 en adelante")
- *  - Kilometraje con alias ("cero km", "0km")
- *  - Transmisión por sinónimos robustos
- *  - Color de vehículo
- *  - Combustible (nafta/diesel/eléctrico/híbrido/GNC)
- *  - Tipo de uso (remis, familia, trabajo, etc.)
- *  - Nombre y ciudad
- *  - Trade-in (auto a entregar en parte de pago)
- *  - Financiación (cuotas, entrada, porcentaje)
+ * Mejoras v3:
+ *  - parseMoney: detecta "30m", "30" en contexto de presupuesto, typos comunes
+ *    ("pesod", "millon" sin tilde), rangos "entre X y Y millones"
+ *  - extractLeadFields: maxPrice = amount por defecto (cualquier mención de
+ *    precio es un techo implícito si no había uno previo)
+ *  - formatMoney / buildConfirmationPhrase: helpers para confirmación visual
+ *  - hasUsefulData(): saber si hay suficiente contexto acumulado
+ *  - Nuevos alias de marcas (typos frecuentes)
  */
 
 function norm(s: string): string {
@@ -67,21 +63,35 @@ function parseKm(text: string): number | null {
   return null;
 }
 
-function parseMoney(text: string): { amount: number; currency: 'ARS' | 'USD' } | null {
+/**
+ * parseMoney — v3:
+ * - "entre X y Y millones" → toma el mayor como techo
+ * - "13m" shorthand de millones
+ * - typos: "millon", "palos", "kilos"
+ * - contexto de presupuesto: "tengo 30" → 30 millones
+ */
+export function parseMoney(text: string): { amount: number; currency: 'ARS' | 'USD' } | null {
   const t = norm(text);
-  const isUSD = /\b(?:dolares?|usd|u\$s|u\$d|\$u)\b/.test(t);
+  const isUSD = /\b(?:dolares?|usd|u\$s|u\$d|\$u|verdes?|dolar)\b/.test(t);
   const currency: 'ARS' | 'USD' = isUSD ? 'USD' : 'ARS';
+
+  // Rango: "entre X y Y millones" → usar el mayor como techo
+  const range = t.match(/\bentre\s+(\d+(?:[.,]\d+)?)\s+y\s+(\d+(?:[.,]\d+)?)\s*(?:mill?(?:ones?)?|m|palos?)\b/);
+  if (range) {
+    const cap = Math.max(Number(range[1].replace(',', '.')), Number(range[2].replace(',', '.')));
+    return { amount: Math.round(cap * 1_000_000), currency };
+  }
 
   // "13 palos" — ARS coloquial
   const palos = t.match(/\b(\d+(?:[.,]\d+)?)\s*palos?\b/);
   if (palos) return { amount: Math.round(Number(palos[1].replace(',', '.')) * 1_000_000), currency: 'ARS' };
 
-  // "13 millones" / "13m"
-  const mill = t.match(/\b(\d+(?:[.,]\d+)?)\s*(?:mill?(?:ones?)?|m)\b/);
+  // "13 millones" / "13m" / "13 mill" / "13 millon"
+  const mill = t.match(/\b(\d+(?:[.,]\d+)?)\s*(?:mill?(?:ones?)?|millon(?:es)?|m)\b/);
   if (mill) return { amount: Math.round(Number(mill[1].replace(',', '.')) * 1_000_000), currency };
 
-  // "800 mil"
-  const miles = t.match(/\b(\d{3,4})\s*(?:mil)\b/);
+  // "800 mil" / "1500 kilos"
+  const miles = t.match(/\b(\d{3,4})\s*(?:mil|kilos?)\b/);
   if (miles) { const n = Number(miles[1]) * 1000; if (n > 50000) return { amount: n, currency }; }
 
   // "$ 13.800.000"
@@ -91,6 +101,16 @@ function parseMoney(text: string): { amount: number; currency: 'ARS' | 'USD' } |
   // Plain big number (7+ digits)
   const big = t.match(/\b(\d{7,12})\b/);
   if (big) return { amount: Number(big[1]), currency };
+
+  // Número suelto con contexto de presupuesto → asumir millones
+  const budgetCtx = /\b(?:presupuesto|plata|guita|hasta|maximo?|dispongo|tengo|cuento\s+con)\b/i.test(t);
+  if (budgetCtx) {
+    const loose = t.match(/\b(\d{1,4})\b/);
+    if (loose) {
+      const n = Number(loose[1]);
+      if (n >= 5 && n <= 9999) return { amount: n * 1_000_000, currency };
+    }
+  }
 
   return null;
 }
@@ -144,10 +164,15 @@ const BRAND_MODELS: Record<string, string[]> = {
 };
 
 const BRAND_ALIASES: Record<string, string> = {
-  vw: 'volkswagen', 'volk': 'volkswagen', 'wolks': 'volkswagen',
-  chevy: 'chevrolet', 'chevi': 'chevrolet',
-  merc: 'mercedes', 'merche': 'mercedes', benz: 'mercedes',
-  'land rover': 'landrover', landrover: 'landrover'
+  vw: 'volkswagen', volk: 'volkswagen', wolks: 'volkswagen', wolksvagen: 'volkswagen',
+  chevy: 'chevrolet', chevi: 'chevrolet',
+  merc: 'mercedes', merche: 'mercedes', benz: 'mercedes',
+  'land rover': 'landrover', landrover: 'landrover',
+  toyo: 'toyota', toyot: 'toyota',
+  renol: 'renault', renou: 'renault',
+  pejo: 'peugeot', peugot: 'peugeot', pejeot: 'peugeot',
+  citro: 'citroen', sitro: 'citroen',
+  hiunday: 'hyundai', hundai: 'hyundai'
 };
 
 const COLORS = [
@@ -165,9 +190,9 @@ const FUEL_MAP: Record<string, string> = {
 };
 
 const TRANSMISSION_MAP: Record<string, string> = {
-  'caja manual': 'manual', manual: 'manual', sincronico: 'manual',
+  'caja manual': 'manual', manual: 'manual', sincronico: 'manual', 'a palanca': 'manual',
   automatica: 'automatico', automatico: 'automatico',
-  tiptronic: 'automatico', dsg: 'automatico', cvt: 'automatico'
+  tiptronic: 'automatico', dsg: 'automatico', cvt: 'automatico', 'caja automatica': 'automatico'
 };
 
 const USE_CASE_MAP: Record<string, string> = {
@@ -276,6 +301,11 @@ function detectTradeIn(text: string): { hasTradeIn: boolean; tradeInModel?: stri
 
 export type Extracted = Record<string, any>;
 
+/**
+ * extractLeadFields — v3:
+ * - maxPrice se setea siempre que haya monto detectado y no hubiera uno previo.
+ * - Si el cliente usa "hasta/máximo", siempre reemplaza el maxPrice anterior.
+ */
 export function extractLeadFields(text: string, prev: any = {}): Extracted {
   const t = String(text || '');
   const out: Extracted = { ...(prev || {}) };
@@ -290,12 +320,20 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
   const km = parseKm(t);
   if (km !== null) out.km = km;
 
-  // Budget
+  // Budget — v3: maxPrice se setea con cualquier monto si no había uno previo
   const money = parseMoney(t);
   if (money) {
     out.amount = money.amount;
     if (!out.currency) out.currency = money.currency;
-    if (/\b(?:hasta|m[aá]ximo?|no\s+m[aá]s)\b/i.test(t)) out.maxPrice = money.amount;
+
+    const isExplicitCap = /\b(?:hasta|m[áa]ximo?|no\s+m[áa]s|tope|limite?)\b/i.test(t);
+    if (isExplicitCap) {
+      // Explícito: siempre actualizar
+      out.maxPrice = money.amount;
+    } else if (!out.maxPrice) {
+      // Implícito: solo si no había maxPrice
+      out.maxPrice = money.amount;
+    }
   }
 
   // Financing
@@ -412,6 +450,24 @@ export function buildMissingQuestions(
   return ['Para ayudarte mejor necesito algunos datos 👇', ...lines].join('\n');
 }
 
+/**
+ * formatMoney — muestra montos de forma legible.
+ * ARS 30 M / ARS 800 mil / USD 25.000
+ */
+export function formatMoney(amount: number, currency: 'ARS' | 'USD' = 'ARS'): string {
+  if (!Number.isFinite(amount) || amount <= 0) return '';
+  if (currency === 'USD') return `USD ${amount.toLocaleString('es-AR')}`;
+  if (amount >= 1_000_000) {
+    const m = amount / 1_000_000;
+    return `ARS ${Number.isInteger(m) ? m : parseFloat(m.toFixed(1))} M`;
+  }
+  if (amount >= 1_000) return `ARS ${(amount / 1000).toFixed(0)} mil`;
+  return `ARS ${amount.toLocaleString('es-AR')}`;
+}
+
+/**
+ * summarizeExtracted — v3: usa formatMoney, agrega "hasta" en presupuesto.
+ */
 export function summarizeExtracted(ex: Extracted): string {
   const parts: string[] = [];
   if (ex.brand) parts.push(String(ex.brand));
@@ -426,9 +482,39 @@ export function summarizeExtracted(ex: Extracted): string {
   if (ex.fuel) parts.push(ex.fuel);
   if (ex.bodywork) parts.push(ex.bodywork);
   if (ex.color) parts.push(ex.color);
-  if (ex.amount) {
-    const cur = ex.currency ?? 'ARS';
-    parts.push(`${cur} ${Number(ex.amount).toLocaleString('es-AR')}`);
-  }
+  const budget = ex.maxPrice ?? ex.amount;
+  if (budget) parts.push(`hasta ${formatMoney(budget, (ex.currency ?? 'ARS') as 'ARS' | 'USD')}`);
   return parts.join(', ');
+}
+
+/**
+ * buildConfirmationPhrase — genera frase de confirmación de datos extraídos.
+ * Ej: "Perfecto, entonces buscás un Corolla hasta ARS 30 M."
+ */
+export function buildConfirmationPhrase(ex: Extracted): string {
+  const parts: string[] = [];
+  if (ex.brand && ex.model) parts.push(`${ex.brand} ${ex.model}`);
+  else if (ex.brand) parts.push(ex.brand);
+  else if (ex.model) parts.push(ex.model);
+
+  if (ex.year) parts.push(`del ${ex.year}`);
+  else if (ex.minYear && ex.maxYear && ex.minYear !== ex.maxYear) {
+    parts.push(`entre ${ex.minYear} y ${ex.maxYear}`);
+  } else if (ex.minYear) parts.push(`desde ${ex.minYear}`);
+
+  if (ex.bodywork) parts.push(ex.bodywork);
+  if (ex.transmission) parts.push(`caja ${ex.transmission}`);
+
+  const budget = ex.maxPrice ?? ex.amount;
+  if (budget) parts.push(`hasta ${formatMoney(budget, (ex.currency ?? 'ARS') as 'ARS' | 'USD')}`);
+
+  if (!parts.length) return '';
+  return `Perfecto, entonces buscás ${parts.join(', ')}.`;
+}
+
+/**
+ * hasUsefulData — indica si hay suficiente contexto para buscar resultados.
+ */
+export function hasUsefulData(ctx: Extracted): boolean {
+  return !!(ctx?.brand || ctx?.model || ctx?.maxPrice || ctx?.amount || ctx?.bodywork);
 }

@@ -5,8 +5,10 @@
  * Usa el catálogo y las FAQs como contexto (RAG-lite).
  *
  * Variables de entorno:
- *   OPENAI_API_KEY   — requerida para activar GPT
- *   OPENAI_MODEL     — modelo a usar (default: gpt-4o-mini)
+ *   OPENAI_API_KEY        — requerida para activar GPT
+ *   OPENAI_MODEL          — modelo base (default: gpt-4o-mini)
+ *   OPENAI_MODEL_ADVANCED — modelo avanzado para etapa de cierre (default: gpt-4o-mini)
+ *                           Ejemplo: "gpt-4o" para mejor razonamiento en cierres
  */
 
 import fetch from 'node-fetch';
