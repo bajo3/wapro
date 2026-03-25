@@ -6,7 +6,6 @@ export type VehicleRow = {
   title?: string | null;
   brand?: string | null;
   model?: string | null;
-  version?: string | null;
   year?: number | null;
   km?: number | null;
   price?: any;
@@ -28,42 +27,6 @@ function coerceMoneyNumber(v: any): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function cleanVehicleToken(value: any): string {
-  const text = String(value ?? '').trim();
-  if (!text) return '';
-  const normalized = text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim();
-  if (['-', '—', '--', 's/d', 'sd', 'n/a', 'na', 'null', 'undefined', 'sin datos', 'a consultar'].includes(normalized)) {
-    return '';
-  }
-  return text.replace(/\s+/g, ' ');
-}
-
-function normalizeVehicleCompare(value: any): string {
-  return cleanVehicleToken(value)
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-}
-
-function compactVehicleParts(parts: any[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const part of parts) {
-    const value = cleanVehicleToken(part);
-    const key = normalizeVehicleCompare(value);
-    if (!value || !key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(value);
-  }
-  return out;
-}
-
 export function formatPrice(price: any, currency?: string | null): string {
   const n = coerceMoneyNumber(price);
   if (n === undefined) return 'a consultar';
@@ -83,7 +46,7 @@ export function formatPrice(price: any, currency?: string | null): string {
 
 export async function getVehicleById(vehicleId: string): Promise<VehicleRow | null> {
   const q = `
-    select id, title, brand, model, version, year, km, price, currency, slug, permalink
+    select id, title, brand, model, year, km, price, currency, slug, permalink
     from public.vehicles
     where id = $1
     ${env.catalogDealershipId ? 'and dealership_id = $2' : ''}
@@ -97,7 +60,7 @@ export async function getVehicleById(vehicleId: string): Promise<VehicleRow | nu
 
 export async function getVehicleBySlug(slug: string): Promise<VehicleRow | null> {
   const q = `
-    select id, title, brand, model, version, year, km, price, currency, slug, permalink
+    select id, title, brand, model, year, km, price, currency, slug, permalink
     from public.vehicles
     where slug = $1
     ${env.catalogDealershipId ? 'and dealership_id = $2' : ''}
@@ -118,15 +81,8 @@ export function buildVehicleUrl(v: VehicleRow): string | undefined {
 }
 
 export function vehicleTitle(v: VehicleRow): string {
-  const title = cleanVehicleToken(v.title);
-  const brand = cleanVehicleToken(v.brand);
-  const model = cleanVehicleToken(v.model);
-  const version = cleanVehicleToken(v.version);
-
-  const base = compactVehicleParts([brand, model]);
-  const baseNorm = normalizeVehicleCompare(base.join(' '));
-  const versionNorm = normalizeVehicleCompare(version);
-  const extras = version && versionNorm && !baseNorm.includes(versionNorm) ? [version] : [];
-
-  return compactVehicleParts([...base, ...extras]).join(' ').trim() || title || 'Vehículo';
+  const fromTitle = v.title?.trim();
+  if (fromTitle) return fromTitle;
+  const bits = [v.brand, v.model, v.year ? String(v.year) : null].filter(Boolean);
+  return bits.length ? String(bits.join(' ')) : 'Vehículo';
 }

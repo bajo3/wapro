@@ -15,41 +15,6 @@ function coerceMoneyNumber(v) {
     const n = Number(normalized);
     return Number.isFinite(n) ? n : undefined;
 }
-function cleanVehicleToken(value) {
-    const text = String(value ?? '').trim();
-    if (!text)
-        return '';
-    const normalized = text
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .trim();
-    if (['-', '—', '--', 's/d', 'sd', 'n/a', 'na', 'null', 'undefined', 'sin datos', 'a consultar'].includes(normalized)) {
-        return '';
-    }
-    return text.replace(/\s+/g, ' ');
-}
-function normalizeVehicleCompare(value) {
-    return cleanVehicleToken(value)
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9]+/g, ' ')
-        .trim();
-}
-function compactVehicleParts(parts) {
-    const seen = new Set();
-    const out = [];
-    for (const part of parts) {
-        const value = cleanVehicleToken(part);
-        const key = normalizeVehicleCompare(value);
-        if (!value || !key || seen.has(key))
-            continue;
-        seen.add(key);
-        out.push(value);
-    }
-    return out;
-}
 export function formatPrice(price, currency) {
     const n = coerceMoneyNumber(price);
     if (n === undefined)
@@ -68,7 +33,7 @@ export function formatPrice(price, currency) {
 }
 export async function getVehicleById(vehicleId) {
     const q = `
-    select id, title, brand, model, version, year, km, price, currency, slug, permalink
+    select id, title, brand, model, year, km, price, currency, slug, permalink
     from public.vehicles
     where id = $1
     ${env.catalogDealershipId ? 'and dealership_id = $2' : ''}
@@ -80,7 +45,7 @@ export async function getVehicleById(vehicleId) {
 }
 export async function getVehicleBySlug(slug) {
     const q = `
-    select id, title, brand, model, version, year, km, price, currency, slug, permalink
+    select id, title, brand, model, year, km, price, currency, slug, permalink
     from public.vehicles
     where slug = $1
     ${env.catalogDealershipId ? 'and dealership_id = $2' : ''}
@@ -99,14 +64,10 @@ export function buildVehicleUrl(v) {
     return undefined;
 }
 export function vehicleTitle(v) {
-    const title = cleanVehicleToken(v.title);
-    const brand = cleanVehicleToken(v.brand);
-    const model = cleanVehicleToken(v.model);
-    const version = cleanVehicleToken(v.version);
-    const base = compactVehicleParts([brand, model]);
-    const baseNorm = normalizeVehicleCompare(base.join(' '));
-    const versionNorm = normalizeVehicleCompare(version);
-    const extras = version && versionNorm && !baseNorm.includes(versionNorm) ? [version] : [];
-    return compactVehicleParts([...base, ...extras]).join(' ').trim() || title || 'Vehículo';
+    const fromTitle = v.title?.trim();
+    if (fromTitle)
+        return fromTitle;
+    const bits = [v.brand, v.model, v.year ? String(v.year) : null].filter(Boolean);
+    return bits.length ? String(bits.join(' ')) : 'Vehículo';
 }
 //# sourceMappingURL=vehicles.js.map

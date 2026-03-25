@@ -22,7 +22,6 @@ import {
 import { toast } from "react-toastify";
 import { format } from "date-fns";
 import api from "../../services/api";
-import { buildVehicleLabel } from "../../utils/vehicleLabel";
 
 /**
  * QuotationsManager (MVP)
@@ -52,6 +51,56 @@ async function safeGet(url, config) {
     throw e;
   }
 }
+
+const normalizeVehicleToken = (value) => String(value ?? "").trim();
+
+const normalizeVehicleCompare = (value) =>
+  normalizeVehicleToken(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const compactUniqueVehicleParts = (parts) => {
+  const seen = new Set();
+  return (parts || []).reduce((acc, part) => {
+    const value = normalizeVehicleToken(part);
+    const key = normalizeVehicleCompare(value);
+    if (!value || !key || seen.has(key)) return acc;
+    seen.add(key);
+    acc.push(value);
+    return acc;
+  }, []);
+};
+
+const buildVehicleLabel = (v) => {
+  if (!v) return "";
+  const brand = normalizeVehicleToken(v.marca || v.brand);
+  const model = normalizeVehicleToken(v.modelo || v.model);
+  const year = normalizeVehicleToken(v.year);
+  const version = normalizeVehicleToken(v.version);
+  const title = normalizeVehicleToken(v.title || v.name);
+  const explicitLabel = normalizeVehicleToken(v.label);
+
+  const base = compactUniqueVehicleParts([brand, model, year]);
+  const baseNorm = normalizeVehicleCompare(base.join(" "));
+  const versionNorm = normalizeVehicleCompare(version);
+  const titleNorm = normalizeVehicleCompare(title);
+  const extras = [];
+
+  if (version && versionNorm && !baseNorm.includes(versionNorm)) extras.push(version);
+  if (title && titleNorm && !baseNorm.includes(titleNorm) && !extras.some((x) => normalizeVehicleCompare(x) === titleNorm)) {
+    extras.push(title);
+  }
+
+  return (
+    compactUniqueVehicleParts([...base, ...extras]).join(" ").trim() ||
+    explicitLabel ||
+    title ||
+    compactUniqueVehicleParts([brand, model, version, year]).join(" ").trim()
+  );
+};
 
 async function safePost(url, payload) {
   const { data } = await api.post(url, payload);
