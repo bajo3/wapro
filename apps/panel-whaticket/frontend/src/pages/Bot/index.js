@@ -1,1206 +1,862 @@
-import React, { useContext, useEffect, useMemo, useState } from "react";
-import { useHistory, useLocation } from "react-router-dom";
+/**
+ * BotPanel.jsx — Panel del bot rediseñado
+ *
+ * Reemplaza: apps/panel-whaticket/frontend/src/pages/Bot/index.js
+ *
+ * APIs usadas (todas ya existentes en el backend):
+ *   GET  /bot/intelligence/settings
+ *   PUT  /bot/intelligence/settings
+ *   GET  /bot/intelligence/policies
+ *   POST /bot/intelligence/policies
+ *   DEL  /bot/intelligence/policies/:id
+ *   GET  /bot/intelligence/faqs
+ *   POST /bot/intelligence/faqs
+ *   DEL  /bot/intelligence/faqs/:id
+ *   GET  /bot/intelligence/decisions   (actividad reciente)
+ *   POST /bot/playground/run
+ *   GET  /vehicles
+ *
+ * Dependencias: ya están en el proyecto (react-toastify, api service)
+ * Estilos: Tailwind CSS (igual que LeadPanelAutos, TicketsAutos)
+ */
 
-import {
-  Box,
-  Button,
-  Divider,
-  makeStyles,
-  Paper,
-  Tab,
-  Tabs,
-  TextField,
-  Typography,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Chip,
-} from "@material-ui/core";
-
-import MainContainer from "../../components/MainContainer";
-import MainHeader from "../../components/MainHeader";
-import MainHeaderButtonsWrapper from "../../components/MainHeaderButtonsWrapper";
-import Title from "../../components/Title";
-
-import api from "../../services/api";
-import toastError from "../../errors/toastError";
+import React, { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
+import api from "../../services/api";
 import { AuthContext } from "../../context/Auth/AuthContext";
 
-// Import the global bot toggle component. This button allows admins
-// to turn the bot on or off for all tickets directly from the Bot page.
-import BotGeneralToggle from "./BotGeneralToggle";
+// ─── Utilidades ──────────────────────────────────────────────────────────────
 
-// Training is now part of the Bot section (tab).
-import TrainingMessages from "../TrainingMessages";
-
-const useStyles = makeStyles((theme) => ({
-  mainPaper: {
-    flex: 1,
-    padding: theme.spacing(2),
-    overflowY: "auto",
-    ...theme.scrollbarStyles,
-  },
-  tabPanel: {
-    paddingTop: theme.spacing(2),
-  },
-  rowActions: {
-    display: "flex",
-    gap: theme.spacing(1),
-  },
-  formRow: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: theme.spacing(2),
-    alignItems: "start",
-  },
-  full: {
-    gridColumn: "1 / -1",
-  },
-}));
-
-function TabPanel({ value, index, children }) {
-  if (value !== index) return null;
-  return <Box>{children}</Box>;
+function fmtTime(iso) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = Math.floor((now - d) / 1000);
+    if (diff < 60) return "hace un momento";
+    if (diff < 3600) return `hace ${Math.floor(diff / 60)} min`;
+    if (diff < 86400) return `hace ${Math.floor(diff / 3600)} h`;
+    return d.toLocaleDateString("es-AR");
+  } catch {
+    return "";
+  }
 }
 
-function parseCsvTriggers(s) {
-  return (s || "")
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
+function scoreColor(score) {
+  if (score >= 70) return "#f59e0b";
+  if (score >= 40) return "#3b82f6";
+  return "#22c55e";
 }
 
-const Bot = () => {
-  const classes = useStyles();
-  const history = useHistory();
-  const location = useLocation();
-  const { user } = useContext(AuthContext);
-
-  useEffect(() => {
-    if (user && user.profile && user.profile !== "admin") {
-      history.push("/");
-    }
-  }, [user, history]);
-
-  // Tabs: keep stable indices.
-  // 0=general, 1=policies, 2=faqs, 3=playbooks, 4=training, 5=playground, 6=tests, 7=decisions, 8=feedback
-  const TAB_KEYS = ["general", "policies", "faqs", "playbooks", "training", "playground", "tests", "decisions", "feedback"];
-
-  const parseTabFromUrl = () => {
-    try {
-      const params = new URLSearchParams(location.search || "");
-      const key = String(params.get("tab") || "").toLowerCase();
-      const idx = TAB_KEYS.indexOf(key);
-      return idx >= 0 ? idx : 0;
-    } catch {
-      return 0;
-    }
+function actionBadge(action) {
+  const map = {
+    SHOW_RESULTS:      { label: "STOCK",    cls: "bg-blue-500/10 text-blue-400 border-blue-500/20" },
+    SHOW_ONE:          { label: "STOCK",    cls: "bg-blue-500/10 text-blue-400 border-blue-500/20" },
+    ESCALATE_HUMAN:    { label: "ESCALADO", cls: "bg-amber-500/10 text-amber-400 border-amber-500/20" },
+    ASK_CLARIFY:       { label: "CALIFICANDO", cls: "bg-green-500/10 text-green-400 border-green-500/20" },
+    OFFER_FINANCING:   { label: "FINANCIACIÓN", cls: "bg-purple-500/10 text-purple-400 border-purple-500/20" },
+    OFFER_TRADEIN:     { label: "PERMUTA",  cls: "bg-teal-500/10 text-teal-400 border-teal-500/20" },
+    FOLLOWUP:          { label: "SEGUIMIENTO", cls: "bg-gray-500/10 text-gray-400 border-gray-500/20" },
   };
+  const b = map[action] || { label: action || "—", cls: "bg-gray-500/10 text-gray-400 border-gray-500/20" };
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${b.cls}`}>
+      {b.label}
+    </span>
+  );
+}
 
-  const [tab, setTab] = useState(parseTabFromUrl);
-  const [loading, setLoading] = useState(false);
+// ─── Componentes pequeños ─────────────────────────────────────────────────────
 
-  // Settings
-  const [settingsRaw, setSettingsRaw] = useState("{}");
+function Toggle({ on, onChange, loading }) {
+  return (
+    <button
+      onClick={() => !loading && onChange(!on)}
+      className={`relative w-11 h-6 rounded-full border transition-all duration-200 flex-shrink-0
+        ${on ? "bg-green-500 border-green-500" : "bg-white/5 border-white/10"}
+        ${loading ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+    >
+      <span
+        className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all duration-200
+          ${on ? "left-[22px]" : "left-0.5"}`}
+      />
+    </button>
+  );
+}
 
-  // Lists
-  const [faqs, setFaqs] = useState([]);
-  const [policies, setPolicies] = useState([]);
-  const [playbooks, setPlaybooks] = useState([]);
-  const [examples, setExamples] = useState([]);
-  const [decisions, setDecisions] = useState([]);
-  const [agentFeedbackRows, setAgentFeedbackRows] = useState([]);
-  const [agentFeedbackStats, setAgentFeedbackStats] = useState(null);
-  const [feedbackDetail, setFeedbackDetail] = useState(null);
-  const [feedbackDetailOpen, setFeedbackDetailOpen] = useState(false);
-  const [feedbackVerdictFilter, setFeedbackVerdictFilter] = useState("all");
-  const [feedbackExportFilter, setFeedbackExportFilter] = useState("all");
+function MetricCard({ label, value, change, changeType = "neutral" }) {
+  const changeColors = {
+    up:      "text-green-400",
+    down:    "text-red-400",
+    neutral: "text-white/30",
+  };
+  return (
+    <div className="bg-white/[0.03] border border-white/[0.07] rounded-xl p-4">
+      <div className="text-[11px] text-white/30 uppercase tracking-wider mb-1.5">{label}</div>
+      <div className="text-2xl font-bold text-white tracking-tight">{value}</div>
+      {change && (
+        <div className={`text-[11px] mt-1 ${changeColors[changeType]}`}>{change}</div>
+      )}
+    </div>
+  );
+}
 
-  // Playground
-  const [playgroundText, setPlaygroundText] = useState("");
-  const [playgroundResult, setPlaygroundResult] = useState(null);
+function SectionTitle({ children }) {
+  return (
+    <div className="text-[11px] font-semibold text-white/30 uppercase tracking-wider mb-3">
+      {children}
+    </div>
+  );
+}
 
-  // Tests
-  const [testCases, setTestCases] = useState([]);
-  const [testReport, setTestReport] = useState(null);
+// ─── Tab: Estado ──────────────────────────────────────────────────────────────
 
-  // Create forms
-  const [faqForm, setFaqForm] = useState({ title: "", triggers: "", answer: "" });
-  const [policyForm, setPolicyForm] = useState({ title: "", triggers: "", body: "" });
-  const [pbForm, setPbForm] = useState({ intent: "", triggers: "", template: "" });
-  const [exForm, setExForm] = useState({ intent: "", user_text: "", ideal_answer: "", notes: "" });
+function TabEstado({ decisions, loadingDecisions }) {
+  const escalados = decisions.filter(d => d.action === "ESCALATE_HUMAN").length;
+  const calificados = decisions.filter(d => (d.leadScore || 0) >= 30).length;
 
-  const [tcForm, setTcForm] = useState({
-    name: "",
-    user_text: "",
-    expected_intent: "",
-    expected_source_type: "",
-    expected_source_id: "",
-    expected_contains: "",
+  return (
+    <div>
+      <div className="grid grid-cols-4 gap-3 mb-6">
+        <MetricCard label="Mensajes procesados" value={decisions.length || "—"} />
+        <MetricCard label="Leads calificados" value={calificados || "—"} change={calificados ? `score ≥ 30` : undefined} changeType="up" />
+        <MetricCard label="Escalados a humano" value={escalados || "—"} change={escalados ? "score ≥ 60" : undefined} changeType="neutral" />
+        <MetricCard
+          label="Tasa escalado"
+          value={decisions.length ? `${Math.round((escalados / decisions.length) * 100)}%` : "—"}
+        />
+      </div>
+
+      <SectionTitle>Actividad reciente</SectionTitle>
+
+      {loadingDecisions ? (
+        <div className="flex flex-col gap-2">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="h-14 bg-white/[0.03] rounded-xl animate-pulse" />
+          ))}
+        </div>
+      ) : decisions.length === 0 ? (
+        <div className="text-white/30 text-sm text-center py-8">
+          Sin actividad todavía. El bot procesará mensajes cuando esté activo.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {decisions.slice(0, 20).map((d, i) => (
+            <div
+              key={d.id || i}
+              className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 flex items-center gap-3"
+            >
+              <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm flex-shrink-0
+                ${d.action === "ESCALATE_HUMAN" ? "bg-amber-500/10 text-amber-400" :
+                  d.action?.includes("SHOW") ? "bg-blue-500/10 text-blue-400" :
+                  "bg-green-500/10 text-green-400"}`}>
+                {d.action === "ESCALATE_HUMAN" ? "↑" : d.action?.includes("SHOW") ? "🚗" : "✓"}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-white truncate">
+                  {d.contact || d.remoteJid || "Lead"}
+                </div>
+                <div className="text-[12px] text-white/40 mt-0.5 truncate">
+                  {d.intent && <span className="mr-2">{d.intent}</span>}
+                  {d.suggestedReply && `"${d.suggestedReply.slice(0, 60)}..."`}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {actionBadge(d.action)}
+                {d.leadScore != null && (
+                  <span className="text-[11px] font-mono font-bold" style={{ color: scoreColor(d.leadScore) }}>
+                    {d.leadScore}
+                  </span>
+                )}
+                <span className="text-[11px] text-white/25">{fmtTime(d.createdAt)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tab: Stock ───────────────────────────────────────────────────────────────
+
+function TabStock({ vehicles, loadingVehicles }) {
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState("");
+
+  const filtered = vehicles.filter(v => {
+    const text = [v.marca || v.brand, v.modelo || v.model, v.version, v.year, v.combustible || v.fuel]
+      .filter(Boolean).join(" ").toLowerCase();
+    const matchQ = !q || text.includes(q.toLowerCase());
+    const matchF = !filter ||
+      (filter === "0km" && (Number(v.km) === 0 || Number(v.Km) === 0)) ||
+      (filter === "usado" && Number(v.km || v.Km) > 0);
+    return matchQ && matchF;
   });
 
-  const loadAll = async () => {
+  const disponibles = vehicles.filter(v => v.status !== "sold").length;
+
+  return (
+    <div>
+      <div className="flex gap-2 mb-4">
+        <input
+          className="flex-1 bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/50"
+          placeholder="Buscar marca, modelo, año, combustible..."
+          value={q}
+          onChange={e => setQ(e.target.value)}
+        />
+        <select
+          className="bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white/60 outline-none cursor-pointer"
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+        >
+          <option value="">Todos</option>
+          <option value="0km">0km</option>
+          <option value="usado">Usados</option>
+        </select>
+      </div>
+
+      <SectionTitle>
+        Vehículos que el bot conoce ·{" "}
+        <span className="text-green-400">{disponibles} disponibles</span>
+      </SectionTitle>
+
+      {loadingVehicles ? (
+        <div className="grid grid-cols-3 gap-2">
+          {[1,2,3,4,5,6].map(i => (
+            <div key={i} className="h-28 bg-white/[0.03] rounded-xl animate-pulse" />
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="text-white/30 text-sm text-center py-8">
+          {vehicles.length === 0
+            ? "No hay vehículos en la base de datos. Verificá la tabla de stock."
+            : "No hay resultados para esa búsqueda."}
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-2">
+          {filtered.map((v, i) => {
+            const km = Number(v.km ?? v.Km ?? 0);
+            const es0km = km === 0;
+            const precio = v.precio || v.price;
+            const currency = v.currency || "ARS";
+            const brand = v.marca || v.brand || "—";
+            const model = v.modelo || v.model || v.title || "—";
+            const year = v.year || "—";
+            const trans = v.caja || v.transmission || v.Caja || "—";
+            const fuel = v.combustible || v.fuel || v.Combustible || "—";
+
+            return (
+              <div
+                key={v.id || i}
+                className={`border rounded-xl p-3 transition-colors
+                  ${es0km
+                    ? "bg-amber-500/[0.04] border-amber-500/20"
+                    : "bg-white/[0.03] border-white/[0.06]"}`}
+              >
+                <div className="text-[10px] text-white/30 uppercase tracking-wide">{brand}</div>
+                <div className="text-sm font-semibold text-white mt-0.5">{model}</div>
+                <div className="text-[11px] text-white/40 mt-0.5">{year} · {trans} · {fuel}</div>
+                {precio && (
+                  <div className="text-sm font-bold text-amber-400 mt-2">
+                    {currency} {Number(precio).toLocaleString("es-AR")}
+                  </div>
+                )}
+                <div className="flex items-center justify-between mt-1.5">
+                  <span className="text-[11px] text-white/30">
+                    {es0km ? "0 km" : `${km.toLocaleString("es-AR")} km`}
+                  </span>
+                  <div className={`w-1.5 h-1.5 rounded-full ${
+                    v.status === "sold" ? "bg-white/20" :
+                    v.status === "reserved" ? "bg-amber-400" : "bg-green-400"
+                  }`} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tab: Playground ──────────────────────────────────────────────────────────
+
+function TabPlayground() {
+  const [messages, setMessages] = useState([
+    {
+      role: "bot",
+      text: "¡Hola! Soy el asistente de la concesionaria. ¿Estás buscando un auto 0km o usado? ¿Tenés alguna marca o modelo en mente?",
+      time: "ahora",
+    },
+  ]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [decision, setDecision] = useState(null);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || loading) return;
+    setInput("");
+    setMessages(prev => [...prev, { role: "user", text, time: "ahora" }]);
     setLoading(true);
+
     try {
-      const feedbackParams = { limit: 200 };
-      if (feedbackVerdictFilter !== "all") feedbackParams.verdict = feedbackVerdictFilter;
-      if (feedbackExportFilter !== "all") feedbackParams.exported = feedbackExportFilter === "exported";
-
-      const [s, pol, f, p, e, d, tcs, afr, afs] = await Promise.all([
-        api.get("/bot/intelligence/settings"),
-        api.get("/bot/intelligence/policies"),
-        api.get("/bot/intelligence/faqs"),
-        api.get("/bot/intelligence/playbooks"),
-        api.get("/bot/intelligence/examples"),
-        api.get("/bot/intelligence/decisions", { params: { limit: 200 } }),
-        api.get("/bot/tests/cases"),
-        api.get("/agent-feedbacks", { params: feedbackParams }),
-        api.get("/agent-feedbacks/stats"),
-      ]);
-
-      setSettingsRaw(JSON.stringify(s.data?.settings ?? {}, null, 2));
-      setPolicies(pol.data?.policies ?? []);
-      setFaqs(f.data?.faqs ?? []);
-      setPlaybooks(p.data?.playbooks ?? []);
-      setExamples(e.data?.examples ?? []);
-      setDecisions(d.data?.decisions ?? []);
-      setTestCases(tcs.data?.cases ?? []);
-      setAgentFeedbackRows(afr.data?.rows ?? []);
-      setAgentFeedbackStats(afs.data?.stats ?? null);
+      const { data } = await api.post("/bot/playground/run", { text });
+      const reply = data?.suggestedReply || data?.reply || "Sin respuesta del bot.";
+      setMessages(prev => [...prev, { role: "bot", text: reply, time: "ahora" }]);
+      if (data) setDecision(data);
     } catch (err) {
-      toastError(err);
+      setMessages(prev => [...prev, {
+        role: "bot",
+        text: "Error al conectar con el bot. Verificá que BOT_URL esté configurada en .env.",
+        time: "ahora",
+        error: true,
+      }]);
     } finally {
       setLoading(false);
     }
   };
 
-  const createPolicyRow = async () => {
+  return (
+    <div className="grid grid-cols-[1fr_280px] gap-3">
+      {/* Chat */}
+      <div className="bg-white/[0.03] border border-white/[0.07] rounded-xl flex flex-col h-[380px]">
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 scrollbar-thin scrollbar-thumb-white/10">
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className={`max-w-[78%]`}>
+                <div className={`px-3 py-2 rounded-xl text-sm leading-relaxed
+                  ${m.role === "user"
+                    ? "bg-amber-500 text-black font-medium rounded-br-sm"
+                    : m.error
+                      ? "bg-red-500/10 text-red-300 border border-red-500/20 rounded-bl-sm"
+                      : "bg-white/[0.06] text-white border border-white/[0.07] rounded-bl-sm"}`}>
+                  {m.text}
+                </div>
+                <div className={`text-[10px] text-white/25 mt-1 ${m.role === "user" ? "text-right" : ""}`}>
+                  {m.role === "bot" ? "Bot" : "Vos"} · {m.time}
+                </div>
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div className="flex justify-start">
+              <div className="bg-white/[0.06] border border-white/[0.07] rounded-xl rounded-bl-sm px-4 py-3 flex gap-1.5 items-center">
+                {[0,1,2].map(i => (
+                  <span key={i} className="w-1.5 h-1.5 bg-white/30 rounded-full animate-bounce"
+                    style={{ animationDelay: `${i * 0.15}s` }} />
+                ))}
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+        <div className="flex gap-2 p-3 border-t border-white/[0.06]">
+          <input
+            className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/50"
+            placeholder='Ej: "busco una hilux diesel" · Enter para enviar'
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && send()}
+            disabled={loading}
+          />
+          <button
+            onClick={send}
+            disabled={loading || !input.trim()}
+            className="bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black font-semibold text-sm px-4 rounded-lg transition-colors"
+          >
+            Enviar
+          </button>
+        </div>
+      </div>
+
+      {/* Panel de decisión */}
+      <div className="bg-white/[0.03] border border-white/[0.07] rounded-xl p-4">
+        <div className="text-[11px] font-semibold text-white/30 uppercase tracking-wider mb-4">
+          Decisión del agente
+        </div>
+
+        {!decision ? (
+          <div className="text-sm text-white/20 text-center pt-8">
+            Enviá un mensaje para ver cómo decide el bot
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <Row label="Intent" value={decision.intent} mono />
+            <Row label="Action">
+              {actionBadge(decision.action)}
+            </Row>
+            <Row label="Urgencia" value={decision.urgency} />
+            <Row label="Marca" value={decision.extracted?.brand} />
+            <Row label="Modelo" value={decision.extracted?.model} />
+            {decision.extracted?.maxPrice && (
+              <Row
+                label="Presupuesto"
+                value={`${decision.extracted.currency || "ARS"} ${Number(decision.extracted.maxPrice).toLocaleString("es-AR")}`}
+              />
+            )}
+            <div>
+              <Row label="Lead score" value={decision.leadScore ?? "—"} />
+              <div className="h-1 bg-white/[0.06] rounded-full mt-1.5 overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${Math.min(100, decision.leadScore || 0)}%`,
+                    background: `linear-gradient(90deg, #22c55e, ${scoreColor(decision.leadScore || 0)})`,
+                  }}
+                />
+              </div>
+            </div>
+            <Row label="Handoff">
+              {decision.handoffRecommended
+                ? <span className="text-amber-400 text-xs font-semibold">Sí — escalar ahora</span>
+                : <span className="text-white/30 text-xs">No</span>}
+            </Row>
+            {decision.suggestedReply && (
+              <div className="bg-white/[0.04] border border-white/[0.07] rounded-lg p-3 mt-1">
+                <div className="text-[10px] text-white/30 uppercase tracking-wide mb-1">Respuesta sugerida</div>
+                <div className="text-xs text-white/60 leading-relaxed italic">
+                  "{decision.suggestedReply}"
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value, mono, children }) {
+  return (
+    <div className="flex justify-between items-center">
+      <span className="text-xs text-white/30">{label}</span>
+      {children || (
+        <span className={`text-xs font-medium text-white ${mono ? "font-mono" : ""}`}>
+          {value || "—"}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ─── Tab: Reglas (Policies + FAQs) ───────────────────────────────────────────
+
+function TabReglas({ policies, faqs, loadingPolicies, onReloadPolicies, onReloadFaqs }) {
+  const [newPolicy, setNewPolicy] = useState({ name: "", description: "", triggers: "" });
+  const [newFaq, setNewFaq] = useState({ question: "", answer: "" });
+  const [showPolicyForm, setShowPolicyForm] = useState(false);
+  const [showFaqForm, setShowFaqForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const savePolicy = async () => {
+    if (!newPolicy.name.trim()) return;
+    setSaving(true);
     try {
       await api.post("/bot/intelligence/policies", {
-        title: policyForm.title || null,
-        triggers: parseCsvTriggers(policyForm.triggers),
-        body: policyForm.body,
-        enabled: true,
+        name: newPolicy.name,
+        description: newPolicy.description,
+        triggers: newPolicy.triggers.split(",").map(t => t.trim()).filter(Boolean),
       });
-      toast.success("Política creada");
-      setPolicyForm({ title: "", triggers: "", body: "" });
-      await loadAll();
-    } catch (err) {
-      toastError(err);
+      toast.success("Regla guardada");
+      setNewPolicy({ name: "", description: "", triggers: "" });
+      setShowPolicyForm(false);
+      onReloadPolicies();
+    } catch {
+      toast.error("Error al guardar la regla");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const deletePolicyRow = async (id) => {
+  const deletePolicy = async (id) => {
     try {
       await api.delete(`/bot/intelligence/policies/${id}`);
-      toast.success("Política eliminada");
-      await loadAll();
-    } catch (err) {
-      toastError(err);
+      toast.success("Regla eliminada");
+      onReloadPolicies();
+    } catch {
+      toast.error("Error al eliminar");
     }
   };
 
-  const runPlayground = async () => {
+  const saveFaq = async () => {
+    if (!newFaq.question.trim() || !newFaq.answer.trim()) return;
+    setSaving(true);
     try {
-      const r = await api.post("/bot/playground/run", { text: playgroundText });
-      setPlaygroundResult(r.data?.result ?? null);
-    } catch (err) {
-      toastError(err);
+      await api.post("/bot/intelligence/faqs", newFaq);
+      toast.success("FAQ guardada");
+      setNewFaq({ question: "", answer: "" });
+      setShowFaqForm(false);
+      onReloadFaqs();
+    } catch {
+      toast.error("Error al guardar el FAQ");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const createTestCaseRow = async () => {
-    try {
-      await api.post("/bot/tests/cases", {
-        name: tcForm.name,
-        user_text: tcForm.user_text,
-        expected_intent: tcForm.expected_intent || null,
-        expected_source_type: tcForm.expected_source_type || null,
-        expected_source_id: tcForm.expected_source_id ? Number(tcForm.expected_source_id) : null,
-        expected_contains: parseCsvTriggers(tcForm.expected_contains),
-        enabled: true,
-      });
-      toast.success("Test case creado");
-      setTcForm({ name: "", user_text: "", expected_intent: "", expected_source_type: "", expected_source_id: "", expected_contains: "" });
-      await loadAll();
-    } catch (err) {
-      toastError(err);
-    }
-  };
-
-  const deleteTestCaseRow = async (id) => {
-    try {
-      await api.delete(`/bot/tests/cases/${id}`);
-      toast.success("Test case eliminado");
-      await loadAll();
-    } catch (err) {
-      toastError(err);
-    }
-  };
-
-  const runTests = async () => {
-    try {
-      const r = await api.post("/bot/tests/run", { limit: 200 });
-      setTestReport(r.data?.report ?? null);
-      toast.success("Suite ejecutada");
-    } catch (err) {
-      toastError(err);
-    }
-  };
-
-  useEffect(() => {
-    if (user?.profile === "admin") loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.profile, feedbackVerdictFilter, feedbackExportFilter]);
-
-  // Keep URL in sync with selected tab for deep-links and /training redirect.
-  useEffect(() => {
-    const key = TAB_KEYS[tab] || "intelligence";
-    const params = new URLSearchParams(location.search || "");
-    if (params.get("tab") !== key) {
-      params.set("tab", key);
-      history.replace({ pathname: "/bot", search: params.toString() });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab]);
-
-  // If user manually changes the URL (?tab=training), update the UI.
-  useEffect(() => {
-    const idx = parseTabFromUrl();
-    if (idx !== tab) setTab(idx);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.search]);
-
-  const saveSettings = async () => {
-    try {
-      const parsed = JSON.parse(settingsRaw || "{}");
-      await api.put("/bot/intelligence/settings", parsed);
-      toast.success("Settings guardados");
-      await loadAll();
-    } catch (err) {
-      if (err?.message?.includes("JSON")) {
-        toast.error("JSON inválido en Settings");
-        return;
-      }
-      toastError(err);
-    }
-  };
-
-  const createFaqRow = async () => {
-    try {
-      await api.post("/bot/intelligence/faqs", {
-        title: faqForm.title || null,
-        triggers: parseCsvTriggers(faqForm.triggers),
-        answer: faqForm.answer,
-        enabled: true,
-      });
-      toast.success("FAQ creada");
-      setFaqForm({ title: "", triggers: "", answer: "" });
-      await loadAll();
-    } catch (err) {
-      toastError(err);
-    }
-  };
-
-  const deleteFaqRow = async (id) => {
+  const deleteFaq = async (id) => {
     try {
       await api.delete(`/bot/intelligence/faqs/${id}`);
       toast.success("FAQ eliminada");
-      await loadAll();
-    } catch (err) {
-      toastError(err);
+      onReloadFaqs();
+    } catch {
+      toast.error("Error al eliminar");
     }
   };
-
-  const createPlaybookRow = async () => {
-    try {
-      await api.post("/bot/intelligence/playbooks", {
-        intent: pbForm.intent,
-        triggers: parseCsvTriggers(pbForm.triggers),
-        template: pbForm.template,
-        enabled: true,
-      });
-      toast.success("Playbook creado");
-      setPbForm({ intent: "", triggers: "", template: "" });
-      await loadAll();
-    } catch (err) {
-      toastError(err);
-    }
-  };
-
-  const deletePlaybookRow = async (id) => {
-    try {
-      await api.delete(`/bot/intelligence/playbooks/${id}`);
-      toast.success("Playbook eliminado");
-      await loadAll();
-    } catch (err) {
-      toastError(err);
-    }
-  };
-
-  const createExampleRow = async () => {
-    try {
-      await api.post("/bot/intelligence/examples", {
-        intent: exForm.intent,
-        user_text: exForm.user_text,
-        ideal_answer: exForm.ideal_answer,
-        notes: exForm.notes || null,
-      });
-      toast.success("Ejemplo guardado");
-      setExForm({ intent: "", user_text: "", ideal_answer: "", notes: "" });
-      await loadAll();
-    } catch (err) {
-      toastError(err);
-    }
-  };
-
-  const deleteExampleRow = async (id) => {
-    try {
-      await api.delete(`/bot/intelligence/examples/${id}`);
-      toast.success("Ejemplo eliminado");
-      await loadAll();
-    } catch (err) {
-      toastError(err);
-    }
-  };
-
-
-  const exportFeedbackToExample = async (row) => {
-    try {
-      await api.post(`/agent-feedbacks/${row.id}/export-example`);
-      toast.success("Feedback exportado como ejemplo");
-      await loadAll();
-    } catch (err) {
-      toastError(err);
-    }
-  };
-
-  const exportFeedbackToTestCase = async (row) => {
-    try {
-      await api.post(`/agent-feedbacks/${row.id}/export-test-case`);
-      toast.success("Feedback exportado como test case");
-      await loadAll();
-    } catch (err) {
-      toastError(err);
-    }
-  };
-
-  const openFeedbackDetail = async (row) => {
-    try {
-      const { data } = await api.get(`/agent-feedbacks/${row.id}`);
-      setFeedbackDetail(data || null);
-      setFeedbackDetailOpen(true);
-    } catch (err) {
-      toastError(err);
-    }
-  };
-
-  const failureRanking = useMemo(() => {
-    const map = agentFeedbackStats?.failureByIntent || {};
-    return Object.entries(map).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 8);
-  }, [agentFeedbackStats]);
-
-  const approvalRanking = useMemo(() => {
-    const map = agentFeedbackStats?.approvedByIntent || {};
-    return Object.entries(map).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 8);
-  }, [agentFeedbackStats]);
-
-  const decisionRows = useMemo(() => decisions ?? [], [decisions]);
 
   return (
-    <MainContainer>
-      <MainHeader>
-        <Title>Bot</Title>
-        <MainHeaderButtonsWrapper>
-          <Button variant="outlined" onClick={loadAll} disabled={loading}>
-            Refrescar
-          </Button>
-        </MainHeaderButtonsWrapper>
-      </MainHeader>
+    <div className="grid grid-cols-2 gap-6">
+      {/* Policies */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <SectionTitle>Reglas del bot</SectionTitle>
+          <button
+            onClick={() => setShowPolicyForm(v => !v)}
+            className="text-xs text-amber-400 hover:text-amber-300 font-medium"
+          >
+            {showPolicyForm ? "Cancelar" : "+ Nueva regla"}
+          </button>
+        </div>
 
-      <Paper className={classes.mainPaper}>
-        <Tabs
-          value={tab}
-          onChange={(_, v) => setTab(v)}
-          indicatorColor="primary"
-          textColor="primary"
-        >
-          <Tab label="General" />
-          <Tab label="Políticas" />
-          <Tab label="FAQs" />
-          <Tab label="Playbooks" />
-          <Tab label="Training" />
-          <Tab label="Playground" />
-          <Tab label="Tests" />
-          <Tab label="Decisions" />
-          <Tab label="Feedback" />
-        </Tabs>
-        <Divider />
-
-        <Box className={classes.tabPanel}>
-          <TabPanel value={tab} index={0}>
-            {/* Global Bot toggle: allow admin to turn the bot on/off for all tickets */}
-            <BotGeneralToggle />
-            <Typography variant="body2" gutterBottom>
-              Settings en JSON. Se usan para templates: {'{settings.algo}'}
-            </Typography>
-            <TextField
-              value={settingsRaw}
-              onChange={(e) => setSettingsRaw(e.target.value)}
-              variant="outlined"
-              fullWidth
-              multiline
-              rows={14}
+        {showPolicyForm && (
+          <div className="bg-white/[0.04] border border-white/[0.08] rounded-xl p-4 mb-3 flex flex-col gap-2">
+            <input
+              className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/40 w-full"
+              placeholder="Nombre de la regla"
+              value={newPolicy.name}
+              onChange={e => setNewPolicy(p => ({ ...p, name: e.target.value }))}
             />
-            <Box mt={2}>
-              <Button
-                color="primary"
-                variant="contained"
-                onClick={saveSettings}
-                disabled={loading}
-              >
-                Guardar settings
-              </Button>
-            </Box>
+            <textarea
+              className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/40 w-full resize-none"
+              placeholder="Descripción / instrucción para el bot"
+              rows={2}
+              value={newPolicy.description}
+              onChange={e => setNewPolicy(p => ({ ...p, description: e.target.value }))}
+            />
+            <input
+              className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/40 w-full"
+              placeholder="Triggers (separados por coma)"
+              value={newPolicy.triggers}
+              onChange={e => setNewPolicy(p => ({ ...p, triggers: e.target.value }))}
+            />
+            <button
+              onClick={savePolicy}
+              disabled={saving || !newPolicy.name.trim()}
+              className="bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+            >
+              Guardar regla
+            </button>
+          </div>
+        )}
 
-            <Divider style={{ margin: "20px 0" }} />
-
-            <Typography variant="subtitle1" gutterBottom>
-              Ejemplos
-            </Typography>
-            <Typography variant="body2" color="textSecondary" gutterBottom>
-              Documentá respuestas ideales por intent (útil para ajustar la inteligencia y futuras mejoras).
-            </Typography>
-
-            <Box className={classes.formRow}>
-              <TextField
-                label="Intent"
-                variant="outlined"
-                value={exForm.intent}
-                onChange={(e) => setExForm({ ...exForm, intent: e.target.value })}
-              />
-              <TextField
-                label="Notas"
-                variant="outlined"
-                value={exForm.notes}
-                onChange={(e) => setExForm({ ...exForm, notes: e.target.value })}
-              />
-              <TextField
-                className={classes.full}
-                label="User text"
-                variant="outlined"
-                multiline
-                rows={3}
-                value={exForm.user_text}
-                onChange={(e) => setExForm({ ...exForm, user_text: e.target.value })}
-              />
-              <TextField
-                className={classes.full}
-                label="Ideal answer"
-                variant="outlined"
-                multiline
-                rows={4}
-                value={exForm.ideal_answer}
-                onChange={(e) => setExForm({ ...exForm, ideal_answer: e.target.value })}
-              />
-              <Box className={classes.full}>
-                <Button color="primary" variant="contained" onClick={createExampleRow}>
-                  Guardar ejemplo
-                </Button>
-              </Box>
-            </Box>
-
-            <Box mt={2}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>ID</TableCell>
-                    <TableCell>Intent</TableCell>
-                    <TableCell>User</TableCell>
-                    <TableCell>Ideal</TableCell>
-                    <TableCell align="right">Acciones</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {examples.map((x) => (
-                    <TableRow key={x.id}>
-                      <TableCell>{x.id}</TableCell>
-                      <TableCell>{x.intent}</TableCell>
-                      <TableCell style={{ maxWidth: 280, whiteSpace: "pre-wrap" }}>{x.user_text}</TableCell>
-                      <TableCell style={{ maxWidth: 320, whiteSpace: "pre-wrap" }}>{x.ideal_answer}</TableCell>
-                      <TableCell align="right">
-                        <Button size="small" variant="outlined" color="secondary" onClick={() => deleteExampleRow(x.id)}>
-                          Borrar
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Box>
-          </TabPanel>
-
-          <TabPanel value={tab} index={1}>
-            <Box className={classes.formRow}>
-              <TextField
-                label="Título"
-                variant="outlined"
-                value={policyForm.title}
-                onChange={(e) =>
-                  setPolicyForm({ ...policyForm, title: e.target.value })
-                }
-              />
-              <TextField
-                label="Triggers (comma)"
-                variant="outlined"
-                value={policyForm.triggers}
-                onChange={(e) =>
-                  setPolicyForm({ ...policyForm, triggers: e.target.value })
-                }
-              />
-              <TextField
-                className={classes.full}
-                label="Body"
-                variant="outlined"
-                multiline
-                rows={4}
-                value={policyForm.body}
-                onChange={(e) =>
-                  setPolicyForm({ ...policyForm, body: e.target.value })
-                }
-              />
-              <Box className={classes.full}>
-                <Button color="primary" variant="contained" onClick={createPolicyRow}>
-                  Crear Política
-                </Button>
-              </Box>
-            </Box>
-
-            <Box mt={2}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>ID</TableCell>
-                    <TableCell>Título</TableCell>
-                    <TableCell>Triggers</TableCell>
-                    <TableCell>Body</TableCell>
-                    <TableCell align="right">Acciones</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {policies.map((p) => (
-                    <TableRow key={p.id}>
-                      <TableCell>{p.id}</TableCell>
-                      <TableCell>{p.title || ""}</TableCell>
-                      <TableCell>{(p.triggers || []).join(", ")}</TableCell>
-                      <TableCell
-                        style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}
-                      >
-                        {p.body}
-                      </TableCell>
-                      <TableCell align="right">
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          color="secondary"
-                          onClick={() => deletePolicyRow(p.id)}
-                        >
-                          Eliminar
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Box>
-          </TabPanel>
-
-          <TabPanel value={tab} index={2}>
-            <Box className={classes.formRow}>
-              <TextField
-                label="Título"
-                variant="outlined"
-                value={faqForm.title}
-                onChange={(e) => setFaqForm({ ...faqForm, title: e.target.value })}
-              />
-              <TextField
-                label="Triggers (comma)"
-                variant="outlined"
-                value={faqForm.triggers}
-                onChange={(e) => setFaqForm({ ...faqForm, triggers: e.target.value })}
-              />
-              <TextField
-                className={classes.full}
-                label="Respuesta"
-                variant="outlined"
-                multiline
-                rows={4}
-                value={faqForm.answer}
-                onChange={(e) => setFaqForm({ ...faqForm, answer: e.target.value })}
-              />
-              <Box className={classes.full}>
-                <Button color="primary" variant="contained" onClick={createFaqRow}>
-                  Crear FAQ
-                </Button>
-              </Box>
-            </Box>
-
-            <Box mt={2}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>ID</TableCell>
-                    <TableCell>Título</TableCell>
-                    <TableCell>Triggers</TableCell>
-                    <TableCell>Respuesta</TableCell>
-                    <TableCell align="right">Acciones</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {faqs.map((f) => (
-                    <TableRow key={f.id}>
-                      <TableCell>{f.id}</TableCell>
-                      <TableCell>{f.title || ""}</TableCell>
-                      <TableCell>{(f.triggers || []).join(", ")}</TableCell>
-                      <TableCell
-                        style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}
-                      >
-                        {f.answer}
-                      </TableCell>
-                      <TableCell align="right">
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          color="secondary"
-                          onClick={() => deleteFaqRow(f.id)}
-                        >
-                          Eliminar
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Box>
-          </TabPanel>
-
-          <TabPanel value={tab} index={3}>
-            <Box className={classes.formRow}>
-              <TextField
-                label="Intent"
-                variant="outlined"
-                value={pbForm.intent}
-                onChange={(e) => setPbForm({ ...pbForm, intent: e.target.value })}
-              />
-              <TextField
-                label="Triggers (comma)"
-                variant="outlined"
-                value={pbForm.triggers}
-                onChange={(e) => setPbForm({ ...pbForm, triggers: e.target.value })}
-              />
-              <TextField
-                className={classes.full}
-                label="Template"
-                variant="outlined"
-                multiline
-                rows={5}
-                value={pbForm.template}
-                onChange={(e) => setPbForm({ ...pbForm, template: e.target.value })}
-              />
-              <Box className={classes.full}>
-                <Button color="primary" variant="contained" onClick={createPlaybookRow}>
-                  Crear Playbook
-                </Button>
-              </Box>
-            </Box>
-
-            <Box mt={2}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>ID</TableCell>
-                    <TableCell>Intent</TableCell>
-                    <TableCell>Triggers</TableCell>
-                    <TableCell>Template</TableCell>
-                    <TableCell align="right">Acciones</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {playbooks.map((p) => (
-                    <TableRow key={p.id}>
-                      <TableCell>{p.id}</TableCell>
-                      <TableCell>{p.intent}</TableCell>
-                      <TableCell>{(p.triggers || []).join(", ")}</TableCell>
-                      <TableCell
-                        style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}
-                      >
-                        {p.template}
-                      </TableCell>
-                      <TableCell align="right">
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          color="secondary"
-                          onClick={() => deletePlaybookRow(p.id)}
-                        >
-                          Eliminar
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Box>
-          </TabPanel>
-
-          <TabPanel value={tab} index={4}>
-            <TrainingMessages />
-          </TabPanel>
-
-          <TabPanel value={tab} index={7}>
-            <Typography variant="body2" gutterBottom>
-              Últimas decisiones. Útil para auditar por qué respondió FAQ/Playbook.
-            </Typography>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>At</TableCell>
-                  <TableCell>Remote</TableCell>
-                  <TableCell>Intent</TableCell>
-                  <TableCell>Data</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {decisionRows.map((d) => (
-                  <TableRow key={d.id}>
-                    <TableCell>
-                      {String(d.created_at || "").replace("T", " ").slice(0, 19)}
-                    </TableCell>
-                    <TableCell>{d.remote_jid}</TableCell>
-                    <TableCell>{d.intent || ""}</TableCell>
-                    <TableCell
-                      style={{ maxWidth: 520, whiteSpace: "pre-wrap" }}
-                    >
-                      {JSON.stringify(d.data ?? {}, null, 0)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TabPanel>
-
-          <TabPanel value={tab} index={8}>
-            <Box display="grid" gridTemplateColumns="repeat(auto-fit, minmax(180px, 1fr))" gridGap={12}>
-              <Paper variant="outlined" style={{ padding: 12 }}>
-                <Typography variant="caption" color="textSecondary">Total feedback</Typography>
-                <Typography variant="h6">{agentFeedbackStats?.total || 0}</Typography>
-              </Paper>
-              <Paper variant="outlined" style={{ padding: 12 }}>
-                <Typography variant="caption" color="textSecondary">Aprobados</Typography>
-                <Typography variant="h6">{agentFeedbackStats?.approved || 0}</Typography>
-              </Paper>
-              <Paper variant="outlined" style={{ padding: 12 }}>
-                <Typography variant="caption" color="textSecondary">Fallos</Typography>
-                <Typography variant="h6">{(agentFeedbackStats?.rejected || 0) + (agentFeedbackStats?.edited || 0) + (agentFeedbackStats?.handoff || 0)}</Typography>
-              </Paper>
-              <Paper variant="outlined" style={{ padding: 12 }}>
-                <Typography variant="caption" color="textSecondary">Confianza promedio</Typography>
-                <Typography variant="h6">{agentFeedbackStats?.avgConfidence ?? 0}</Typography>
-              </Paper>
-              <Paper variant="outlined" style={{ padding: 12 }}>
-                <Typography variant="caption" color="textSecondary">Exportados a examples</Typography>
-                <Typography variant="h6">{agentFeedbackStats?.exportedToExample || 0}</Typography>
-              </Paper>
-              <Paper variant="outlined" style={{ padding: 12 }}>
-                <Typography variant="caption" color="textSecondary">Exportados a tests</Typography>
-                <Typography variant="h6">{agentFeedbackStats?.exportedToTestCase || 0}</Typography>
-              </Paper>
-            </Box>
-
-            <Box mt={2} display="grid" gridTemplateColumns="1fr 1fr" gridGap={16}>
-              <Paper variant="outlined" style={{ padding: 12 }}>
-                <Typography variant="subtitle2" gutterBottom>Intent con más fallos</Typography>
-                {failureRanking.length ? failureRanking.map(([intent, qty]) => (
-                  <Box key={intent} display="flex" justifyContent="space-between" mb={1}>
-                    <Typography variant="body2">{intent}</Typography>
-                    <Chip size="small" label={qty} />
-                  </Box>
-                )) : <Typography variant="body2" color="textSecondary">Sin datos todavía.</Typography>}
-              </Paper>
-
-              <Paper variant="outlined" style={{ padding: 12 }}>
-                <Typography variant="subtitle2" gutterBottom>Intent mejor resueltos</Typography>
-                {approvalRanking.length ? approvalRanking.map(([intent, qty]) => (
-                  <Box key={intent} display="flex" justifyContent="space-between" mb={1}>
-                    <Typography variant="body2">{intent}</Typography>
-                    <Chip size="small" label={qty} />
-                  </Box>
-                )) : <Typography variant="body2" color="textSecondary">Sin datos todavía.</Typography>}
-              </Paper>
-            </Box>
-
-            <Box mt={3} display="flex" alignItems="center" justifyContent="space-between" flexWrap="wrap" gridGap={16}>
-              <Typography variant="subtitle1">Feedback real del agente</Typography>
-              <Box display="flex" gridGap={12} flexWrap="wrap">
-                <FormControl variant="outlined" size="small">
-                  <InputLabel>Veredicto</InputLabel>
-                  <Select
-                    value={feedbackVerdictFilter}
-                    onChange={(e) => setFeedbackVerdictFilter(e.target.value)}
-                    label="Veredicto"
-                    style={{ minWidth: 160 }}
-                  >
-                    <MenuItem value="all">Todos</MenuItem>
-                    <MenuItem value="approved">Aprobados</MenuItem>
-                    <MenuItem value="rejected">Rechazados</MenuItem>
-                    <MenuItem value="edited">Editados</MenuItem>
-                    <MenuItem value="handoff">Handoff</MenuItem>
-                  </Select>
-                </FormControl>
-
-                <FormControl variant="outlined" size="small">
-                  <InputLabel>Exportación</InputLabel>
-                  <Select
-                    value={feedbackExportFilter}
-                    onChange={(e) => setFeedbackExportFilter(e.target.value)}
-                    label="Exportación"
-                    style={{ minWidth: 170 }}
-                  >
-                    <MenuItem value="all">Todos</MenuItem>
-                    <MenuItem value="pending">Pendientes</MenuItem>
-                    <MenuItem value="exported">Exportados</MenuItem>
-                  </Select>
-                </FormControl>
-              </Box>
-            </Box>
-
-            <Box mt={2}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>ID</TableCell>
-                    <TableCell>Fecha</TableCell>
-                    <TableCell>Veredicto</TableCell>
-                    <TableCell>Intent</TableCell>
-                    <TableCell>Acción</TableCell>
-                    <TableCell>Contacto</TableCell>
-                    <TableCell>Sugerida</TableCell>
-                    <TableCell>Final</TableCell>
-                    <TableCell>Exports</TableCell>
-                    <TableCell align="right">Acciones</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {agentFeedbackRows.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell>{row.id}</TableCell>
-                      <TableCell>{row.createdAt ? new Date(row.createdAt).toLocaleString() : "-"}</TableCell>
-                      <TableCell>{row.verdict}</TableCell>
-                      <TableCell>{row.intent || "-"}</TableCell>
-                      <TableCell>{row.action || "-"}</TableCell>
-                      <TableCell>{row.contact?.name || row.contact?.number || "-"}</TableCell>
-                      <TableCell style={{ maxWidth: 220, whiteSpace: "pre-wrap" }}>{row.suggestedReply || "-"}</TableCell>
-                      <TableCell style={{ maxWidth: 220, whiteSpace: "pre-wrap" }}>{row.finalReply || "-"}</TableCell>
-                      <TableCell>
-                        <Box display="flex" flexDirection="column" gridGap={6}>
-                          <Chip size="small" label={row.exportedToExample ? "Example ✓" : "Example -"} />
-                          <Chip size="small" label={row.exportedToTestCase ? "Test ✓" : "Test -"} />
-                        </Box>
-                      </TableCell>
-                      <TableCell align="right">
-                        <Box display="flex" justifyContent="flex-end" gridGap={8} flexWrap="wrap">
-                          <Button size="small" variant="outlined" onClick={() => openFeedbackDetail(row)}>Ver detalle</Button>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            color="primary"
-                            disabled={Boolean(row.exportedToExample)}
-                            onClick={() => exportFeedbackToExample(row)}
-                          >
-                            {row.exportedToExample ? "Example ✓" : "Exportar example"}
-                          </Button>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            color="primary"
-                            disabled={Boolean(row.exportedToTestCase)}
-                            onClick={() => exportFeedbackToTestCase(row)}
-                          >
-                            {row.exportedToTestCase ? "Test ✓" : "Exportar test"}
-                          </Button>
-                        </Box>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Box>
-
-            <Dialog open={feedbackDetailOpen} onClose={() => setFeedbackDetailOpen(false)} fullWidth maxWidth="md">
-              <DialogTitle>Detalle de feedback #{feedbackDetail?.row?.id || ""}</DialogTitle>
-              <DialogContent dividers>
-                <Box display="grid" gridTemplateColumns="1fr 1fr" gridGap={16}>
-                  <Paper variant="outlined" style={{ padding: 12 }}>
-                    <Typography variant="subtitle2" gutterBottom>Resumen</Typography>
-                    <Typography variant="body2"><strong>Veredicto:</strong> {feedbackDetail?.row?.verdict || "-"}</Typography>
-                    <Typography variant="body2"><strong>Intent:</strong> {feedbackDetail?.row?.intent || "-"}</Typography>
-                    <Typography variant="body2"><strong>Acción:</strong> {feedbackDetail?.row?.action || "-"}</Typography>
-                    <Typography variant="body2"><strong>Confianza:</strong> {feedbackDetail?.row?.confidence ?? "-"}</Typography>
-                    <Typography variant="body2"><strong>Contacto:</strong> {feedbackDetail?.row?.contact?.name || feedbackDetail?.row?.contact?.number || "-"}</Typography>
-                    <Typography variant="body2"><strong>Ticket:</strong> #{feedbackDetail?.row?.ticket?.id || "-"} · {feedbackDetail?.row?.ticket?.status || "-"}</Typography>
-                    <Typography variant="body2"><strong>Usuario:</strong> {feedbackDetail?.row?.user?.name || "-"}</Typography>
-                  </Paper>
-
-                  <Paper variant="outlined" style={{ padding: 12 }}>
-                    <Typography variant="subtitle2" gutterBottom>Contexto agente</Typography>
-                    <Typography variant="body2" style={{ whiteSpace: "pre-wrap" }}><strong>Sugerida:</strong> {feedbackDetail?.row?.suggestedReply || "-"}</Typography>
-                    <Box mt={1} />
-                    <Typography variant="body2" style={{ whiteSpace: "pre-wrap" }}><strong>Final:</strong> {feedbackDetail?.row?.finalReply || "-"}</Typography>
-                    <Box mt={1} />
-                    <Typography variant="body2" style={{ whiteSpace: "pre-wrap" }}><strong>Nota:</strong> {feedbackDetail?.row?.note || "-"}</Typography>
-                    <Box mt={1} />
-                    <Typography variant="body2" style={{ whiteSpace: "pre-wrap" }}><strong>Meta:</strong> {JSON.stringify(feedbackDetail?.row?.meta || {}, null, 2)}</Typography>
-                  </Paper>
-                </Box>
-
-                <Box mt={2}>
-                  <Typography variant="subtitle2" gutterBottom>Últimos mensajes del ticket</Typography>
-                  <Paper variant="outlined" style={{ padding: 12, maxHeight: 320, overflowY: "auto" }}>
-                    {(feedbackDetail?.messages || []).map((msg) => (
-                      <Box key={msg.id} mb={1.5}>
-                        <Typography variant="caption" color="textSecondary">
-                          {msg.fromMe ? "Asesor/Bot" : "Cliente"} · {msg.createdAt ? new Date(msg.createdAt).toLocaleString() : "-"}
-                        </Typography>
-                        <Typography variant="body2" style={{ whiteSpace: "pre-wrap" }}>
-                          {msg.body || "[sin texto]"}
-                        </Typography>
-                      </Box>
-                    ))}
-                    {!(feedbackDetail?.messages || []).length && (
-                      <Typography variant="body2" color="textSecondary">Sin mensajes disponibles para este feedback.</Typography>
+        {loadingPolicies ? (
+          <div className="flex flex-col gap-2">
+            {[1,2,3].map(i => <div key={i} className="h-16 bg-white/[0.03] rounded-xl animate-pulse" />)}
+          </div>
+        ) : policies.length === 0 ? (
+          <div className="text-white/25 text-sm text-center py-6">Sin reglas configuradas</div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {policies.map((p, i) => (
+              <div key={p.id || i} className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-medium text-white">{p.name}</div>
+                    {p.description && (
+                      <div className="text-xs text-white/40 mt-0.5 leading-relaxed">{p.description}</div>
                     )}
-                  </Paper>
-                </Box>
-              </DialogContent>
-              <DialogActions>
-                <Button onClick={() => setFeedbackDetailOpen(false)} color="primary">Cerrar</Button>
-              </DialogActions>
-            </Dialog>
-          </TabPanel>
+                    {p.triggers?.length > 0 && (
+                      <div className="flex gap-1 flex-wrap mt-1.5">
+                        {p.triggers.slice(0, 4).map((t, ti) => (
+                          <span key={ti} className="text-[10px] bg-white/[0.05] text-white/40 px-1.5 py-0.5 rounded">
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => deletePolicy(p.id)}
+                    className="text-white/20 hover:text-red-400 text-lg leading-none flex-shrink-0 mt-0.5"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
-          <TabPanel value={tab} index={5}>
-            <Typography variant="body2" gutterBottom>
-              Probá una frase y mirá qué responde y qué fuentes usó (policy/faq/playbook).
-            </Typography>
-            <TextField
-              value={playgroundText}
-              onChange={(e) => setPlaygroundText(e.target.value)}
-              variant="outlined"
-              fullWidth
-              multiline
-              rows={4}
-              placeholder="Ej: ¿dónde están? / ¿hacen envíos? / quiero financiación"
+      {/* FAQs */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <SectionTitle>FAQs del bot</SectionTitle>
+          <button
+            onClick={() => setShowFaqForm(v => !v)}
+            className="text-xs text-amber-400 hover:text-amber-300 font-medium"
+          >
+            {showFaqForm ? "Cancelar" : "+ Nueva FAQ"}
+          </button>
+        </div>
+
+        {showFaqForm && (
+          <div className="bg-white/[0.04] border border-white/[0.08] rounded-xl p-4 mb-3 flex flex-col gap-2">
+            <input
+              className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/40 w-full"
+              placeholder="Pregunta"
+              value={newFaq.question}
+              onChange={e => setNewFaq(p => ({ ...p, question: e.target.value }))}
             />
-            <Box mt={2}>
-              <Button color="primary" variant="contained" onClick={runPlayground}>
-                Ejecutar
-              </Button>
-            </Box>
-            {playgroundResult && (
-              <Box mt={2}>
-                <Typography variant="subtitle2">
-                  Intent: {playgroundResult.intent}
-                </Typography>
-                <Typography variant="subtitle2">Fuentes:</Typography>
-                <Typography
-                  variant="body2"
-                  style={{ whiteSpace: "pre-wrap" }}
-                >
-                  {JSON.stringify(playgroundResult.sources || [], null, 2)}
-                </Typography>
-                <Divider style={{ margin: "12px 0" }} />
-                <Typography variant="subtitle2">Respuesta</Typography>
-                <Typography
-                  variant="body1"
-                  style={{ whiteSpace: "pre-wrap" }}
-                >
-                  {playgroundResult.reply}
-                </Typography>
-              </Box>
-            )}
-          </TabPanel>
+            <textarea
+              className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/40 w-full resize-none"
+              placeholder="Respuesta"
+              rows={3}
+              value={newFaq.answer}
+              onChange={e => setNewFaq(p => ({ ...p, answer: e.target.value }))}
+            />
+            <button
+              onClick={saveFaq}
+              disabled={saving || !newFaq.question.trim() || !newFaq.answer.trim()}
+              className="bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+            >
+              Guardar FAQ
+            </button>
+          </div>
+        )}
 
-          <TabPanel value={tab} index={6}>
-            <Typography variant="body2" gutterBottom>
-              Suite básica: casos tipo "si el usuario escribe X, esperamos intent Y / fuente Z".
-            </Typography>
-            <Box className={classes.formRow}>
-              <TextField
-                label="Nombre"
-                variant="outlined"
-                value={tcForm.name}
-                onChange={(e) => setTcForm({ ...tcForm, name: e.target.value })}
-              />
-              <TextField
-                label="Expected intent"
-                variant="outlined"
-                value={tcForm.expected_intent}
-                onChange={(e) => setTcForm({ ...tcForm, expected_intent: e.target.value })}
-                placeholder="faq / policy / stock / none"
-              />
-              <TextField
-                className={classes.full}
-                label="User text"
-                variant="outlined"
-                multiline
-                rows={2}
-                value={tcForm.user_text}
-                onChange={(e) => setTcForm({ ...tcForm, user_text: e.target.value })}
-              />
-              <TextField
-                label="Expected source type"
-                variant="outlined"
-                value={tcForm.expected_source_type}
-                onChange={(e) => setTcForm({ ...tcForm, expected_source_type: e.target.value })}
-                placeholder="policy / faq / playbook"
-              />
-              <TextField
-                label="Expected source id"
-                variant="outlined"
-                value={tcForm.expected_source_id}
-                onChange={(e) => setTcForm({ ...tcForm, expected_source_id: e.target.value })}
-              />
-              <TextField
-                className={classes.full}
-                label="Expected contains (comma)"
-                variant="outlined"
-                value={tcForm.expected_contains}
-                onChange={(e) => setTcForm({ ...tcForm, expected_contains: e.target.value })}
-              />
-              <Box className={classes.full}>
-                <Button color="primary" variant="contained" onClick={createTestCaseRow}>
-                  Crear test case
-                </Button>
-                <Button
-                  style={{ marginLeft: 8 }}
-                  variant="outlined"
-                  onClick={runTests}
-                >
-                  Run suite
-                </Button>
-              </Box>
-            </Box>
-
-            <Box mt={2}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>ID</TableCell>
-                    <TableCell>Nombre</TableCell>
-                    <TableCell>User text</TableCell>
-                    <TableCell>Esperado</TableCell>
-                    <TableCell align="right">Acciones</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {testCases.map((tc) => (
-                    <TableRow key={tc.id}>
-                      <TableCell>{tc.id}</TableCell>
-                      <TableCell>{tc.name}</TableCell>
-                      <TableCell
-                        style={{ maxWidth: 320, whiteSpace: "pre-wrap" }}
-                      >
-                        {tc.user_text}
-                      </TableCell>
-                      <TableCell
-                        style={{ maxWidth: 340, whiteSpace: "pre-wrap" }}
-                      >
-                        {JSON.stringify(
-                          {
-                            intent: tc.expected_intent,
-                            source: {
-                              type: tc.expected_source_type,
-                              id: tc.expected_source_id,
-                            },
-                            contains: tc.expected_contains,
-                          },
-                          null,
-                          0
-                        )}
-                      </TableCell>
-                      <TableCell align="right">
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          color="secondary"
-                          onClick={() => deleteTestCaseRow(tc.id)}
-                        >
-                          Eliminar
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Box>
-
-            {testReport && (
-              <Box mt={2}>
-                <Typography variant="subtitle2">
-                  Resultado: {testReport.passed}/{testReport.total} OK (fails: {testReport.failed})
-                </Typography>
-                <Box mt={1}>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Pass</TableCell>
-                        <TableCell>Caso</TableCell>
-                        <TableCell>Actual</TableCell>
-                        <TableCell>Reasons</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {(testReport.results || []).map((r) => (
-                        <TableRow key={r.id}>
-                          <TableCell>{r.pass ? "✅" : "❌"}</TableCell>
-                          <TableCell>{r.name}</TableCell>
-                          <TableCell
-                            style={{ maxWidth: 380, whiteSpace: "pre-wrap" }}
-                          >
-                            {JSON.stringify(
-                              { intent: r.actual_intent, sources: r.actual_sources },
-                              null,
-                              0
-                            )}
-                          </TableCell>
-                          <TableCell
-                            style={{ maxWidth: 420, whiteSpace: "pre-wrap" }}
-                          >
-                            {(r.reasons || []).join("\n")}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </Box>
-              </Box>
-            )}
-          </TabPanel>
-        </Box>
-      </Paper>
-    </MainContainer>
+        {faqs.length === 0 ? (
+          <div className="text-white/25 text-sm text-center py-6">Sin FAQs configuradas</div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {faqs.map((f, i) => (
+              <div key={f.id || i} className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-medium text-white">{f.question}</div>
+                    <div className="text-xs text-white/40 mt-0.5 leading-relaxed">{f.answer}</div>
+                  </div>
+                  <button
+                    onClick={() => deleteFaq(f.id)}
+                    className="text-white/20 hover:text-red-400 text-lg leading-none flex-shrink-0 mt-0.5"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
-};
+}
 
-export default Bot;
+// ─── Componente principal ─────────────────────────────────────────────────────
+
+const TABS = [
+  { id: "estado",     label: "Estado" },
+  { id: "stock",      label: "Stock del bot" },
+  { id: "playground", label: "Playground" },
+  { id: "reglas",     label: "Reglas y FAQs" },
+];
+
+export default function BotPanel() {
+  const history = useHistory();
+  const { user } = useContext(AuthContext);
+
+  useEffect(() => {
+    if (user?.profile && user.profile !== "admin") history.push("/");
+  }, [user, history]);
+
+  const [tab, setTab] = useState("estado");
+
+  // Bot toggle
+  const [botEnabled, setBotEnabled] = useState(true);
+  const [togglingBot, setTogglingBot] = useState(false);
+
+  // Data
+  const [decisions, setDecisions]         = useState([]);
+  const [vehicles, setVehicles]           = useState([]);
+  const [policies, setPolicies]           = useState([]);
+  const [faqs, setFaqs]                   = useState([]);
+
+  // Loading states
+  const [loadingDecisions, setLoadingDecisions]   = useState(false);
+  const [loadingVehicles, setLoadingVehicles]     = useState(false);
+  const [loadingPolicies, setLoadingPolicies]     = useState(false);
+
+  // Cargar estado del bot
+  useEffect(() => {
+    api.get("/bot/intelligence/settings")
+      .then(({ data }) => {
+        const s = data?.settings || data || {};
+        if (typeof s.botEnabled === "boolean") setBotEnabled(s.botEnabled);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Cargar decisiones
+  const loadDecisions = useCallback(async () => {
+    setLoadingDecisions(true);
+    try {
+      const { data } = await api.get("/bot/intelligence/decisions", { params: { limit: 50 } });
+      setDecisions(Array.isArray(data) ? data : data?.decisions || []);
+    } catch {
+      setDecisions([]);
+    } finally {
+      setLoadingDecisions(false);
+    }
+  }, []);
+
+  // Cargar vehículos
+  const loadVehicles = useCallback(async () => {
+    setLoadingVehicles(true);
+    try {
+      const { data } = await api.get("/vehicles");
+      const list = Array.isArray(data) ? data : data?.vehicles || [];
+      setVehicles(list);
+    } catch {
+      setVehicles([]);
+    } finally {
+      setLoadingVehicles(false);
+    }
+  }, []);
+
+  // Cargar policies
+  const loadPolicies = useCallback(async () => {
+    setLoadingPolicies(true);
+    try {
+      const { data } = await api.get("/bot/intelligence/policies");
+      setPolicies(Array.isArray(data) ? data : data?.policies || []);
+    } catch {
+      setPolicies([]);
+    } finally {
+      setLoadingPolicies(false);
+    }
+  }, []);
+
+  // Cargar FAQs
+  const loadFaqs = useCallback(async () => {
+    try {
+      const { data } = await api.get("/bot/intelligence/faqs");
+      setFaqs(Array.isArray(data) ? data : data?.faqs || []);
+    } catch {
+      setFaqs([]);
+    }
+  }, []);
+
+  // Cargar todo al montar
+  useEffect(() => {
+    loadDecisions();
+    loadVehicles();
+    loadPolicies();
+    loadFaqs();
+  }, [loadDecisions, loadVehicles, loadPolicies, loadFaqs]);
+
+  const handleToggleBot = async (next) => {
+    setTogglingBot(true);
+    try {
+      const { data } = await api.get("/bot/intelligence/settings");
+      const current = data?.settings || data || {};
+      await api.put("/bot/intelligence/settings", { settings: { ...current, botEnabled: next } });
+      setBotEnabled(next);
+      toast.success(next ? "Bot activado" : "Bot pausado");
+    } catch {
+      toast.error("No se pudo cambiar el estado del bot");
+    } finally {
+      setTogglingBot(false);
+    }
+  };
+
+  const vehiculosActivos = vehicles.filter(v => v.status !== "sold").length;
+
+  return (
+    <div className="min-h-screen bg-[#0f1117] p-6">
+      <div className="max-w-6xl mx-auto">
+
+        {/* Header */}
+        <div className="bg-[#171b26] border border-white/[0.07] rounded-2xl overflow-hidden mb-1">
+          <div className="px-6 py-4 flex items-center justify-between border-b border-white/[0.06]">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-center text-lg">
+                🤖
+              </div>
+              <div>
+                <div className="text-[15px] font-semibold text-white tracking-tight">
+                  WaPro Bot — Concesionaria
+                </div>
+                <div className="text-[12px] text-white/30 mt-0.5">
+                  Motor: GPT-4o-mini · Catálogo:{" "}
+                  <span className={vehiculosActivos > 0 ? "text-green-400" : "text-white/30"}>
+                    {vehiculosActivos > 0 ? `${vehiculosActivos} vehículos activos` : "cargando..."}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className={`w-2 h-2 rounded-full ${botEnabled ? "bg-green-400" : "bg-white/20"}`}
+                style={botEnabled ? { boxShadow: "0 0 6px rgba(74,222,128,0.6)" } : {}} />
+              <span className={`text-sm font-medium ${botEnabled ? "text-green-400" : "text-white/30"}`}>
+                {botEnabled ? "Bot activo" : "Bot pausado"}
+              </span>
+              <Toggle on={botEnabled} onChange={handleToggleBot} loading={togglingBot} />
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="flex gap-0.5 px-4 bg-[#171b26]">
+            {TABS.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`px-4 py-3 text-[13px] font-medium border-b-2 transition-all duration-150
+                  ${tab === t.id
+                    ? "text-amber-400 border-amber-500 bg-amber-500/[0.06]"
+                    : "text-white/30 border-transparent hover:text-white/60"}`}
+              >
+                {t.label}
+                {t.id === "stock" && vehiculosActivos > 0 && (
+                  <span className="ml-1.5 text-[10px] bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded font-bold">
+                    {vehiculosActivos}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Contenido */}
+        <div className="bg-[#171b26] border border-white/[0.07] rounded-2xl p-6 mt-1">
+          {tab === "estado" && (
+            <TabEstado decisions={decisions} loadingDecisions={loadingDecisions} />
+          )}
+          {tab === "stock" && (
+            <TabStock vehicles={vehicles} loadingVehicles={loadingVehicles} />
+          )}
+          {tab === "playground" && (
+            <TabPlayground />
+          )}
+          {tab === "reglas" && (
+            <TabReglas
+              policies={policies}
+              faqs={faqs}
+              loadingPolicies={loadingPolicies}
+              onReloadPolicies={loadPolicies}
+              onReloadFaqs={loadFaqs}
+            />
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+}
