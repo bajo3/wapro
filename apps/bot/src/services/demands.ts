@@ -220,9 +220,43 @@ async function getVehicleSource(): Promise<VehicleSource | null> {
 }
 
 function buildVehicleTitle(row: any) {
-  return String(
-    row.title || row.version || [row.brand, row.model, row.year].filter(Boolean).join(' ')
-  ).trim();
+  const clean = (value: any) => {
+    const text = String(value ?? '').trim();
+    if (!text) return '';
+    const normalized = text
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+    if (['-', '—', '--', 's/d', 'sd', 'n/a', 'na', 'null', 'undefined', 'sin datos', 'a consultar'].includes(normalized)) {
+      return '';
+    }
+    return text.replace(/\s+/g, ' ');
+  };
+  const compare = (value: any) =>
+    clean(value)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+
+  const base = [clean(row.brand), clean(row.model)].filter(Boolean);
+  const baseNorm = compare(base.join(' '));
+  const version = clean(row.version);
+  const versionNorm = compare(version);
+  const title = clean(row.title);
+  const parts = [...base];
+
+  if (version && versionNorm && !baseNorm.includes(versionNorm)) parts.push(version);
+  if (title) {
+    const titleNorm = compare(title);
+    if (titleNorm && !baseNorm.includes(titleNorm) && !parts.some((part) => compare(part) === titleNorm)) {
+      parts.push(title);
+    }
+  }
+
+  return parts.join(' ').trim() || title || version || [clean(row.brand), clean(row.model), row.year].filter(Boolean).join(' ').trim();
 }
 
 async function listVehiclesForScan(since?: Date) {

@@ -22,6 +22,11 @@ type ColumnMap = {
   price?: string;
   currency?: string;
   year?: string;
+  km?: string;
+  transmission?: string;
+  fuel?: string;
+  status?: string;
+  color?: string;
 };
 
 type CatalogSource = {
@@ -51,6 +56,11 @@ const COL_SYNONYMS: Record<keyof Omit<ColumnMap, "id">, string[]> = {
   price: ["price", "precio", "valor", "amount"],
   currency: ["currency", "moneda", "currency_code"],
   year: ["year", "anio", "año", "model_year"],
+  km: ["km", "Km", "kilometers", "kilometres", "mileage"],
+  transmission: ["transmission", "caja", "gearbox"],
+  fuel: ["fuel", "combustible"],
+  status: ["status", "state", "availability"],
+  color: ["color", "colour"],
 };
 
 const ID_SYNONYMS = ["id", "vehicle_id", "uuid", "uid"]; // prefer stable identifiers
@@ -128,10 +138,15 @@ async function detectSource(): Promise<CatalogSource | null> {
         price: pickFirstPresent(cols, COL_SYNONYMS.price),
         currency: pickFirstPresent(cols, COL_SYNONYMS.currency),
         year: pickFirstPresent(cols, COL_SYNONYMS.year),
+        km: pickFirstPresent(cols, COL_SYNONYMS.km),
+        transmission: pickFirstPresent(cols, COL_SYNONYMS.transmission),
+        fuel: pickFirstPresent(cols, COL_SYNONYMS.fuel),
+        status: pickFirstPresent(cols, COL_SYNONYMS.status),
+        color: pickFirstPresent(cols, COL_SYNONYMS.color),
       };
 
-      // Heuristic: require *at least* (brand+model) OR title so it isn't some unrelated table.
-      const looksLikeVehicles = !!(map.title || (map.brand && map.model));
+      // Heuristic: require title/version or enough make/model signal so it isn't some unrelated table.
+      const looksLikeVehicles = !!(map.title || map.version || (map.brand && (map.model || map.version)));
       if (!looksLikeVehicles) continue;
 
       const source: CatalogSource = { schema, table, columns: cols, map };
@@ -174,9 +189,14 @@ async function detectSource(): Promise<CatalogSource | null> {
           price: pickFirstPresent(cols, COL_SYNONYMS.price),
           currency: pickFirstPresent(cols, COL_SYNONYMS.currency),
           year: pickFirstPresent(cols, COL_SYNONYMS.year),
+          km: pickFirstPresent(cols, COL_SYNONYMS.km),
+          transmission: pickFirstPresent(cols, COL_SYNONYMS.transmission),
+          fuel: pickFirstPresent(cols, COL_SYNONYMS.fuel),
+          status: pickFirstPresent(cols, COL_SYNONYMS.status),
+          color: pickFirstPresent(cols, COL_SYNONYMS.color),
         };
 
-        const looksLikeVehicles = !!(map.title || (map.brand && map.model));
+        const looksLikeVehicles = !!(map.title || map.version || (map.brand && (map.model || map.version)));
         const hasPriceOrYear = !!(map.price || map.year);
         if (!looksLikeVehicles || !hasPriceOrYear) continue;
 
@@ -200,7 +220,20 @@ function qi(ident: string): string {
 
 
 function normalizeLabelToken(value: any): string {
-  return String(value ?? "").trim();
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+
+  const normalized = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+  if (["-", "—", "--", "s/d", "sd", "n/a", "na", "null", "undefined", "sin datos", "a consultar"].includes(normalized)) {
+    return "";
+  }
+
+  return text.replace(/\s+/g, " ");
 }
 
 function normalizeForCompare(value: any): string {
@@ -229,11 +262,10 @@ function buildVehicleLabel(row: any): string {
   if (!row || typeof row !== "object") return "";
   const brand = normalizeLabelToken(row.brand ?? row.marca);
   const model = normalizeLabelToken(row.model ?? row.modelo);
-  const year = normalizeLabelToken(row.year);
   const version = normalizeLabelToken(row.version);
   const title = normalizeLabelToken(row.title ?? row.name);
 
-  const base = compactUnique([brand, model, year]);
+  const base = compactUnique([brand, model]);
   const titleNorm = normalizeForCompare(title);
   const versionNorm = normalizeForCompare(version);
   const baseNorm = normalizeForCompare(base.join(" "));
@@ -245,7 +277,7 @@ function buildVehicleLabel(row: any): string {
   }
 
   const label = compactUnique([...base, ...extras]).join(" ").trim();
-  return label || title || compactUnique([brand, model, version, year]).join(" ").trim();
+  return label || title || compactUnique([brand, model, version]).join(" ").trim();
 }
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
@@ -275,6 +307,11 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
     const priceExpr = map.price ? `COALESCE(${qi(map.price)}, 0)` : "0";
     const currencyExpr = map.currency ? `COALESCE(${qi(map.currency)}, 'USD')` : `'USD'`;
     const yearExpr = map.year ? qi(map.year) : "NULL";
+    const kmExpr = map.km ? qi(map.km) : "NULL";
+    const transmissionExpr = map.transmission ? qi(map.transmission) : "NULL";
+    const fuelExpr = map.fuel ? qi(map.fuel) : "NULL";
+    const statusExpr = map.status ? qi(map.status) : "NULL";
+    const colorExpr = map.color ? qi(map.color) : "NULL";
 
     const whereParts: string[] = [];
     if (exactId) {
@@ -301,7 +338,12 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
         ${versionExpr} as version,
         ${priceExpr} as price,
         ${currencyExpr} as currency,
-        ${yearExpr} as year
+        ${yearExpr} as year,
+        ${kmExpr} as km,
+        ${transmissionExpr} as transmission,
+        ${fuelExpr} as fuel,
+        ${statusExpr} as status,
+        ${colorExpr} as color
       FROM ${qi(schema)}.${qi(table)}
       ${whereSql}
       ORDER BY ${map.year ? `${qi(map.year)} DESC NULLS LAST,` : ""} ${qi(map.id)} DESC
@@ -326,6 +368,11 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
         precio: Number(v.price) || 0,
         currency: String(v.currency || "USD").toUpperCase(),
         year: v.year ?? null,
+        km: v.km ?? null,
+        transmission: normalizeLabelToken(v.transmission),
+        fuel: normalizeLabelToken(v.fuel),
+        status: normalizeLabelToken(v.status),
+        color: normalizeLabelToken(v.color),
       };
       return {
         ...base,

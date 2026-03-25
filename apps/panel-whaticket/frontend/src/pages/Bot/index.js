@@ -25,6 +25,7 @@ import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import api from "../../services/api";
 import { AuthContext } from "../../context/Auth/AuthContext";
+import { buildVehicleLabel, normalizeVehicleToken } from "../../utils/vehicleLabel";
 
 // ─── Utilidades ──────────────────────────────────────────────────────────────
 
@@ -185,31 +186,71 @@ function TabStock({ vehicles, loadingVehicles }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("");
 
-  const filtered = vehicles.filter(v => {
-    const text = [v.marca || v.brand, v.modelo || v.model, v.version, v.year, v.combustible || v.fuel]
-      .filter(Boolean).join(" ").toLowerCase();
-    const matchQ = !q || text.includes(q.toLowerCase());
-    const matchF = !filter ||
-      (filter === "0km" && (Number(v.km) === 0 || Number(v.Km) === 0)) ||
-      (filter === "usado" && Number(v.km || v.Km) > 0);
+  const parseNumber = (value) => {
+    if (value === null || value === undefined || value === "") return null;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    const parsed = Number(String(value).replace(/[^0-9.,-]/g, "").replace(/\.(?=\d{3}(\D|$))/g, "").replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const normalizeStatus = (value) =>
+    normalizeVehicleToken(value)
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+
+  const filtered = vehicles.filter((v) => {
+    const label = buildVehicleLabel(v);
+    const km = parseNumber(v.km ?? v.Km);
+    const haystack = [
+      label,
+      v.label,
+      v.marca,
+      v.brand,
+      v.modelo,
+      v.model,
+      v.version,
+      v.title,
+      v.year,
+      v.caja,
+      v.Caja,
+      v.transmission,
+      v.combustible,
+      v.Combustible,
+      v.fuel,
+      v.color,
+      v.status,
+    ]
+      .map(normalizeVehicleToken)
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    const matchQ = !q || haystack.includes(q.toLowerCase());
+    const matchF =
+      !filter ||
+      (filter === "0km" && km === 0) ||
+      (filter === "usado" && km !== null && km > 0);
+
     return matchQ && matchF;
   });
 
-  const disponibles = vehicles.filter(v => v.status !== "sold").length;
+  const disponibles = vehicles.filter((v) => !["sold", "vendido", "inactive"].includes(normalizeStatus(v.status))).length;
 
   return (
     <div>
       <div className="flex gap-2 mb-4">
         <input
           className="flex-1 bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/50"
-          placeholder="Buscar marca, modelo, año, combustible..."
+          placeholder="Buscar marca, modelo, versión, año, combustible..."
           value={q}
-          onChange={e => setQ(e.target.value)}
+          onChange={(e) => setQ(e.target.value)}
         />
         <select
           className="bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white/60 outline-none cursor-pointer"
           value={filter}
-          onChange={e => setFilter(e.target.value)}
+          onChange={(e) => setFilter(e.target.value)}
         >
           <option value="">Todos</option>
           <option value="0km">0km</option>
@@ -224,7 +265,7 @@ function TabStock({ vehicles, loadingVehicles }) {
 
       {loadingVehicles ? (
         <div className="grid grid-cols-3 gap-2">
-          {[1,2,3,4,5,6].map(i => (
+          {[1, 2, 3, 4, 5, 6].map((i) => (
             <div key={i} className="h-28 bg-white/[0.03] rounded-xl animate-pulse" />
           ))}
         </div>
@@ -237,52 +278,71 @@ function TabStock({ vehicles, loadingVehicles }) {
       ) : (
         <div className="grid grid-cols-3 gap-2">
           {filtered.map((v, i) => {
-            const km = Number(v.km ?? v.Km ?? 0);
+            const km = parseNumber(v.km ?? v.Km);
+            const hasKm = km !== null;
             const es0km = km === 0;
-            const precioRaw = v.precio || v.price;
-            const currency = v.currency || "ARS";
-            const brand = v.marca || v.brand || "—";
-            // El controller puede devolver modelo, version, o title
-            const model = v.modelo || v.model || v.version || v.title || "—";
-            // Si hay version además del modelo, mostrarla como subtítulo
-            const version = (v.version && v.version !== model) ? v.version : null;
-            const year = v.year || "—";
-            const trans = v.caja || v.transmission || v.Caja || "—";
-            const fuel = v.combustible || v.fuel || v.Combustible || "—";
-            // Precio: puede venir como número o como string ya formateado
-            const precioNum = Number(String(precioRaw).replace(/[^0-9.]/g, ""));
-            const precioDisplay = precioRaw
-              ? (Number.isFinite(precioNum) && precioNum > 0
-                  ? precioNum.toLocaleString("es-AR")
-                  : String(precioRaw))
-              : null;
+            const precioRaw = v.precio ?? v.price;
+            const precioNum = parseNumber(precioRaw);
+            const currency = normalizeVehicleToken(v.currency) || "ARS";
+            const brand = normalizeVehicleToken(v.marca || v.brand) || "Stock";
+            const label = buildVehicleLabel(v) || brand || "Vehículo";
+            const year = normalizeVehicleToken(v.year);
+            const transmission = normalizeVehicleToken(v.caja || v.transmission || v.Caja);
+            const fuel = normalizeVehicleToken(v.combustible || v.fuel || v.Combustible);
+            const color = normalizeVehicleToken(v.color);
+            const status = normalizeStatus(v.status);
+            const specs = [year, transmission, fuel, color].filter(Boolean);
+            const priceDisplay =
+              precioNum !== null && precioNum > 0
+                ? `${currency} ${Math.round(precioNum).toLocaleString("es-AR")}`
+                : normalizeVehicleToken(precioRaw);
+
+            const statusMeta =
+              status === "sold" || status === "vendido"
+                ? { label: "Vendido", cls: "bg-white/10 text-white/45 border-white/10" }
+                : status === "reserved" || status === "reservado"
+                  ? { label: "Reservado", cls: "bg-amber-500/10 text-amber-300 border-amber-500/20" }
+                  : { label: "Disponible", cls: "bg-green-500/10 text-green-300 border-green-500/20" };
 
             return (
               <div
                 key={v.id || i}
-                className={`border rounded-xl p-3 transition-colors
-                  ${es0km
-                    ? "bg-amber-500/[0.04] border-amber-500/20"
-                    : "bg-white/[0.03] border-white/[0.06]"}`}
+                className={`border rounded-xl p-3 transition-colors ${
+                  es0km
+                    ? "bg-amber-500/[0.05] border-amber-500/20"
+                    : "bg-white/[0.03] border-white/[0.06]"
+                }`}
               >
-                <div className="text-[10px] text-white/30 uppercase tracking-wide">{brand}</div>
-                <div className="text-sm font-semibold text-white mt-0.5">{model}</div>
-                {version && (
-                  <div className="text-[11px] text-white/40">{version}</div>
-                )}
-                <div className="text-[11px] text-white/40 mt-0.5">{year} · {trans} · {fuel}</div>
-                {precioDisplay && (
-                  <div className="text-sm font-bold text-amber-400 mt-2">
-                    {currency} {precioDisplay}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[10px] text-white/30 uppercase tracking-wide truncate">{brand}</div>
+                    <div className="text-sm font-semibold text-white mt-0.5 leading-snug">{label}</div>
                   </div>
+                  <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap ${statusMeta.cls}`}>
+                    {statusMeta.label}
+                  </span>
+                </div>
+
+                <div className="text-[11px] text-white/40 mt-1.5 min-h-[16px]">
+                  {specs.length ? specs.join(" · ") : "Sin especificaciones"}
+                </div>
+
+                {priceDisplay ? (
+                  <div className="text-sm font-bold text-amber-400 mt-2">{priceDisplay}</div>
+                ) : (
+                  <div className="text-sm font-semibold text-white/25 mt-2">Precio a consultar</div>
                 )}
+
                 <div className="flex items-center justify-between mt-1.5">
                   <span className="text-[11px] text-white/30">
-                    {es0km ? "0 km" : `${km.toLocaleString("es-AR")} km`}
+                    {hasKm ? `${Math.round(km).toLocaleString("es-AR")} km` : "Km sin informar"}
                   </span>
                   <div className={`w-1.5 h-1.5 rounded-full ${
-                    v.status === "sold" ? "bg-white/20" :
-                    v.status === "reserved" ? "bg-amber-400" : "bg-green-400"
+                    status === "sold" || status === "vendido"
+                      ? "bg-white/20"
+                      : status === "reserved" || status === "reservado"
+                        ? "bg-amber-400"
+                        : "bg-green-400"
                   }`} />
                 </div>
               </div>

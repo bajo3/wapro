@@ -26,12 +26,15 @@ export type CatalogItem = {
   // Vehicle-oriented optional fields (used when catalog comes from public.vehicles)
   brand?: string;
   model?: string;
+  version?: string;
+  title?: string;
   year?: number;
   km?: number;
   transmission?: string;
   engine?: string;
   fuel?: string;
   color?: string;
+  status?: string;
 };
 
 const sample: CatalogItem[] = [
@@ -49,12 +52,14 @@ type VehicleRow = {
   title: string | null;
   brand: string | null;
   model: string | null;
+  version?: string | null;
   year: number | null;
   price: string | number | null;
   currency: string | null;
   slug: string | null;
   pictures: string[] | null;
   permalink: string | null;
+  status?: string | null;
   // legacy columns
   Km: number | null;
   Motor: string | null;
@@ -74,6 +79,63 @@ function coerceNumber(v: any): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+function cleanVehicleToken(v: any): string {
+  const text = String(v ?? "").trim();
+  if (!text) return "";
+  const normalized = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+  if (["-", "—", "--", "s/d", "sd", "n/a", "na", "null", "undefined", "sin datos", "a consultar"].includes(normalized)) {
+    return "";
+  }
+  return text.replace(/\s+/g, " ");
+}
+
+function compareVehicleToken(v: any): string {
+  return cleanVehicleToken(v)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function compactVehicleParts(parts: any[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of parts) {
+    const value = cleanVehicleToken(part);
+    const key = compareVehicleToken(value);
+    if (!value || !key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
+function buildVehicleName(parts: { brand?: any; model?: any; version?: any; title?: any; id?: any }) {
+  const brand = cleanVehicleToken(parts.brand);
+  const model = cleanVehicleToken(parts.model);
+  const version = cleanVehicleToken(parts.version);
+  const title = cleanVehicleToken(parts.title);
+
+  const base = compactVehicleParts([brand, model]);
+  const baseNorm = compareVehicleToken(base.join(" "));
+  const extras: string[] = [];
+
+  const versionNorm = compareVehicleToken(version);
+  if (version && versionNorm && !baseNorm.includes(versionNorm)) extras.push(version);
+
+  const titleNorm = compareVehicleToken(title);
+  if (title && titleNorm && !baseNorm.includes(titleNorm) && !extras.some((x) => compareVehicleToken(x) === titleNorm)) {
+    extras.push(title);
+  }
+
+  return compactVehicleParts([...base, ...extras]).join(" ").trim() || title || compactVehicleParts([brand, model, version]).join(" ").trim() || String(parts.id ?? "").trim();
+}
+
 async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
   const where: string[] = ["status = 'active'"];
   const params: any[] = [];
@@ -89,12 +151,14 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       title,
       brand,
       model,
+      version,
       year,
       price,
       currency,
       slug,
       pictures,
       permalink,
+      status,
       "Km" as "Km",
       "Motor" as "Motor",
       "Caja" as "Caja",
@@ -119,17 +183,19 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
 
   return rows
     .map((row) => {
-      const title = (row.title ?? "").trim();
-      const brand = (row.brand ?? "").trim();
-      const model = (row.model ?? "").trim();
+      const title = cleanVehicleToken(row.title);
+      const brand = cleanVehicleToken(row.brand);
+      const model = cleanVehicleToken(row.model);
+      const version = cleanVehicleToken(row.version);
 
-      const name = title || [brand, model].filter(Boolean).join(" ") || row.id;
+      const name = buildVehicleName({ brand, model, version, title, id: row.id });
       const year = row.year ?? undefined;
       const km = coerceNumber(row.km ?? row.Km);
-      const transmission = (row.transmission ?? row.Caja ?? undefined)?.toString().trim();
-      const engine = (row.engine ?? row.Motor ?? undefined)?.toString().trim();
-      const fuel = (row.Combustible ?? undefined)?.toString().trim();
-      const color = (row.color ?? undefined)?.toString().trim();
+      const transmission = cleanVehicleToken(row.transmission ?? row.Caja ?? undefined) || undefined;
+      const engine = cleanVehicleToken(row.engine ?? row.Motor ?? undefined) || undefined;
+      const fuel = cleanVehicleToken(row.Combustible ?? undefined) || undefined;
+      const color = cleanVehicleToken(row.color ?? undefined) || undefined;
+      const status = cleanVehicleToken(row.status ?? undefined) || undefined;
 
       const priceNumber = coerceMoneyNumber(row.price);
       const currency = (row.currency ?? (priceNumber !== undefined ? "ARS" : undefined)) as any;
@@ -166,12 +232,15 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
         descriptionRaw: undefined,
         brand: brand || undefined,
         model: model || undefined,
+        version: version || undefined,
+        title: title || undefined,
         year,
         km,
         transmission,
         engine,
         fuel,
-        color
+        color,
+        status
       } as CatalogItem;
     })
     .filter((x) => x.id && x.name);
@@ -179,46 +248,94 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
 
 
 async function loadVehiclesFromSimpleDb(timeoutMs: number): Promise<CatalogItem[]> {
-  const sql = `
-    select
-      id,
-      marca,
-      modelo,
-      version,
-      year,
-      precio,
-      currency
-    from public.vehicles
-    limit 500
-  `;
+  const runQuery = async (sql: string) => {
+    const q = pool.query(sql);
+    const r = await Promise.race([
+      q,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("vehicles simple query timeout")), timeoutMs))
+    ]);
+    return (r as any).rows ?? [];
+  };
 
-  const q = pool.query(sql);
-  const r = await Promise.race([
-    q,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("vehicles simple query timeout")), timeoutMs))
-  ]);
-
-  const rows = (r as any).rows ?? [];
+  let rows: any[] = [];
+  try {
+    rows = await runQuery(`
+      select
+        id,
+        marca,
+        modelo,
+        version,
+        title,
+        year,
+        precio,
+        currency,
+        km,
+        transmission,
+        fuel,
+        status,
+        color,
+        permalink,
+        image
+      from public.vehicles
+      limit 500
+    `);
+  } catch {
+    rows = await runQuery(`
+      select
+        id,
+        marca,
+        modelo,
+        version,
+        year,
+        precio,
+        currency
+      from public.vehicles
+      limit 500
+    `);
+  }
 
   return rows
     .map((row: any) => {
-      const brand = String(row.marca ?? '').trim();
-      const model = String(row.modelo ?? '').trim();
-      const version = String(row.version ?? '').trim();
+      const brand = cleanVehicleToken(row.marca);
+      const model = cleanVehicleToken(row.modelo);
+      const version = cleanVehicleToken(row.version);
+      const title = cleanVehicleToken(row.title);
       const year = coerceNumber(row.year);
       const priceNumber = coerceMoneyNumber(row.precio);
       const currency = String(row.currency ?? (priceNumber !== undefined ? 'ARS' : '')).trim() || undefined;
-      const name = [brand, model, version].filter(Boolean).join(' ').trim() || String(row.id ?? '');
+      const name = buildVehicleName({ brand, model, version, title, id: row.id });
+      const km = coerceNumber(row.km);
+      const transmission = cleanVehicleToken(row.transmission) || undefined;
+      const fuel = cleanVehicleToken(row.fuel) || undefined;
+      const color = cleanVehicleToken(row.color) || undefined;
+      const status = cleanVehicleToken(row.status) || undefined;
+
+      const descriptionParts: string[] = [];
+      if (year) descriptionParts.push(String(year));
+      if (km !== undefined) descriptionParts.push(`${Math.round(km).toLocaleString('es-AR')} km`);
+      if (transmission) descriptionParts.push(transmission);
+      if (fuel) descriptionParts.push(fuel);
+      if (color) descriptionParts.push(color);
       return {
         id: String(row.id ?? ''),
         name,
         priceNumber,
         currency,
         inStock: true,
+        url: cleanVehicleToken(row.permalink) || undefined,
+        image: cleanVehicleToken(row.image) || undefined,
         category: brand || 'autos',
+        description: descriptionParts.length ? descriptionParts.join(' · ') : undefined,
         brand: brand || undefined,
         model: model || undefined,
-        year
+        version: version || undefined,
+        title: title || undefined,
+        year,
+        km,
+        transmission,
+        fuel,
+        color,
+        status
       } as CatalogItem;
     })
     .filter((x: CatalogItem) => x.id && x.name);
