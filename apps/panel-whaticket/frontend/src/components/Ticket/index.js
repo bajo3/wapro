@@ -10,6 +10,8 @@ import ContactDrawer from "../ContactDrawer";
 import MessageInput from "../MessageInput/";
 import MessagesList from "../MessagesList";
 import ImprovedTicketChat from "../ImprovedTicketChat";
+import SlideOver from "../SlideOver";
+import LeadPanelAutos from "../LeadPanelAutos";
 import api from "../../services/api";
 import { ReplyMessageProvider } from "../../context/ReplyingMessage/ReplyingMessageContext";
 import toastError from "../../errors/toastError";
@@ -147,14 +149,25 @@ const Ticket = () => {
       <div className={classes.classicWrapper}>
         <ReplyMessageProvider>
           {proView ? (
-            <ImprovedTicketChat
-              loading={loading}
-              ticketId={ticketId}
-              ticket={ticket}
-              contact={contact}
-              onOpenContact={handleDrawerOpen}
-              onToggleView={() => setProView(false)}
-            />
+            <>
+              <ImprovedTicketChat
+                loading={loading}
+                ticketId={ticketId}
+                ticket={ticket}
+                contact={contact}
+                onOpenContact={handleDrawerOpen}
+                onToggleView={() => setProView(false)}
+              />
+
+              <SlideOver
+                open={drawerOpen}
+                onClose={handleDrawerClose}
+                title={contact?.name ? `Gestión · ${contact.name}` : "Gestión del lead"}
+                widthClass="w-[420px] lg:w-[460px]"
+              >
+                <LeadPanelAutos ticketId={ticketId} />
+              </SlideOver>
+            </>
           ) : (
             <>
               <div className={classes.mobileBackBar}>
@@ -188,15 +201,17 @@ const Ticket = () => {
         </ReplyMessageProvider>
       </div>
 
-      <ContactDrawer
-        open={drawerOpen}
-        handleDrawerClose={handleDrawerClose}
-        contact={contact}
-        ticket={ticket}
-        loading={loading}
-        initialTab={drawerTab}
-        onTicketPatched={(patch) => setTicket((prev) => ({ ...prev, ...(patch || {}) }))}
-      />
+      {!proView ? (
+        <ContactDrawer
+          open={drawerOpen}
+          handleDrawerClose={handleDrawerClose}
+          contact={contact}
+          ticket={ticket}
+          loading={loading}
+          initialTab={drawerTab}
+          onTicketPatched={(patch) => setTicket((prev) => ({ ...prev, ...(patch || {}) }))}
+        />
+      ) : null}
     </div>
   );
 };

@@ -1,10 +1,6 @@
 import React, { useMemo, useState, useContext } from "react";
 import clsx from "clsx";
 import { toast } from "react-toastify";
-
-import api from "../services/api";
-import toastError from "../errors/toastError";
-
 import {
   Calendar,
   ChevronLeft,
@@ -18,10 +14,10 @@ import {
 } from "lucide-react";
 import { useHistory } from "react-router-dom";
 
+import api from "../services/api";
+import toastError from "../errors/toastError";
 import { AuthContext } from "../context/Auth/AuthContext";
-
 import MessagesList from "./MessagesList";
-// Replace the Material‑UI based MessageInput with a simplified Tailwind component.
 import ImprovedMessageInput from "./ImprovedMessageInput";
 
 const statusLabelMap = {
@@ -29,6 +25,9 @@ const statusLabelMap = {
   open: "Trabajando",
   closed: "Cerrado",
 };
+
+const actionButtonBase =
+  "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text transition-colors hover:bg-auto-panel2";
 
 export default function ImprovedTicketChat({
   loading,
@@ -40,10 +39,8 @@ export default function ImprovedTicketChat({
   className,
 }) {
   const history = useHistory();
-  // Access the authenticated user so we can assign tickets when moving
-  // from the queue to working or closing.  Without the user context
-  // the API cannot record who is responsible for the ticket.
   const { user } = useContext(AuthContext);
+
   const [showQuickReplies, setShowQuickReplies] = useState(true);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
 
@@ -68,28 +65,17 @@ export default function ImprovedTicketChat({
     return `https://wa.me/${normalized}`;
   }, [phone]);
 
-  /**
-   * Update the ticket status based on the operator selection.
-   * When moving a ticket to "open" or "closed" we assign the current
-   * operator (user) so that responsibility is clear.  When moving back
-   * to "pending" the userId is cleared so the ticket returns to the
-   * general queue.  After updating the status, we navigate away from
-   * the chat when it is no longer in the working state.  Any errors are
-   * surfaced via toast.
-   */
   const handleChangeStatus = async (nextStatus) => {
     try {
       const trimmed = String(nextStatus || "").toLowerCase();
       if (!ticket?.id) return;
-      // Determine the new owner: when moving to open/closed assign to current user,
-      // otherwise clear assignment.
+
       const nextUserId = trimmed === "open" || trimmed === "closed" ? user?.id || null : null;
       await api.put(`/tickets/${ticket.id}`, {
         status: trimmed,
         userId: nextUserId,
       });
-      // If the ticket is sent back to the queue or closed then return to
-      // the tickets list.  Otherwise remain in the chat view.
+
       if (trimmed !== "open") {
         history.push("/tickets");
       }
@@ -101,10 +87,7 @@ export default function ImprovedTicketChat({
   const QUICK_REPLIES = useMemo(
     () => [
       { label: "Hola 👋", text: "Hola 👋 ¿cómo estás?" },
-      {
-        label: "Opciones",
-        text: "¿Te paso opciones disponibles y formas de pago?",
-      },
+      { label: "Opciones", text: "¿Te paso opciones disponibles y formas de pago?" },
       {
         label: "Financiación",
         text: "¿Buscás financiación? Decime entrega + plazo y te simulo cuotas.",
@@ -131,7 +114,7 @@ export default function ImprovedTicketChat({
     try {
       await api.post(`/tickets/${ticketId}/agent-feedback`, {
         verdict,
-        finalReply: verdict === "edited" ? null : agentData?.suggestedReply || null
+        finalReply: verdict === "edited" ? null : agentData?.suggestedReply || null,
       });
       toast.success(
         verdict === "approved"
@@ -150,12 +133,12 @@ export default function ImprovedTicketChat({
   return (
     <div className={clsx("flex h-full min-h-0 flex-col overflow-hidden bg-auto-panel", className)}>
       <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-3 md:px-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="flex min-w-0 items-start gap-3">
             <button
               type="button"
               onClick={() => history.push("/tickets")}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-auto-lg border border-auto-border bg-auto-surface text-auto-text hover:bg-auto-panel2 md:hidden"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-auto-lg border border-auto-border bg-auto-surface text-auto-text hover:bg-auto-panel2 xl:hidden"
               title="Volver a la lista"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -173,16 +156,16 @@ export default function ImprovedTicketChat({
                 <span className="rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] font-medium text-auto-text">
                   {statusLabel}
                 </span>
-                {leadSource && (
+                {leadSource ? (
                   <span className="rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] text-auto-muted">
                     {leadSource}
                   </span>
-                )}
-                {isHumanOnly && (
-                  <span className="rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] text-auto-text">
+                ) : null}
+                {isHumanOnly ? (
+                  <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-[11px] text-blue-400">
                     HUMANO
                   </span>
-                )}
+                ) : null}
               </div>
 
               <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-auto-muted">
@@ -194,125 +177,125 @@ export default function ImprovedTicketChat({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
-            {waLink && (
-              <a
-                className="inline-flex h-9 items-center justify-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
-                href={waLink}
-                target="_blank"
-                rel="noreferrer"
-                title="Abrir en WhatsApp"
+          <div className="-mx-1 overflow-x-auto pb-1 xl:mx-0 xl:max-w-[58%]">
+            <div className="flex w-max items-center gap-1.5 px-1 xl:justify-end">
+              {waLink ? (
+                <a
+                  className={actionButtonBase}
+                  href={waLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Abrir en WhatsApp"
+                >
+                  <PhoneCall className="h-4 w-4" />
+                  <span>WhatsApp</span>
+                </a>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={() => onOpenContact?.(1)}
+                className={actionButtonBase}
+                title="Abrir gestión del ticket"
               >
-                <PhoneCall className="h-4 w-4" />
-                <span className="hidden sm:inline">WhatsApp</span>
-              </a>
-            )}
+                <Info className="h-4 w-4" />
+                <span>Gestión</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => onOpenContact?.(1)}
-              className="inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
-              title="Abrir gestión del ticket"
-            >
-              <Info className="h-4 w-4" />
-              <span>Gestión</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => history.push("/quotations")}
-              className="inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
-              title="Abrir cotizaciones"
-            >
-              <FileText className="h-4 w-4" />
-              <span className="hidden sm:inline">Cotización</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onOpenContact?.(1)}
-              className="inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
-              title="Abrir recontactos y mensajes programados"
-            >
-              <Calendar className="h-4 w-4" />
-              <span className="hidden sm:inline">Recontacto</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowQuickReplies((v) => !v)}
-              className={clsx(
-                "inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border px-3 text-xs font-medium",
-                showQuickReplies
-                  ? "bg-auto-accent text-white"
-                  : "bg-auto-surface text-auto-text hover:bg-auto-panel2"
-              )}
-              title="Mostrar u ocultar mensajes rápidos"
-            >
-              <Sparkles className="h-4 w-4" />
-              <span>Rápidos</span>
-            </button>
-
-            {/* Status selector: allows operators to move tickets between queue, working and closed. */}
-            {ticket?.id ? (
-              <select
-                value={statusKey}
-                onChange={(e) => handleChangeStatus(e.target.value)}
-                className="inline-flex h-9 items-center rounded-auto-lg border border-auto-border bg-auto-surface px-2 text-xs font-medium text-auto-text hover:bg-auto-panel2"
-                title="Cambiar estado del ticket"
+              <button
+                type="button"
+                onClick={() => history.push("/quotations")}
+                className={actionButtonBase}
+                title="Abrir cotizaciones"
               >
-                <option value="pending">En cola</option>
-                <option value="open">Trabajando</option>
-                <option value="closed">Cerrado</option>
-              </select>
-            ) : null}
+                <FileText className="h-4 w-4" />
+                <span>Cotización</span>
+              </button>
 
-            <span className="inline-flex h-9 items-center rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-muted">
-              Bot: {botModeLabel}
-            </span>
+              <button
+                type="button"
+                onClick={() => onOpenContact?.(1)}
+                className={actionButtonBase}
+                title="Abrir recontactos y mensajes programados"
+              >
+                <Calendar className="h-4 w-4" />
+                <span>Recontacto</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => onToggleView?.()}
-              className="inline-flex h-9 items-center gap-1 rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
-              title="Cambiar a vista clásica"
-            >
-              <MessageSquareText className="h-4 w-4" />
-              <span className="hidden sm:inline">Vista clásica</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setShowQuickReplies((value) => !value)}
+                className={clsx(
+                  "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-auto-lg border px-3 text-xs font-medium transition-colors",
+                  showQuickReplies
+                    ? "border-auto-accent/30 bg-auto-accent text-white"
+                    : "border-auto-border bg-auto-surface text-auto-text hover:bg-auto-panel2"
+                )}
+                title="Mostrar u ocultar mensajes rápidos"
+              >
+                <Sparkles className="h-4 w-4" />
+                <span>Rápidos</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => history.replace(`/tickets/${ticketId}`)}
-              className="inline-flex h-9 items-center justify-center rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-text hover:bg-auto-panel2"
-              title="Refrescar chat"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
+              {ticket?.id ? (
+                <select
+                  value={statusKey}
+                  onChange={(event) => handleChangeStatus(event.target.value)}
+                  className="inline-flex h-9 shrink-0 items-center rounded-auto-lg border border-auto-border bg-auto-surface px-2.5 text-xs font-medium text-auto-text outline-none transition-colors hover:bg-auto-panel2 focus:border-auto-accent/40"
+                  title="Cambiar estado del ticket"
+                >
+                  <option value="pending">En cola</option>
+                  <option value="open">Trabajando</option>
+                  <option value="closed">Cerrado</option>
+                </select>
+              ) : null}
 
+              <span className="inline-flex h-9 shrink-0 items-center rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-muted">
+                Bot: {botModeLabel}
+              </span>
+
+              <button
+                type="button"
+                onClick={() => onToggleView?.()}
+                className={actionButtonBase}
+                title="Cambiar a vista clásica"
+              >
+                <MessageSquareText className="h-4 w-4" />
+                <span>Vista clásica</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => history.replace(`/tickets/${ticketId}`)}
+                className={actionButtonBase}
+                title="Refrescar chat"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
-      {showQuickReplies && (
+      {showQuickReplies ? (
         <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-2 md:px-4">
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {QUICK_REPLIES.map((qr) => (
-              <button
-                key={qr.label}
-                type="button"
-                onClick={() => prefill(qr.text)}
-                className="shrink-0 rounded-full border border-auto-border bg-auto-surface px-3 py-1.5 text-xs text-auto-text hover:bg-auto-panel2"
-              >
-                {qr.label}
-              </button>
-            ))}
+          <div className="-mx-1 overflow-x-auto pb-1">
+            <div className="flex w-max gap-2 px-1">
+              {QUICK_REPLIES.map((quickReply) => (
+                <button
+                  key={quickReply.label}
+                  type="button"
+                  onClick={() => prefill(quickReply.text)}
+                  className="shrink-0 rounded-full border border-auto-border bg-auto-surface px-3 py-1.5 text-xs text-auto-text transition-colors hover:bg-auto-panel2"
+                >
+                  {quickReply.label}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="mt-1 text-[11px] text-auto-muted">
-            Clic en un chip para precargar el mensaje.
-          </div>
+          <div className="mt-1 text-[11px] text-auto-muted">Clic en un chip para precargar el mensaje.</div>
         </div>
-      )}
+      ) : null}
 
       {agentData ? (
         <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-3 md:px-4">
@@ -354,7 +337,7 @@ export default function ImprovedTicketChat({
                   <button
                     type="button"
                     onClick={() => prefill(agentData.suggestedReply)}
-                    className="rounded-auto-lg border border-auto-border bg-auto-surface px-3 py-1.5 text-xs font-medium text-auto-text hover:bg-auto-panel2"
+                    className={actionButtonBase}
                   >
                     Usar sugerencia
                   </button>
@@ -362,7 +345,7 @@ export default function ImprovedTicketChat({
                     type="button"
                     disabled={feedbackLoading}
                     onClick={() => submitAgentFeedback("approved")}
-                    className="rounded-auto-lg border border-auto-border bg-auto-surface px-3 py-1.5 text-xs font-medium text-auto-text hover:bg-auto-panel2 disabled:opacity-50"
+                    className={`${actionButtonBase} disabled:opacity-50`}
                   >
                     👍 Correcta
                   </button>
@@ -370,7 +353,7 @@ export default function ImprovedTicketChat({
                     type="button"
                     disabled={feedbackLoading}
                     onClick={() => submitAgentFeedback("rejected")}
-                    className="rounded-auto-lg border border-auto-border bg-auto-surface px-3 py-1.5 text-xs font-medium text-auto-text hover:bg-auto-panel2 disabled:opacity-50"
+                    className={`${actionButtonBase} disabled:opacity-50`}
                   >
                     👎 No sirve
                   </button>
@@ -379,7 +362,7 @@ export default function ImprovedTicketChat({
                       type="button"
                       disabled={feedbackLoading}
                       onClick={() => submitAgentFeedback("handoff")}
-                      className="rounded-auto-lg border border-auto-border bg-auto-surface px-3 py-1.5 text-xs font-medium text-auto-text hover:bg-auto-panel2 disabled:opacity-50"
+                      className={`${actionButtonBase} disabled:opacity-50`}
                     >
                       Derivar a humano
                     </button>
@@ -391,12 +374,12 @@ export default function ImprovedTicketChat({
               </div>
             ) : null}
 
-            {(agentData?.missingFields?.length || agentData?.internalReason) ? (
+            {agentData?.missingFields?.length || agentData?.internalReason ? (
               <div className="mt-3 grid gap-2 md:grid-cols-2">
                 {agentData?.missingFields?.length ? (
                   <div className="rounded-auto-lg border border-auto-border bg-auto-panel p-3">
                     <div className="text-[11px] font-medium uppercase tracking-wide text-auto-muted">Datos faltantes</div>
-                    <div className="mt-1 text-sm text-auto-text">{agentData.missingFields.join(', ')}</div>
+                    <div className="mt-1 text-sm text-auto-text">{agentData.missingFields.join(", ")}</div>
                   </div>
                 ) : null}
                 {agentData?.internalReason ? (

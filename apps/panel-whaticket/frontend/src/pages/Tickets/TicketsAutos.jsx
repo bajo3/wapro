@@ -25,16 +25,15 @@ export default function TicketsAutos() {
   const [leadSource, setLeadSource] = useState("all");
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Layout state
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const v = Number(localStorage.getItem("ticketsAutos.sidebarWidth") || 340);
-    return Number.isFinite(v) ? v : 340;
+    const stored = Number(localStorage.getItem("ticketsAutos.sidebarWidth") || 360);
+    return Number.isFinite(stored) ? stored : 360;
   });
-  const dragRef = useRef({ dragging: false, startX: 0, startW: 340 });
+  const dragRef = useRef({ dragging: false, startX: 0, startW: 360 });
 
   const activeStatus = useMemo(() => {
-    return STATUS_TABS.find((t) => t.key === activeTab)?.status || "pending";
+    return STATUS_TABS.find((tab) => tab.key === activeTab)?.status || "pending";
   }, [activeTab]);
 
   const filters = useMemo(
@@ -42,137 +41,138 @@ export default function TicketsAutos() {
     [search, queueId, whatsappId, leadSource]
   );
 
+  const numericTicketId = ticketId ? Number(ticketId) : null;
+
   const handleSelectTicket = (id) => history.push(`/tickets/${id}`);
 
   const handleAcceptTicket = async (id, userId) => {
-    // optimistic navigation
     history.push(`/tickets/${id}`);
     try {
       await api.put(`/tickets/${id}`, { status: "open", userId });
       setActiveTab("working");
-      setRefreshKey((k) => k + 1);
+      setRefreshKey((value) => value + 1);
     } catch (err) {
       toastError(err);
     }
   };
 
-  const onRefresh = () => setRefreshKey((k) => k + 1);
+  const onRefresh = () => setRefreshKey((value) => value + 1);
 
-  const numericTicketId = ticketId ? Number(ticketId) : null;
-
-  const startDrag = (e) => {
+  const startDrag = (event) => {
     if (!sidebarVisible) return;
-    dragRef.current = { dragging: true, startX: e.clientX, startW: sidebarWidth };
+    dragRef.current = {
+      dragging: true,
+      startX: event.clientX,
+      startW: sidebarWidth,
+    };
     document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
   };
 
   useEffect(() => {
-    const onMove = (e) => {
+    const onMove = (event) => {
       if (!dragRef.current.dragging) return;
-      const dx = e.clientX - dragRef.current.startX;
-      const next = Math.min(520, Math.max(280, dragRef.current.startW + dx));
-      setSidebarWidth(next);
+      const delta = event.clientX - dragRef.current.startX;
+      const nextWidth = Math.min(520, Math.max(300, dragRef.current.startW + delta));
+      setSidebarWidth(nextWidth);
     };
+
     const onUp = () => {
       if (!dragRef.current.dragging) return;
       dragRef.current.dragging = false;
       document.body.style.userSelect = "";
+      document.body.style.cursor = "";
       localStorage.setItem("ticketsAutos.sidebarWidth", String(sidebarWidth));
     };
+
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
   }, [sidebarWidth]);
 
+  const hasActiveFilters =
+    Boolean(search) || queueId !== "all" || whatsappId !== "all" || leadSource !== "all";
+
   return (
-    <div className="flex h-[calc(100vh-72px)] min-h-[620px] w-full bg-auto-surface text-auto-text">
-      <div className="mx-auto flex h-full min-h-0 max-w-[1800px] gap-3 p-3">
-        {/* Sidebar (hide on mobile when a ticket is selected) */}
-        {sidebarVisible && (
-          <div
-            className={clsx(
-              "shrink-0",
-              numericTicketId ? "hidden md:block" : "block"
-            )}
-            style={{ width: sidebarWidth }}
-          >
-            <TicketsSidebarAutos
-              key={refreshKey}
-              activeTab={activeTab}
-              setActiveTab={setActiveTab}
-              statusTabs={STATUS_TABS}
-              ticketId={numericTicketId}
-              filters={filters}
-              setSearch={setSearch}
-              setQueueId={setQueueId}
-              setWhatsappId={setWhatsappId}
-              setLeadSource={setLeadSource}
-              onSelectTicket={handleSelectTicket}
-              onAcceptTicket={handleAcceptTicket}
-              activeStatus={activeStatus}
-            />
-          </div>
-        )}
+    <div className="h-[calc(100vh-48px)] min-h-[640px] w-full overflow-hidden bg-auto-surface text-auto-text">
+      <div className="flex h-full min-h-0 w-full flex-col gap-3 p-3 md:p-4">
+        <TicketsHeaderAutos
+          activeTab={activeTab}
+          statusTabs={STATUS_TABS}
+          hasActiveFilters={hasActiveFilters}
+          onClearFilters={() => {
+            setSearch("");
+            setQueueId("all");
+            setWhatsappId("all");
+            setLeadSource("all");
+            setRefreshKey((value) => value + 1);
+          }}
+          onRefresh={onRefresh}
+          sidebarVisible={sidebarVisible}
+          onToggleSidebar={() => setSidebarVisible((value) => !value)}
+        />
 
-        {/* Drag handle to resize sidebar */}
-        {sidebarVisible && (
-          <div
-            className="hidden md:block w-2 -ml-3 cursor-col-resize"
-            onMouseDown={startDrag}
-            title="Arrastrá para ajustar"
-            role="separator"
-            aria-orientation="vertical"
-          />
-        )}
-
-        {/* Main panel */}
-        <div className="flex min-w-0 min-h-0 flex-1 flex-col">
-          <TicketsHeaderAutos
-            activeTab={activeTab}
-            statusTabs={STATUS_TABS}
-            filters={filters}
-            onClearFilters={() => {
-              setSearch("");
-              setQueueId("all");
-              setWhatsappId("all");
-              setLeadSource("all");
-              setRefreshKey((k) => k + 1);
-            }}
-            onRefresh={onRefresh}
-            sidebarVisible={sidebarVisible}
-            onToggleSidebar={() => setSidebarVisible((v) => !v)}
-          />
-
-          <div
-            className={clsx(
-              "mt-3 flex min-h-0 flex-1 overflow-hidden rounded-auto-xl border border-auto-border bg-auto-panel shadow-auto-soft"
-            )}
-          >
-            <div className="min-w-0 flex min-h-0 flex-1">
-              <div className="min-w-0 min-h-0 flex-1">
-                {numericTicketId ? (
-                  <Ticket />
-                ) : (
-                  <div className="flex h-full items-center justify-center p-8">
-                  <div className="max-w-md text-center">
-                    <div className="text-lg font-semibold text-auto-text">
-                      Seleccioná un chat
-                    </div>
-                    <div className="mt-2 text-sm text-auto-muted">
-                      Usá la lista de la izquierda para abrir un ticket.
-                    </div>
-                  </div>
-                  </div>
-                )}
-              </div>
+        <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
+          {sidebarVisible && (
+            <div
+              className={clsx(
+                "min-h-0 shrink-0",
+                numericTicketId ? "hidden xl:block" : "block"
+              )}
+              style={{ width: sidebarWidth }}
+            >
+              <TicketsSidebarAutos
+                key={refreshKey}
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                statusTabs={STATUS_TABS}
+                ticketId={numericTicketId}
+                filters={filters}
+                setSearch={setSearch}
+                setQueueId={setQueueId}
+                setWhatsappId={setWhatsappId}
+                setLeadSource={setLeadSource}
+                onSelectTicket={handleSelectTicket}
+                onAcceptTicket={handleAcceptTicket}
+                activeStatus={activeStatus}
+              />
             </div>
-          </div>
+          )}
+
+          {sidebarVisible && (
+            <div className="relative hidden xl:flex xl:w-3 xl:shrink-0 xl:items-stretch">
+              <button
+                type="button"
+                className="group flex h-full w-full cursor-col-resize items-center justify-center"
+                onMouseDown={startDrag}
+                title="Arrastrá para ajustar el ancho"
+                aria-label="Ajustar ancho de la lista"
+              >
+                <span className="h-full w-px rounded-full bg-auto-border transition-colors group-hover:bg-auto-accent/60" />
+              </button>
+            </div>
+          )}
+
+          <section className="flex min-w-0 min-h-0 flex-1 overflow-hidden rounded-auto-xl border border-auto-border bg-auto-panel shadow-auto-soft">
+            {numericTicketId ? (
+              <Ticket />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top,rgba(245,158,11,0.10),transparent_35%)] p-8">
+                <div className="max-w-md rounded-auto-xl border border-auto-border bg-auto-surface/80 p-6 text-center shadow-auto-soft backdrop-blur-sm">
+                  <div className="text-lg font-semibold text-auto-text">Seleccioná un chat</div>
+                  <div className="mt-2 text-sm leading-6 text-auto-muted">
+                    Abrí un ticket desde la lista para ver la conversación, gestionar el lead y responder sin salir del panel.
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
         </div>
       </div>
-
     </div>
   );
 }

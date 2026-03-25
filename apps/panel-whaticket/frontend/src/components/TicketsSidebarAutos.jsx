@@ -8,9 +8,18 @@ import TicketListItemTailwind from "./TicketListItemTailwind";
 const cn = (...classes) => classes.filter(Boolean).join(" ");
 
 const TAB_STYLES = {
-  queue:   "text-auto-pending border-auto-pending",
-  working: "text-auto-open border-auto-open",
-  closed:  "text-auto-hint border-auto-hint",
+  queue: {
+    active: "border-auto-pending/40 bg-auto-pending/10 text-auto-pending",
+    idle: "text-auto-muted hover:text-auto-text",
+  },
+  working: {
+    active: "border-auto-open/40 bg-auto-open/10 text-auto-open",
+    idle: "text-auto-muted hover:text-auto-text",
+  },
+  closed: {
+    active: "border-auto-border2 bg-auto-surface text-auto-text",
+    idle: "text-auto-muted hover:text-auto-text",
+  },
 };
 
 export default function TicketsSidebarAutos({
@@ -29,14 +38,17 @@ export default function TicketsSidebarAutos({
 }) {
   const { user } = useContext(AuthContext);
 
-  const [loading, setLoading]       = useState(true);
-  const [tickets, setTickets]       = useState([]);
-  const [counts, setCounts]         = useState({ pending: 0, open: 0, closed: 0, total: 0 });
-  const [queues, setQueues]         = useState([]);
-  const [whatsapps, setWhatsapps]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [tickets, setTickets] = useState([]);
+  const [counts, setCounts] = useState({ pending: 0, open: 0, closed: 0, total: 0 });
+  const [queues, setQueues] = useState([]);
+  const [whatsapps, setWhatsapps] = useState([]);
   const [filtersOpen, setFiltersOpen] = useState(() => {
-    try { return localStorage.getItem("ticketsAutos.filtersOpen") === "1"; }
-    catch { return false; }
+    try {
+      return localStorage.getItem("ticketsAutos.filtersOpen") === "1";
+    } catch {
+      return false;
+    }
   });
 
   const queueIdsParam = useMemo(() => {
@@ -49,35 +61,55 @@ export default function TicketsSidebarAutos({
     return JSON.stringify([Number(filters.whatsappId)]);
   }, [filters.whatsappId]);
 
+  const hasActiveFilters =
+    Boolean(filters.search) ||
+    filters.queueId !== "all" ||
+    filters.whatsappId !== "all" ||
+    filters.leadSource !== "all";
+
   const toggleFilters = () => {
-    const next = !filtersOpen;
-    setFiltersOpen(next);
-    try { localStorage.setItem("ticketsAutos.filtersOpen", next ? "1" : "0"); } catch {}
+    const nextValue = !filtersOpen;
+    setFiltersOpen(nextValue);
+    try {
+      localStorage.setItem("ticketsAutos.filtersOpen", nextValue ? "1" : "0");
+    } catch {
+      // noop
+    }
   };
 
-  // Load queues & whatsapps
   useEffect(() => {
     let mounted = true;
+
     const run = async () => {
       try {
-        const [qRes, wRes] = await Promise.all([api.get("/queue"), api.get("/whatsapp")]);
+        const [queuesResponse, whatsappsResponse] = await Promise.all([
+          api.get("/queue"),
+          api.get("/whatsapp"),
+        ]);
+
         if (!mounted) return;
-        setQueues(Array.isArray(qRes.data) ? qRes.data : []);
-        setWhatsapps(Array.isArray(wRes.data) ? wRes.data : []);
-      } catch (err) { toastError(err); }
+        setQueues(Array.isArray(queuesResponse.data) ? queuesResponse.data : []);
+        setWhatsapps(Array.isArray(whatsappsResponse.data) ? whatsappsResponse.data : []);
+      } catch (err) {
+        toastError(err);
+      }
     };
+
     run();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  // Load counts
   useEffect(() => {
     let mounted = true;
+
     const run = async () => {
       try {
         const { data } = await api.get("/tickets/counts", {
           params: { queueIds: queueIdsParam, whatsappIds: whatsappIdsParam },
         });
+
         if (!mounted) return;
         setCounts({
           pending: Number(data?.pending || 0),
@@ -85,16 +117,21 @@ export default function TicketsSidebarAutos({
           closed: Number(data?.closed || 0),
           total: Number(data?.total || 0),
         });
-      } catch {}
+      } catch {
+        // noop
+      }
     };
+
     run();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [queueIdsParam, whatsappIdsParam]);
 
-  // Load tickets
   useEffect(() => {
     let mounted = true;
     setLoading(true);
+
     const run = async () => {
       try {
         const { data } = await api.get("/tickets", {
@@ -107,151 +144,173 @@ export default function TicketsSidebarAutos({
             pageNumber: 1,
           },
         });
+
         if (!mounted) return;
         setTickets(Array.isArray(data?.tickets) ? data.tickets : []);
-      } catch (err) { toastError(err); }
-      finally { if (mounted) setLoading(false); }
+      } catch (err) {
+        toastError(err);
+      } finally {
+        if (mounted) setLoading(false);
+      }
     };
+
     run();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [activeStatus, filters, queueIdsParam, whatsappIdsParam]);
 
   const countForTab = (key) => {
-    if (key === "queue")   return counts.pending;
+    if (key === "queue") return counts.pending;
     if (key === "working") return counts.open;
-    if (key === "closed")  return counts.closed;
+    if (key === "closed") return counts.closed;
     return 0;
   };
 
   return (
-    <div className="flex h-full flex-col bg-auto-panel border border-auto-border rounded-auto-xl overflow-hidden">
-
-      {/* Tabs */}
-      <div className="flex border-b border-auto-border px-2 pt-1 gap-0.5">
-        {statusTabs.map((tab) => {
-          const isActive = activeTab === tab.key;
-          const count = countForTab(tab.key);
-          return (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-2.5 text-[12px] font-medium border-b-2 transition-all duration-150",
-                isActive
-                  ? TAB_STYLES[tab.key] || "text-auto-accent border-auto-accent"
-                  : "text-auto-hint border-transparent hover:text-auto-muted"
-              )}
-            >
-              {tab.label}
-              {count > 0 && (
-                <span className={cn(
-                  "rounded-full px-1.5 py-0.5 text-[10px] font-bold",
-                  isActive
-                    ? tab.key === "queue" ? "bg-amber-500/15 text-amber-400"
-                      : tab.key === "working" ? "bg-green-500/15 text-green-400"
-                      : "bg-white/10 text-white/40"
-                    : "bg-white/[0.06] text-white/30"
-                )}>
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Search + filter toggle */}
-      <div className="px-3 pt-3 pb-2 flex gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-auto-hint pointer-events-none" />
-          <input
-            className="w-full h-8 bg-auto-panel2 border border-auto-border rounded-auto-md pl-8 pr-3 text-[13px] text-auto-text placeholder-auto-hint outline-none focus:border-auto-accent/50 transition-colors"
-            placeholder="Buscar..."
-            value={filters.search || ""}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-auto-xl border border-auto-border bg-auto-panel shadow-auto-soft">
+      <div className="border-b border-auto-border px-3 pb-3 pt-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-auto-muted">
+              Tickets
+            </div>
+            <div className="mt-1 text-sm font-semibold text-auto-text">Gestión comercial</div>
+          </div>
+          <div className="rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] text-auto-muted">
+            {tickets.length} en vista
+          </div>
         </div>
-        <button
-          onClick={toggleFilters}
-          className={cn(
-            "h-8 w-8 flex items-center justify-center rounded-auto-md border transition-colors",
-            filtersOpen
-              ? "bg-auto-accent/10 border-auto-accent/30 text-auto-accent"
-              : "bg-auto-panel2 border-auto-border text-auto-hint hover:text-auto-muted"
-          )}
-          type="button"
-          title="Filtros"
-        >
-          {filtersOpen ? <X className="h-3.5 w-3.5" /> : <SlidersHorizontal className="h-3.5 w-3.5" />}
-        </button>
+
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {statusTabs.map((tab) => {
+            const isActive = activeTab === tab.key;
+            const styles = TAB_STYLES[tab.key] || TAB_STYLES.working;
+            const count = countForTab(tab.key);
+
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                className={cn(
+                  "rounded-auto-lg border px-2.5 py-2 text-left transition-colors",
+                  isActive ? styles.active : `border-auto-border bg-auto-surface ${styles.idle}`
+                )}
+              >
+                <div className="truncate text-[11px] font-semibold">{tab.label}</div>
+                <div className="mt-1 text-[18px] font-semibold leading-none">{count}</div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Filters panel */}
+      <div className="border-b border-auto-border px-3 py-3">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-auto-hint" />
+            <input
+              className="h-10 w-full rounded-auto-lg border border-auto-border bg-auto-panel2 pl-9 pr-3 text-sm text-auto-text outline-none transition-colors placeholder:text-auto-hint focus:border-auto-accent/40"
+              placeholder="Buscar nombre, número o mensaje..."
+              value={filters.search || ""}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
+
+          <button
+            onClick={toggleFilters}
+            className={cn(
+              "inline-flex h-10 w-10 items-center justify-center rounded-auto-lg border transition-colors",
+              filtersOpen || hasActiveFilters
+                ? "border-auto-accent/30 bg-auto-accent/10 text-auto-accent"
+                : "border-auto-border bg-auto-panel2 text-auto-hint hover:text-auto-text"
+            )}
+            type="button"
+            title="Filtros"
+          >
+            {filtersOpen ? <X className="h-4 w-4" /> : <SlidersHorizontal className="h-4 w-4" />}
+          </button>
+        </div>
+
+        {hasActiveFilters ? (
+          <div className="mt-2 text-[11px] text-auto-muted">Hay filtros aplicados sobre la bandeja.</div>
+        ) : null}
+      </div>
+
       {filtersOpen && (
-        <div className="px-3 pb-3 flex flex-col gap-2 border-b border-auto-border">
-          <select
-            value={filters.queueId}
-            onChange={(e) => setQueueId(e.target.value)}
-            className="h-8 w-full bg-auto-panel2 border border-auto-border rounded-auto-md px-3 text-[12px] text-auto-muted outline-none focus:border-auto-accent/50"
-          >
-            <option value="all">Todas las colas</option>
-            {queues.map((q) => (
-              <option key={q.id} value={q.id}>{q.name}</option>
-            ))}
-          </select>
+        <div className="border-b border-auto-border px-3 py-3">
+          <div className="grid gap-2">
+            <select
+              value={filters.queueId}
+              onChange={(event) => setQueueId(event.target.value)}
+              className="h-9 w-full rounded-auto-lg border border-auto-border bg-auto-panel2 px-3 text-xs text-auto-muted outline-none transition-colors focus:border-auto-accent/40"
+            >
+              <option value="all">Todas las colas</option>
+              {queues.map((queue) => (
+                <option key={queue.id} value={queue.id}>
+                  {queue.name}
+                </option>
+              ))}
+            </select>
 
-          <select
-            value={filters.whatsappId}
-            onChange={(e) => setWhatsappId(e.target.value)}
-            className="h-8 w-full bg-auto-panel2 border border-auto-border rounded-auto-md px-3 text-[12px] text-auto-muted outline-none focus:border-auto-accent/50"
-          >
-            <option value="all">Todos los WhatsApp</option>
-            {whatsapps.map((w) => (
-              <option key={w.id} value={w.id}>{w.name}</option>
-            ))}
-          </select>
+            <select
+              value={filters.whatsappId}
+              onChange={(event) => setWhatsappId(event.target.value)}
+              className="h-9 w-full rounded-auto-lg border border-auto-border bg-auto-panel2 px-3 text-xs text-auto-muted outline-none transition-colors focus:border-auto-accent/40"
+            >
+              <option value="all">Todos los WhatsApp</option>
+              {whatsapps.map((whatsapp) => (
+                <option key={whatsapp.id} value={whatsapp.id}>
+                  {whatsapp.name}
+                </option>
+              ))}
+            </select>
 
-          <select
-            value={filters.leadSource}
-            onChange={(e) => setLeadSource(e.target.value)}
-            className="h-8 w-full bg-auto-panel2 border border-auto-border rounded-auto-md px-3 text-[12px] text-auto-muted outline-none focus:border-auto-accent/50"
-          >
-            <option value="all">Lead: todos</option>
-            <option value="WEB">Web</option>
-            <option value="IG">Instagram</option>
-            <option value="FB">Facebook</option>
-            <option value="REF">Referido</option>
-          </select>
+            <select
+              value={filters.leadSource}
+              onChange={(event) => setLeadSource(event.target.value)}
+              className="h-9 w-full rounded-auto-lg border border-auto-border bg-auto-panel2 px-3 text-xs text-auto-muted outline-none transition-colors focus:border-auto-accent/40"
+            >
+              <option value="all">Todos los orígenes</option>
+              <option value="WEB">Web</option>
+              <option value="IG">Instagram</option>
+              <option value="FB">Facebook</option>
+              <option value="REF">Referido</option>
+            </select>
+          </div>
         </div>
       )}
 
-      {/* Ticket list */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2 flex flex-col gap-1.5 scrollbar-thin scrollbar-thumb-auto-border2">
-        {loading ? (
-          <>
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="h-[72px] rounded-auto-lg bg-auto-panel2 animate-pulse" />
-            ))}
-          </>
-        ) : tickets.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="w-10 h-10 rounded-full bg-auto-panel2 flex items-center justify-center mb-3">
-              <Search className="h-4 w-4 text-auto-hint" />
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2 scrollbar-thin scrollbar-thumb-auto-border2">
+        <div className="flex flex-col gap-2">
+          {loading ? (
+            [1, 2, 3, 4, 5, 6].map((index) => (
+              <div key={index} className="h-[84px] animate-pulse rounded-auto-lg border border-auto-border bg-auto-panel2" />
+            ))
+          ) : tickets.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-auto-lg border border-dashed border-auto-border bg-auto-surface px-4 py-14 text-center">
+              <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-full border border-auto-border bg-auto-panel2">
+                <Search className="h-4 w-4 text-auto-hint" />
+              </div>
+              <div className="text-sm font-medium text-auto-text">No hay tickets en esta vista</div>
+              <div className="mt-1 text-xs leading-5 text-auto-muted">
+                Ajustá los filtros o cambiá de columna para encontrar la conversación.
+              </div>
             </div>
-            <div className="text-sm text-auto-hint">Sin tickets en esta vista</div>
-          </div>
-        ) : (
-          tickets.map((t) => (
-            <TicketListItemTailwind
-              key={t.id}
-              ticket={t}
-              isSelected={Number(ticketId) === t.id}
-              onSelect={onSelectTicket}
-              onAccept={onAcceptTicket}
-            />
-          ))
-        )}
+          ) : (
+            tickets.map((ticket) => (
+              <TicketListItemTailwind
+                key={ticket.id}
+                ticket={ticket}
+                isSelected={Number(ticketId) === ticket.id}
+                onSelect={onSelectTicket}
+                onAccept={(id) => onAcceptTicket?.(id, user?.id)}
+              />
+            ))
+          )}
+        </div>
       </div>
-    </div>
+    </aside>
   );
 }
