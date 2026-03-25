@@ -3,12 +3,8 @@ module.exports = {
   content: ["./index.html", "./src/**/*.{js,jsx,ts,tsx}"],
   theme: {
     extend: {
-      /**
-       * Design tokens for the "Autos" UI.
-       * We keep the legacy `ticket.*` palette to avoid breaking the current
-       * UI while we migrate section-by-section to Tailwind.
-       */
       colors: {
+        // Legacy ticket palette (no tocar — usada en componentes viejos)
         ticket: {
           surface: "#f5f7fb",
           panel: "#ffffff",
@@ -20,42 +16,33 @@ module.exports = {
           accent: "#2576d2",
         },
 
-        // Autos theme (neutral + confident accent)
+        // Tema oscuro unificado (WaPro Dark)
         auto: {
-          // IMPORTANT: Keep the Tickets UI consistent with the rest of the panel.
-          // The panel defaults to light mode; previously Tickets used a dark palette,
-          // which made the UI look "split" (half dark / half light).
-          surface: "#f5f7fb", // page background
-          panel: "#ffffff", // cards/panels
-          panel2: "#ffffff", // secondary panels
-          border: "#d8deeb",
-          text: "#0f172a",
-          muted: "#6b7a90",
-          accent: "#ef4444", // red accent (autos)
-          open: "#22c55e",
-          pending: "#f59e0b",
-          closed: "#94a3b8",
+          surface:  "#0f1117",   // fondo general
+          panel:    "#171b26",   // cards / paneles
+          panel2:   "#1e2333",   // paneles secundarios
+          border:   "rgba(255,255,255,0.08)",
+          border2:  "rgba(255,255,255,0.14)",
+          text:     "#f1f5f9",
+          muted:    "#94a3b8",
+          hint:     "#64748b",
+          accent:   "#f59e0b",   // amber — color primario
+          accent2:  "#fbbf24",   // amber hover
+          open:     "#22c55e",
+          pending:  "#f59e0b",
+          closed:   "#64748b",
         },
       },
-      spacing: {
-        "ticket-xs": "0.25rem",
-        "ticket-sm": "0.5rem",
-        "ticket-md": "0.75rem",
-        "ticket-lg": "1rem",
-        "ticket-xl": "1.5rem",
-      },
       borderRadius: {
-        ticket: "0.75rem",
-        "auto-md": "0.75rem",
-        "auto-lg": "1rem",
-        "auto-xl": "1.25rem",
+        ticket:    "0.75rem",
+        "auto-md": "0.5rem",
+        "auto-lg": "0.75rem",
+        "auto-xl": "1rem",
       },
       boxShadow: {
-        ticket: "0 4px 16px rgba(15, 23, 42, 0.08)",
+        ticket:       "0 4px 16px rgba(15, 23, 42, 0.08)",
         "ticket-soft": "0 2px 8px rgba(15, 23, 42, 0.06)",
-
-        // Subtle shadows for dark UI
-        "auto-soft": "0 10px 30px rgba(0, 0, 0, 0.25)",
+        "auto-soft":  "0 4px 24px rgba(0, 0, 0, 0.35)",
       },
     },
   },
