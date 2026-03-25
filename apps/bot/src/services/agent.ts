@@ -121,7 +121,11 @@ function compactCatalog(catalog: CatalogItem[]): string {
     const price = Number.isFinite(Number(it.priceNumber))
       ? `${it.currency || 'ARS'} ${Number(it.priceNumber).toLocaleString('es-AR')}`
       : '';
-    return [it.id, it.brand, it.model, it.year, it.name, price, it.transmission, it.fuel]
+    const km = typeof it.km === 'number' && Number.isFinite(it.km)
+      ? `${Math.round(it.km).toLocaleString('es-AR')} km`
+      : null;
+    const hasImage = it.image ? '[foto]' : null;
+    return [it.id, it.name, it.year, price, km, it.transmission, it.fuel, it.color, hasImage]
       .filter(Boolean)
       .join(' | ');
   }).join('\n');

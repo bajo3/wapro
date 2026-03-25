@@ -384,9 +384,9 @@ function TabPlayground() {
 
     try {
       const { data } = await api.post("/bot/playground/run", { text });
-      const reply = data?.suggestedReply || data?.reply || "Sin respuesta del bot.";
+      const reply = data?.result?.suggestedReply || data?.result?.reply || data?.suggestedReply || data?.reply || "Sin respuesta del bot.";
       setMessages(prev => [...prev, { role: "bot", text: reply, time: "ahora" }]);
-      if (data) setDecision(data);
+      if (data) setDecision(data?.result ?? data);
     } catch (err) {
       setMessages(prev => [...prev, {
         role: "bot",

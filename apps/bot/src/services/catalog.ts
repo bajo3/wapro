@@ -132,7 +132,12 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       const color = (row.color ?? undefined)?.toString().trim();
 
       const priceNumber = coerceMoneyNumber(row.price);
-      const currency = (row.currency ?? (priceNumber !== undefined ? "ARS" : undefined)) as any;
+      // Precios por debajo de 1.000.000 en campo "ARS" casi siempre son USD
+      // (el scraper / carga manual a veces no guarda la moneda correcta)
+      const rawCurrency = (row.currency ?? 'ARS') as string;
+      const currency = (rawCurrency === 'ARS' && priceNumber !== undefined && priceNumber < 1_000_000)
+        ? 'USD'
+        : rawCurrency as any;
 
       const url = row.permalink
         ? String(row.permalink)
