@@ -239,13 +239,23 @@ function TabStock({ vehicles, loadingVehicles }) {
           {filtered.map((v, i) => {
             const km = Number(v.km ?? v.Km ?? 0);
             const es0km = km === 0;
-            const precio = v.precio || v.price;
+            const precioRaw = v.precio || v.price;
             const currency = v.currency || "ARS";
             const brand = v.marca || v.brand || "—";
-            const model = v.modelo || v.model || v.title || "—";
+            // El controller puede devolver modelo, version, o title
+            const model = v.modelo || v.model || v.version || v.title || "—";
+            // Si hay version además del modelo, mostrarla como subtítulo
+            const version = (v.version && v.version !== model) ? v.version : null;
             const year = v.year || "—";
             const trans = v.caja || v.transmission || v.Caja || "—";
             const fuel = v.combustible || v.fuel || v.Combustible || "—";
+            // Precio: puede venir como número o como string ya formateado
+            const precioNum = Number(String(precioRaw).replace(/[^0-9.]/g, ""));
+            const precioDisplay = precioRaw
+              ? (Number.isFinite(precioNum) && precioNum > 0
+                  ? precioNum.toLocaleString("es-AR")
+                  : String(precioRaw))
+              : null;
 
             return (
               <div
@@ -257,10 +267,13 @@ function TabStock({ vehicles, loadingVehicles }) {
               >
                 <div className="text-[10px] text-white/30 uppercase tracking-wide">{brand}</div>
                 <div className="text-sm font-semibold text-white mt-0.5">{model}</div>
+                {version && (
+                  <div className="text-[11px] text-white/40">{version}</div>
+                )}
                 <div className="text-[11px] text-white/40 mt-0.5">{year} · {trans} · {fuel}</div>
-                {precio && (
+                {precioDisplay && (
                   <div className="text-sm font-bold text-amber-400 mt-2">
-                    {currency} {Number(precio).toLocaleString("es-AR")}
+                    {currency} {precioDisplay}
                   </div>
                 )}
                 <div className="flex items-center justify-between mt-1.5">
