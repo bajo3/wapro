@@ -9,12 +9,11 @@ import {
 } from './intelligence.js';
 
 import { pool } from './db.js';
+
 import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from './extract.js';
-import { getCatalog } from './catalog.js';
-import { decideAgentAction } from './agent.js';
 
 export type PlaygroundSource = {
-  type: 'policy' | 'faq' | 'playbook' | 'agent';
+  type: 'policy' | 'faq' | 'playbook';
   id: number;
   title?: string | null;
   intent?: string | null;
@@ -23,7 +22,7 @@ export type PlaygroundSource = {
 export async function runPlayground(input: {
   text: string;
   state?: any;
-}): Promise<{ reply: string; intent: string; sources: PlaygroundSource[]; settings: any; extracted?: any; missing_fields?: string[]; variant?: string | null; suggestedReply?: string }> {
+}): Promise<{ reply: string; intent: string; sources: PlaygroundSource[]; settings: any; extracted?: any; missing_fields?: string[]; variant?: string | null }> {
   const text = String(input.text ?? '');
   const state = input.state ?? {};
   const settings = await getIntelligenceSettings();
@@ -96,43 +95,8 @@ export async function runPlayground(input: {
     return { reply, intent: 'faq', sources, settings, extracted, missing_fields: [] };
   }
 
-  // ─── Fallback al agente GPT si OPENAI_API_KEY está configurada ───────────────
-  if (process.env.OPENAI_API_KEY) {
-    try {
-      const catalog = await getCatalog();
-      const history: Array<{ role: 'user' | 'assistant'; content: string }> = Array.isArray(state?.history)
-        ? state.history.slice(-6)
-        : [];
-
-      const decision = await decideAgentAction({
-        dealershipName: process.env.DEALERSHIP_NAME ?? settings?.dealership_name ?? undefined,
-        userMessage: text,
-        history,
-        catalog,
-        extracted: state?.extracted ?? {},
-        leadScore: state?.leadScore ?? 0
-      });
-
-      if (decision?.suggestedReply) {
-        sources.push({ type: 'agent', id: 0, title: 'GPT Agent', intent: decision.intent });
-        const reply = decision.suggestedReply;
-        return {
-          reply,
-          suggestedReply: reply,
-          intent: decision.intent ?? 'agent',
-          sources,
-          settings,
-          extracted: { ...extracted, ...decision.extracted },
-          missing_fields: decision.missingFields ?? []
-        };
-      }
-    } catch (e) {
-      // si el agente falla, caemos al mensaje de debug
-    }
-  }
-
   return {
-    reply: 'Sin respuesta del agente. Verificá que OPENAI_API_KEY esté configurada en el bot, o agregá políticas/FAQs/playbooks.',
+    reply: 'No match (policy/faq/playbook). Tip: agregá triggers o probá con una frase más parecida a lo que escribe el cliente.',
     intent: 'none',
     sources,
     settings,

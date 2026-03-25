@@ -383,7 +383,12 @@ function TabPlayground() {
     setLoading(true);
 
     try {
-      const { data } = await api.post("/bot/playground/run", { text });
+      // Armar historial para dar contexto al agente GPT
+      const history = messages
+        .filter(m => m.role === "user" || m.role === "bot")
+        .slice(-8)
+        .map(m => ({ role: m.role === "bot" ? "assistant" : "user", content: m.text }));
+      const { data } = await api.post("/bot/playground/run", { text, state: { history } });
       const reply = data?.result?.suggestedReply || data?.result?.reply || data?.suggestedReply || data?.reply || "Sin respuesta del bot.";
       setMessages(prev => [...prev, { role: "bot", text: reply, time: "ahora" }]);
       if (data) setDecision(data?.result ?? data);
