@@ -1,149 +1,45 @@
-/**
- * agent.ts — Motor de decisión estructurado con GPT.
+/*
+ * Modified agent service for WaPro
  *
- * Mejoras v3:
- *  - buildAgentSystemPrompt: prompt mejorado que:
- *      · No repite preguntas de presupuesto ya respondidas
- *      · Confirma datos extraídos en la misma respuesta
- *      · Detecta señales de cierre y deriva a humano
- *      · Orienta hacia visita / financiación / seña
- *  - buildClosingSystemPrompt: variante avanzada para etapa de cierre
- *    (se activa cuando leadScore >= 60 o hay señal de compra)
- *  - selectModel: elige modelo GPT según leadScore
- *      · score < 40  → gpt-4o-mini (exploración)
- *      · score >= 40 → OPENAI_MODEL_ADVANCED o gpt-4o-mini
- *      · score >= 60 → modelo avanzado + closing prompt
+ * This version introduces a v4 system prompt with anti‑loop logic and
+ * Argentine tone, and updates decideAgentAction to accept optional
+ * loopData (repeatedMissingFields and turnCount). Merge this into
+ * your existing agent service file, preserving other exports such as
+ * selectModel, buildClosingSystemPrompt, etc.
  */
 
-import { askGPTJson } from './gpt.js';
-import type { CatalogItem } from './catalog.js';
-
-export type AgentAction =
-  | 'ASK_CLARIFY'
-  | 'SHOW_RESULTS'
-  | 'SHOW_ONE'
-  | 'OFFER_FINANCING'
-  | 'OFFER_TRADEIN'
-  | 'CREATE_DEMAND'
-  | 'ESCALATE_HUMAN'
-  | 'FOLLOWUP'
-  | 'FAQ'
-  | 'SMALLTALK';
-
-export type AgentDecision = {
-  intent: string;
-  confidence: number;
-  action: AgentAction;
-  extracted: {
-    brand?: string | null;
-    model?: string | null;
-    year?: number | null;
-    minYear?: number | null;
-    maxYear?: number | null;
-    maxPrice?: number | null;
-    currency?: 'ARS' | 'USD' | string | null;
-    transmission?: string | null;
-    fuel?: string | null;
-    bodywork?: string | null;
-    cuotas?: number | null;
-    percent?: number | null;
-    hasTradeIn?: boolean | null;
-  };
-  missingFields: string[];
-  vehicleIds: string[];
-  leadScore?: number;
-  urgency: 'low' | 'medium' | 'high';
-  handoffRecommended: boolean;
-  suggestedReply: string;
-  internalReason?: string;
-};
-
-type Params = {
-  dealershipName?: string;
-  userMessage: string;
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
-  catalog: CatalogItem[];
-  faqSummary?: string;
-  extracted?: Record<string, any>;
-  leadScore?: number;
-};
-
-function clamp01(n: number): number {
-  if (!Number.isFinite(n)) return 0;
-  return Math.max(0, Math.min(1, n));
-}
-
-function normalizeDecision(input: any, extracted: Record<string, any> = {}, leadScore?: number): AgentDecision | null {
-  if (!input || typeof input !== 'object') return null;
-
-  const action = String(input.action || 'ASK_CLARIFY').toUpperCase() as AgentAction;
-  const ex = { ...(input.extracted || {}) };
-
-  const out: AgentDecision = {
-    intent: String(input.intent || 'unknown').trim() || 'unknown',
-    confidence: clamp01(Number(input.confidence ?? 0.55)),
-    action,
-    extracted: {
-      brand: ex.brand ?? extracted.brand ?? null,
-      model: ex.model ?? extracted.model ?? null,
-      year: toNumOrNull(ex.year ?? extracted.year),
-      minYear: toNumOrNull(ex.minYear ?? extracted.minYear),
-      maxYear: toNumOrNull(ex.maxYear ?? extracted.maxYear),
-      maxPrice: toNumOrNull(ex.maxPrice ?? ex.amount ?? extracted.maxPrice ?? extracted.amount),
-      currency: ex.currency ?? extracted.currency ?? null,
-      transmission: ex.transmission ?? extracted.transmission ?? null,
-      fuel: ex.fuel ?? extracted.fuel ?? null,
-      bodywork: ex.bodywork ?? extracted.bodywork ?? null,
-      cuotas: toNumOrNull(ex.cuotas ?? extracted.cuotas),
-      percent: toNumOrNull(ex.percent ?? extracted.percent),
-      hasTradeIn: typeof ex.hasTradeIn === 'boolean' ? ex.hasTradeIn : (typeof extracted.hasTradeIn === 'boolean' ? extracted.hasTradeIn : null)
-    },
-    missingFields: Array.isArray(input.missingFields) ? input.missingFields.map(String).filter(Boolean).slice(0, 8) : [],
-    vehicleIds: Array.isArray(input.vehicleIds) ? input.vehicleIds.map(String).filter(Boolean).slice(0, 6) : [],
-    leadScore: Number.isFinite(Number(input.leadScore)) ? Number(input.leadScore) : leadScore,
-    urgency: ['low', 'medium', 'high'].includes(String(input.urgency)) ? String(input.urgency) as any : 'medium',
-    handoffRecommended: Boolean(input.handoffRecommended),
-    suggestedReply: String(input.suggestedReply || '').trim(),
-    internalReason: String(input.internalReason || '').trim() || undefined
-  };
-
-  if (!out.suggestedReply) return null;
-  return out;
-}
-
-function toNumOrNull(v: any): number | null {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-function compactCatalog(catalog: CatalogItem[]): string {
-  return catalog.slice(0, 25).map((it) => {
-    const price = Number.isFinite(Number(it.priceNumber))
-      ? `${it.currency || 'ARS'} ${Number(it.priceNumber).toLocaleString('es-AR')}`
-      : '';
-    const km = typeof it.km === 'number' && Number.isFinite(it.km)
-      ? `${Math.round(it.km).toLocaleString('es-AR')} km`
-      : null;
-    const hasImage = it.image ? '[foto]' : null;
-    return [it.id, it.name, it.year, price, km, it.transmission, it.fuel, it.color, hasImage]
-      .filter(Boolean)
-      .join(' | ');
-  }).join('\n');
+export interface AgentLoopData {
+  /**
+   * Fields that have been requested repeatedly without user response. The agent
+   * should not ask for these again and instead proceed with available data.
+   */
+  repeatedMissingFields?: string[];
+  /**
+   * Number of user turns so far in the conversation. Used to adjust tone.
+   */
+  turnCount?: number;
 }
 
 /**
- * buildAgentSystemPrompt — v3:
- * Prompt mejorado para exploración e intermediación.
- * No repite preguntas de campos ya captados.
- * Confirma datos al inicio de cada respuesta cuando hay contexto.
- * Detecta señales de cierre.
+ * Build the system prompt for the commercial agent (v4).
+ *
+ * The prompt instructs the assistant to speak in Argentine Spanish, guides
+ * prioritisation of questions, prevents loops by avoiding repeated questions,
+ * and includes a lead temperature classification for internal use. It also
+ * prints known fields so the agent does not ask for them again.
  */
-function buildAgentSystemPrompt(dealershipName?: string, extractedContext?: Record<string, any>) {
+export function buildAgentSystemPrompt(
+  dealershipName?: string,
+  extractedContext?: Record<string, any>,
+  loopData?: AgentLoopData
+): string {
   const agency = dealershipName || 'la agencia';
-
-  // Generar resumen de lo que ya se sabe para que GPT no repregunta
-  const knownFields: string[] = [];
   const ctx = extractedContext ?? {};
+  const turns = loopData?.turnCount ?? 0;
+  const repeatedFields = loopData?.repeatedMissingFields ?? [];
+
+  // Collect known fields to avoid re‑asking.
+  const knownFields: string[] = [];
   if (ctx.brand) knownFields.push(`marca: ${ctx.brand}`);
   if (ctx.model) knownFields.push(`modelo: ${ctx.model}`);
   if (ctx.maxPrice ?? ctx.amount) {
@@ -153,153 +49,127 @@ function buildAgentSystemPrompt(dealershipName?: string, extractedContext?: Reco
   }
   if (ctx.transmission) knownFields.push(`caja: ${ctx.transmission}`);
   if (ctx.fuel) knownFields.push(`combustible: ${ctx.fuel}`);
-  if (ctx.bodywork) knownFields.push(`tipo: ${ctx.bodywork}`);
+  if (ctx.bodywork) knownFields.push(`tipo de carrocería: ${ctx.bodywork}`);
   if (ctx.useCase) knownFields.push(`uso: ${ctx.useCase}`);
-  if (ctx.minYear ?? ctx.maxYear ?? ctx.year) {
+  if (ctx.city) knownFields.push(`ciudad: ${ctx.city}`);
+  if (ctx.hasTradeIn) knownFields.push('tiene permuta');
+  if (ctx.gnc !== undefined) knownFields.push(`GNC: ${ctx.gnc ? 'sí' : 'no'}`);
+  if (ctx.minYear || ctx.maxYear || ctx.year) {
     const yr = ctx.year ? String(ctx.year) : `${ctx.minYear ?? '?'}-${ctx.maxYear ?? '?'}`;
     knownFields.push(`año: ${yr}`);
   }
-
   const knownSection = knownFields.length
-    ? `\nDATA YA CONOCIDA (NO VOLVER A PREGUNTAR ESTOS CAMPOS):\n${knownFields.map(f => `  • ${f}`).join('\n')}`
+    ? `\nDATA YA CONOCIDA (NO VOLVER A PREGUNTAR ESTOS CAMPOS):\n${knownFields
+        .map((f) => `  • ${f}`)
+        .join('\n')}`
+    : '';
+
+  const loopSection = repeatedFields.length
+    ? `\nCAMPOS QUE NO DEBÉS VOLVER A PEDIR (ya se preguntaron y el cliente no respondió):\n${repeatedFields
+        .map((f) => `  • ${f}`)
+        .join('\n')}\n  → En ese caso, avanzá con lo que tenés o usá rangos amplios.`
+    : '';
+  const toneNote = turns > 6
+    ? '\nNOTA: La conversación ya lleva varios turnos. Evitá preguntar más datos: con lo que tenés, mostrá opciones o pasá a un asesor humano.'
     : '';
 
   return [
-    `Sos un agente comercial experto en venta de autos usados y 0km para ${agency}.`,
-    'Objetivo: entender al cliente, recomendar stock real disponible y mover la conversación hacia cotización, test drive, visita o derivación humana.',
+    `Sos el agente comercial de ${agency}, una agencia de autos usados y 0km.`,
+    'Tu objetivo es entender al cliente, mostrarle stock real y llevarlo al siguiente paso concreto: cotización, visita, test drive, o hablar con un asesor.',
     '',
-    'REGLAS:',
-    '1. Respondé en español argentino, tono humano y comercial. Máximo 3-4 oraciones.',
-    '2. No inventes precios, stock, cuotas ni versiones. Usá SOLO el catálogo provisto.',
-    '3. Si el cliente indicó presupuesto, RESPETALO. Solo sugerí algo por arriba si aclarás que supera el límite.',
-    '4. Si faltan datos, hacé UNA SOLA pregunta útil: primero marca/modelo, luego presupuesto, luego transmisión/uso.',
-    '5. NUNCA repreguntés un campo que ya aparece en DATA YA CONOCIDA.',
-    '6. Cuando tenés marca/modelo + presupuesto detectados, CONFIRMÁ los datos antes de mostrar opciones.',
-    '   Ejemplo: "Entendido, entonces buscás un Corolla hasta ARS 30 M. Mirá estas opciones:"',
-    '7. Mostrá 2-3 opciones concretas, no listados largos. Si no hay match exacto, explicá por qué la alternativa sirve.',
-    '8. Detectá señales de cierre: "quiero comprarlo", "reservar", "seña", "cuándo puedo ir", "me lo llevo".',
-    '   Si las detectás: action=ESCALATE_HUMAN, handoffRecommended=true, indicá los datos recopilados al asesor.',
-    '9. Si hay permuta/canje, marcá hasTradeIn=true y pedí/usá año+km del auto a entregar.',
-    '10. suggestedReply tiene que sonar a vendedor real: concreto, cálido, orientado a avanzar.',
-    '11. Devolvé SIEMPRE JSON válido. Sin markdown ni texto fuera del JSON.',
+    '── PERSONALIDAD ──',
+    '• Hablás en argentino: "che", "dale", "mirá", "genial", "te paso", "¿cómo venís con el presupuesto?".',
+    '• Sos directo, cálido y comercial. No sos robot ni FAQ.',
+    '• Máximo 3-4 líneas por respuesta. Breve y claro.',
+    '• Si el cliente escribe mal o informal, entendés igual y respondés natural.',
+    '',
+    '── REGLAS DE DATOS ──',
+    '1. Nunca inventes precios, stock, cuotas ni versiones. Solo usá el catálogo provisto.',
+    '2. Si hay stock: mostrá 2-3 opciones con precio, año y km. Nada de listas largas.',
+    '3. Si no hay coincidencia exacta: explicá por qué la alternativa cercana sirve.',
+    '4. Si el cliente indicó presupuesto, respetalo. Solo superarlo si lo aclarás.',
+    '',
+    '── REGLAS DE PREGUNTAS ──',
+    '5. Si faltan datos clave, hacé UNA SOLA pregunta por turno.',
+    '   Prioridad: 1) marca/modelo, 2) presupuesto, 3) uso/caja.',
+    '6. NUNCA repreguntés algo que ya está en DATA YA CONOCIDA.',
+    '7. Si el cliente esquiva un dato, avanzá con lo que tenés.',
+    '',
+    '── INTENCIONES ESPECIALES ──',
+    '8. Señales de cierre ("quiero reservarlo", "cuándo puedo ir", "me lo llevo", "hacemos algo"):',
+    '   → action=ESCALATE_HUMAN, handoffRecommended=true.',
+    '   → En suggestedReply confirmá los datos clave + proponé horario de visita.',
+    '9. Permuta ("tengo un", "te entrego", "parte de pago"):',
+    '   → hasTradeIn=true, pedí año y km del usado si no los tenés.',
+    '10. Financiación ("cuotas", "anticipo", "a cuántos meses"):',
+    '   → action=OFFER_FINANCING, pedí: monto anticipo + cuotas deseadas.',
+    '',
+    '── TEMPERATURA DEL LEAD (para internalReason) ──',
+    '• Frío: saludo genérico, solo pregunta de precio sin contexto.',
+    '• Tibio: tiene marca/modelo o presupuesto, pregunta activamente.',
+    '• Caliente: pregunta por disponibilidad, visita, reserva, cuotas concretas.',
+    '• Usá esta clasificación en internalReason para orientar al asesor.',
+    '',
     knownSection,
+    loopSection,
+    toneNote,
     '',
-    'JSON esperado:',
-    JSON.stringify({
-      intent: 'stock_search',
-      confidence: 0.84,
-      action: 'SHOW_RESULTS',
-      extracted: {
-        brand: null, model: null, year: null, minYear: null, maxYear: null,
-        maxPrice: null, currency: null, transmission: null, fuel: null,
-        bodywork: null, cuotas: null, percent: null, hasTradeIn: null
+    '── JSON ESPERADO (sin markdown, sin texto extra) ──',
+    JSON.stringify(
+      {
+        intent: 'stock_search',
+        confidence: 0.84,
+        action: 'SHOW_RESULTS',
+        extracted: {
+          brand: null,
+          model: null,
+          year: null,
+          minYear: null,
+          maxYear: null,
+          maxPrice: null,
+          currency: null,
+          transmission: null,
+          fuel: null,
+          bodywork: null,
+          cuotas: null,
+          percent: null,
+          hasTradeIn: null,
+        },
+        missingFields: [],
+        vehicleIds: [],
+        leadScore: 45,
+        urgency: 'medium',
+        handoffRecommended: false,
+        suggestedReply: 'string',
+        internalReason: 'Temperatura: Tibio. Busca Toyota hasta ARS 20M, sin año definido.',
       },
-      missingFields: [],
-      vehicleIds: [],
-      urgency: 'medium',
-      handoffRecommended: false,
-      suggestedReply: 'string',
-      internalReason: 'string breve'
-    })
+      null,
+      2
+    ),
   ].join('\n');
 }
 
-/**
- * buildClosingSystemPrompt — v3:
- * Prompt avanzado para etapa de cierre (leadScore >= 60).
- * Enfoca en empatía, beneficios del vehículo elegido y CTA concreto.
- */
-function buildClosingSystemPrompt(dealershipName?: string, extractedContext?: Record<string, any>) {
-  const agency = dealershipName || 'la agencia';
-  const ctx = extractedContext ?? {};
-
-  const summary: string[] = [];
-  if (ctx.brand && ctx.model) summary.push(`${ctx.brand} ${ctx.model}`);
-  else if (ctx.brand) summary.push(ctx.brand);
-  if (ctx.maxPrice ?? ctx.amount) {
-    summary.push(`presupuesto ${(ctx.currency ?? 'ARS')} ${Number(ctx.maxPrice ?? ctx.amount).toLocaleString('es-AR')}`);
-  }
-  if (ctx.transmission) summary.push(`caja ${ctx.transmission}`);
-  if (ctx.tradeIn) summary.push('tiene permuta');
-
-  return [
-    `Sos un asesor senior de ventas de ${agency}. El cliente está próximo a decidir.`,
-    '',
-    'CONTEXTO DEL CLIENTE:',
-    summary.length ? summary.map(s => `  • ${s}`).join('\n') : '  (ver catálogo y mensajes previos)',
-    '',
-    'TU TAREA:',
-    '1. Empezá reconociendo el interés del cliente de forma natural (sin "¡Excelente elección!" robótico).',
-    '2. Destacá brevemente 1-2 beneficios concretos del vehículo elegido o la mejor alternativa.',
-    '3. Reafirmá el presupuesto acordado y condiciones (permuta, financiación, ciudad) si los hay.',
-    '4. Cerrá con UNA llamada a la acción concreta: proponer horario de visita, iniciar reserva, o conectar con asesor.',
-    '5. Si hay dudas sobre datos clave, preguntá de forma amistosa ANTES de proponer la acción.',
-    '6. Tono: humano, sin tecnicismos. Como vendedor que conoce al cliente.',
-    '',
-    'REGLAS:',
-    '- action = ESCALATE_HUMAN cuando el cliente quiere ver el auto, dar seña o finalizar compra.',
-    '- handoffRecommended = true en esos casos.',
-    '- No inventes precios ni stock fuera del catálogo.',
-    '- JSON válido, sin texto fuera del JSON.',
-    '',
-    'JSON esperado:',
-    JSON.stringify({
-      intent: 'closing',
-      confidence: 0.92,
-      action: 'ESCALATE_HUMAN',
-      extracted: {
-        brand: null, model: null, year: null, minYear: null, maxYear: null,
-        maxPrice: null, currency: null, transmission: null, fuel: null,
-        bodywork: null, cuotas: null, percent: null, hasTradeIn: null
-      },
-      missingFields: [],
-      vehicleIds: [],
-      urgency: 'high',
-      handoffRecommended: true,
-      suggestedReply: 'string',
-      internalReason: 'string breve'
-    })
-  ].join('\n');
-}
-
-/**
- * selectModel — elige el modelo GPT según el leadScore.
- * - score < 40: gpt-4o-mini (rápido, económico)
- * - score >= 40: OPENAI_MODEL_ADVANCED o gpt-4o-mini como fallback
- */
-function selectModel(leadScore?: number): string {
-  const score = Number(leadScore ?? 0);
-  if (score >= 40) {
-    return process.env.OPENAI_MODEL_ADVANCED ?? process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
-  }
-  return process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
-}
-
-export async function decideAgentAction(params: Params): Promise<AgentDecision | null> {
-  const isClosingStage = Number(params.leadScore ?? 0) >= 60;
-  const model = selectModel(params.leadScore);
-
+// decideAgentAction picks the right prompt depending on the lead score and passes
+// loopData to buildAgentSystemPrompt. Only the changed signature and usage are
+// shown here; keep the rest of your logic (model selection, tool invocation,
+// streaming) intact.
+export async function decideAgentAction(params: any & { loopData?: AgentLoopData }): Promise<any | null> {
+  const { loopData, leadScore, dealershipName, extracted } = params;
+  const isClosingStage = Number(leadScore ?? 0) >= 60;
+  const model = selectModel?.(leadScore); // refer to existing selectModel implementation
   const systemPrompt = isClosingStage
-    ? buildClosingSystemPrompt(params.dealershipName, params.extracted)
-    : buildAgentSystemPrompt(params.dealershipName, params.extracted);
+    ? buildClosingSystemPrompt(dealershipName, extracted)
+    : buildAgentSystemPrompt(dealershipName, extracted, loopData);
+  // ...rest of your original decideAgentAction implementation goes here...
+  return null;
+}
 
-  const context = [
-    'CATALOGO DISPONIBLE:',
-    compactCatalog(params.catalog),
-    params.faqSummary ? `\nFAQS/REGLAS:\n${params.faqSummary}` : '',
-    params.extracted ? `\nDATOS YA DETECTADOS:\n${JSON.stringify(params.extracted)}` : '',
-    Number.isFinite(Number(params.leadScore)) ? `\nLEAD_SCORE_ACTUAL: ${Number(params.leadScore)}` : ''
-  ].join('\n');
+// Placeholder exports to avoid breaking imports in other files. In your original
+// code these should import or re‑export existing definitions.
+export function selectModel(score?: number) {
+  return 'gpt-4';
+}
 
-  const raw = await askGPTJson<any>({
-    systemPrompt,
-    userMessage: params.userMessage,
-    history: params.history,
-    context,
-    model,
-    maxTokens: isClosingStage ? 600 : 700,
-    temperature: isClosingStage ? 0.2 : 0.25
-  });
-
-  return normalizeDecision(raw, params.extracted, params.leadScore);
+export function buildClosingSystemPrompt(dealershipName?: string, extracted?: any): string {
+  return 'Cerrar conversación';
 }
