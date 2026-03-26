@@ -20,7 +20,7 @@
  * Estilos: Tailwind CSS (igual que LeadPanelAutos, TicketsAutos)
  */
 
-import React, { useCallback, useContext, useEffect, useRef, useState } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import api from "../../services/api";
@@ -527,6 +527,142 @@ function Row({ label, value, mono, children }) {
   );
 }
 
+const AUTO_AGENCY_POLICY_PRESETS = [
+  {
+    name: "Precio y stock",
+    description:
+      "Cuando pregunten por precio, valor, stock o disponibilidad, pedir marca, modelo o presupuesto. Responder solo con unidades reales en stock y, si no hay coincidencia exacta, ofrecer alternativas cercanas.",
+    triggers: [
+      "precio",
+      "vale",
+      "valor",
+      "cuánto sale",
+      "cuánto cuesta",
+      "stock",
+      "disponible",
+      "está disponible",
+      "tenés",
+      "hay",
+      "me pasás precio",
+    ],
+  },
+  {
+    name: "Financiación",
+    description:
+      "Si consultan por cuotas, financiación o anticipo, pedir vehículo de interés, entrega inicial y cantidad de cuotas. No prometer aprobación; presentar la financiación como evaluación sujeta a revisión.",
+    triggers: [
+      "financiacion",
+      "financiación",
+      "financiar",
+      "cuotas",
+      "anticipo",
+      "crédito",
+      "credito",
+      "plan",
+      "entrega y cuotas",
+      "sin anticipo",
+    ],
+  },
+  {
+    name: "Permuta / usado",
+    description:
+      "Cuando quieran entregar un usado, responder que se toma sujeto a revisión. Pedir marca, modelo, año, kilometraje y fotos para orientar la operación.",
+    triggers: [
+      "usado",
+      "permuta",
+      "parte de pago",
+      "entrego",
+      "tomo usado",
+      "reciben usado",
+      "te doy mi auto",
+      "dejo mi auto",
+    ],
+  },
+  {
+    name: "Ubicación y visita",
+    description:
+      "Si preguntan dónde están o cómo llegar, informar que la agencia está en Tandil y ofrecer ubicación exacta. Si el lead muestra intención, proponer visita o test drive con día y horario.",
+    triggers: [
+      "ubicación",
+      "ubicacion",
+      "dónde están",
+      "donde están",
+      "dirección",
+      "direccion",
+      "como llego",
+      "test drive",
+      "visita",
+    ],
+  },
+  {
+    name: "Horarios de atención",
+    description:
+      "Responder horarios de forma breve y cerrar con una propuesta concreta para coordinar visita o llamada.",
+    triggers: ["horario", "horarios", "atienden", "abierto", "abren"],
+  },
+  {
+    name: "Cierre comercial",
+    description:
+      "Cuando el lead ya dejó claro vehículo, presupuesto o forma de pago, cerrar con una próxima acción concreta: visita, envío de ubicación, simulación o derivación a asesor humano.",
+    triggers: ["reservar", "seña", "reserva", "avanzo", "quiero verlo", "quiero ir"],
+  },
+];
+
+const AUTO_AGENCY_FAQ_PRESETS = [
+  {
+    question: "¿Tienen stock o precio?",
+    answer:
+      "Decime marca, modelo o presupuesto y te muestro opciones disponibles con precio.",
+  },
+  {
+    question: "¿Trabajan con financiación?",
+    answer:
+      "Sí, podemos evaluar financiación. Pasame qué vehículo te interesa, cuánto anticipo tenés y en cuántas cuotas lo querés ver.",
+  },
+  {
+    question: "¿Toman usado o permuta?",
+    answer:
+      "Tomamos usado en parte de pago sujeto a revisión. Si querés, decime qué auto tenés y te orientamos.",
+  },
+  {
+    question: "¿Dónde están?",
+    answer:
+      "Estamos en Tandil. Decime desde qué zona venís y te paso la ubicación exacta para llegar sin vueltas.",
+  },
+  {
+    question: "¿Qué horario tienen?",
+    answer:
+      "Atendemos de lunes a viernes de 9:00 a 18:00 y sábados de 9:30 a 13:00. Si querés, coordinamos una visita.",
+  },
+  {
+    question: "¿Puedo coordinar visita o test drive?",
+    answer:
+      "Sí. Decime qué vehículo querés ver y qué día te queda cómodo, y te coordinamos visita o test drive.",
+  },
+  {
+    question: "¿Cómo reservo una unidad?",
+    answer:
+      "Si ya tenés definida la unidad, te explicamos los pasos de reserva y te derivamos con un asesor para cerrarlo bien.",
+  },
+];
+
+const AUTO_AGENCY_COVERAGE = [
+  { id: "stock", label: "Precio / stock", keywords: ["precio", "stock", "disponible", "cuánto cuesta"] },
+  { id: "financing", label: "Financiación", keywords: ["financi", "cuotas", "anticipo", "credito", "crédito"] },
+  { id: "tradein", label: "Permuta / usado", keywords: ["permuta", "usado", "parte de pago", "entrego"] },
+  { id: "location", label: "Ubicación", keywords: ["tandil", "ubicación", "ubicacion", "dirección", "direccion"] },
+  { id: "hours", label: "Horarios", keywords: ["horario", "atienden", "abierto", "sábado", "sabado"] },
+  { id: "visit", label: "Visita / test drive", keywords: ["visita", "test drive", "quiero verlo", "coordinar"] },
+];
+
+const normalizeText = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
 // ─── Tab: Reglas (Policies + FAQs) ───────────────────────────────────────────
 
 function TabReglas({ policies, faqs, loadingPolicies, onReloadPolicies, onReloadFaqs }) {
@@ -535,6 +671,28 @@ function TabReglas({ policies, faqs, loadingPolicies, onReloadPolicies, onReload
   const [showPolicyForm, setShowPolicyForm] = useState(false);
   const [showFaqForm, setShowFaqForm] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [installingPreset, setInstallingPreset] = useState(false);
+
+  const knowledgeCorpus = useMemo(() => {
+    const policyText = (policies || []).flatMap((policy) => [
+      policy?.name,
+      policy?.description,
+      ...(Array.isArray(policy?.triggers) ? policy.triggers : []),
+    ]);
+    const faqText = (faqs || []).flatMap((faq) => [faq?.question, faq?.answer]);
+    return normalizeText([...policyText, ...faqText].filter(Boolean).join(" "));
+  }, [policies, faqs]);
+
+  const coverageItems = useMemo(
+    () =>
+      AUTO_AGENCY_COVERAGE.map((item) => ({
+        ...item,
+        configured: item.keywords.some((keyword) => knowledgeCorpus.includes(normalizeText(keyword))),
+      })),
+    [knowledgeCorpus]
+  );
+
+  const missingCoverage = coverageItems.filter((item) => !item.configured);
 
   const savePolicy = async () => {
     if (!newPolicy.name.trim()) return;
@@ -543,12 +701,15 @@ function TabReglas({ policies, faqs, loadingPolicies, onReloadPolicies, onReload
       await api.post("/bot/intelligence/policies", {
         name: newPolicy.name,
         description: newPolicy.description,
-        triggers: newPolicy.triggers.split(",").map(t => t.trim()).filter(Boolean),
+        triggers: newPolicy.triggers
+          .split(",")
+          .map((trigger) => trigger.trim())
+          .filter(Boolean),
       });
       toast.success("Regla guardada");
       setNewPolicy({ name: "", description: "", triggers: "" });
       setShowPolicyForm(false);
-      onReloadPolicies();
+      await onReloadPolicies();
     } catch {
       toast.error("Error al guardar la regla");
     } finally {
@@ -560,7 +721,7 @@ function TabReglas({ policies, faqs, loadingPolicies, onReloadPolicies, onReload
     try {
       await api.delete(`/bot/intelligence/policies/${id}`);
       toast.success("Regla eliminada");
-      onReloadPolicies();
+      await onReloadPolicies();
     } catch {
       toast.error("Error al eliminar");
     }
@@ -574,7 +735,7 @@ function TabReglas({ policies, faqs, loadingPolicies, onReloadPolicies, onReload
       toast.success("FAQ guardada");
       setNewFaq({ question: "", answer: "" });
       setShowFaqForm(false);
-      onReloadFaqs();
+      await onReloadFaqs();
     } catch {
       toast.error("Error al guardar el FAQ");
     } finally {
@@ -586,155 +747,330 @@ function TabReglas({ policies, faqs, loadingPolicies, onReloadPolicies, onReload
     try {
       await api.delete(`/bot/intelligence/faqs/${id}`);
       toast.success("FAQ eliminada");
-      onReloadFaqs();
+      await onReloadFaqs();
     } catch {
       toast.error("Error al eliminar");
     }
   };
 
-  return (
-    <div className="grid grid-cols-2 gap-6">
-      {/* Policies */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <SectionTitle>Reglas del bot</SectionTitle>
-          <button
-            onClick={() => setShowPolicyForm(v => !v)}
-            className="text-xs text-amber-400 hover:text-amber-300 font-medium"
-          >
-            {showPolicyForm ? "Cancelar" : "+ Nueva regla"}
-          </button>
-        </div>
+  const usePolicyPreset = (preset) => {
+    setShowPolicyForm(true);
+    setNewPolicy({
+      name: preset.name,
+      description: preset.description,
+      triggers: preset.triggers.join(", "),
+    });
+  };
 
-        {showPolicyForm && (
-          <div className="bg-white/[0.04] border border-white/[0.08] rounded-xl p-4 mb-3 flex flex-col gap-2">
-            <input
-              className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/40 w-full"
-              placeholder="Nombre de la regla"
-              value={newPolicy.name}
-              onChange={e => setNewPolicy(p => ({ ...p, name: e.target.value }))}
-            />
-            <textarea
-              className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/40 w-full resize-none"
-              placeholder="Descripción / instrucción para el bot"
-              rows={2}
-              value={newPolicy.description}
-              onChange={e => setNewPolicy(p => ({ ...p, description: e.target.value }))}
-            />
-            <input
-              className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/40 w-full"
-              placeholder="Triggers (separados por coma)"
-              value={newPolicy.triggers}
-              onChange={e => setNewPolicy(p => ({ ...p, triggers: e.target.value }))}
-            />
+  const useFaqPreset = (preset) => {
+    setShowFaqForm(true);
+    setNewFaq({
+      question: preset.question,
+      answer: preset.answer,
+    });
+  };
+
+  const installAgencyPreset = async () => {
+    setInstallingPreset(true);
+
+    try {
+      const existingPolicyNames = new Set((policies || []).map((policy) => normalizeText(policy?.name)));
+      const existingPolicyTriggers = new Set(
+        (policies || []).flatMap((policy) =>
+          Array.isArray(policy?.triggers) ? policy.triggers.map((trigger) => normalizeText(trigger)) : []
+        )
+      );
+      const existingFaqQuestions = new Set((faqs || []).map((faq) => normalizeText(faq?.question)));
+
+      let createdPolicies = 0;
+      let createdFaqs = 0;
+      let skipped = 0;
+
+      for (const preset of AUTO_AGENCY_POLICY_PRESETS) {
+        const nameExists = existingPolicyNames.has(normalizeText(preset.name));
+        const triggerExists = preset.triggers.some((trigger) => existingPolicyTriggers.has(normalizeText(trigger)));
+        if (nameExists || triggerExists) {
+          skipped += 1;
+          continue;
+        }
+
+        await api.post("/bot/intelligence/policies", preset);
+        createdPolicies += 1;
+      }
+
+      for (const preset of AUTO_AGENCY_FAQ_PRESETS) {
+        const questionExists = existingFaqQuestions.has(normalizeText(preset.question));
+        if (questionExists) {
+          skipped += 1;
+          continue;
+        }
+
+        await api.post("/bot/intelligence/faqs", preset);
+        createdFaqs += 1;
+      }
+
+      await Promise.all([onReloadPolicies(), onReloadFaqs()]);
+      toast.success(
+        `Base concesionaria cargada · ${createdPolicies} reglas · ${createdFaqs} FAQs${skipped ? ` · ${skipped} omitidas` : ""}`
+      );
+    } catch {
+      toast.error("No se pudo instalar la base de agencia");
+    } finally {
+      setInstallingPreset(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-[1.35fr_1fr] gap-4">
+        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/35">
+                Base sugerida para concesionaria
+              </div>
+              <div className="mt-2 text-lg font-semibold text-white">Pack comercial listo para agencia de autos</div>
+              <div className="mt-1 max-w-2xl text-sm leading-6 text-white/45">
+                Carga reglas y FAQs pensadas para stock, precio, financiación, permuta, ubicación, horarios y visitas.
+                No borra nada existente: solo agrega lo que falte.
+              </div>
+            </div>
             <button
-              onClick={savePolicy}
-              disabled={saving || !newPolicy.name.trim()}
-              className="bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+              onClick={installAgencyPreset}
+              disabled={installingPreset}
+              className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Guardar regla
+              {installingPreset ? "Instalando..." : "Instalar base agencia"}
             </button>
           </div>
-        )}
 
-        {loadingPolicies ? (
-          <div className="flex flex-col gap-2">
-            {[1,2,3].map(i => <div key={i} className="h-16 bg-white/[0.03] rounded-xl animate-pulse" />)}
+          <div className="mt-4 grid grid-cols-3 gap-3">
+            <MetricCard label="Reglas activas" value={policies.length || "0"} />
+            <MetricCard label="FAQs activas" value={faqs.length || "0"} />
+            <MetricCard
+              label="Cobertura comercial"
+              value={`${coverageItems.filter((item) => item.configured).length}/${coverageItems.length}`}
+              change={missingCoverage.length ? `${missingCoverage.length} áreas por reforzar` : "Cobertura completa"}
+              changeType={missingCoverage.length ? "neutral" : "up"}
+            />
           </div>
-        ) : policies.length === 0 ? (
-          <div className="text-white/25 text-sm text-center py-6">Sin reglas configuradas</div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {policies.map((p, i) => (
-              <div key={p.id || i} className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="text-sm font-medium text-white">{p.name}</div>
-                    {p.description && (
-                      <div className="text-xs text-white/40 mt-0.5 leading-relaxed">{p.description}</div>
-                    )}
-                    {p.triggers?.length > 0 && (
-                      <div className="flex gap-1 flex-wrap mt-1.5">
-                        {p.triggers.slice(0, 4).map((t, ti) => (
-                          <span key={ti} className="text-[10px] bg-white/[0.05] text-white/40 px-1.5 py-0.5 rounded">
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => deletePolicy(p.id)}
-                    className="text-white/20 hover:text-red-400 text-lg leading-none flex-shrink-0 mt-0.5"
-                  >
-                    ×
-                  </button>
-                </div>
+        </div>
+
+        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/35">Chequeo comercial</div>
+          <div className="mt-3 flex flex-col gap-2">
+            {coverageItems.map((item) => (
+              <div
+                key={item.id}
+                className={`flex items-center justify-between rounded-xl border px-3 py-2.5 ${
+                  item.configured
+                    ? "border-green-500/15 bg-green-500/10"
+                    : "border-white/[0.08] bg-white/[0.02]"
+                }`}
+              >
+                <span className="text-sm text-white">{item.label}</span>
+                <span
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                    item.configured ? "bg-green-500/15 text-green-300" : "bg-white/5 text-white/45"
+                  }`}
+                >
+                  {item.configured ? "Cubierto" : "Falta"}
+                </span>
               </div>
             ))}
           </div>
-        )}
+          {missingCoverage.length > 0 ? (
+            <div className="mt-4 rounded-xl border border-amber-500/15 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-200">
+              Recomendación: cargá primero las áreas faltantes para que el bot responda mejor en conversaciones de venta.
+            </div>
+          ) : (
+            <div className="mt-4 rounded-xl border border-green-500/15 bg-green-500/10 px-3 py-2 text-xs leading-5 text-green-200">
+              La base comercial cubre los disparadores principales de una agencia.
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* FAQs */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <SectionTitle>FAQs del bot</SectionTitle>
-          <button
-            onClick={() => setShowFaqForm(v => !v)}
-            className="text-xs text-amber-400 hover:text-amber-300 font-medium"
-          >
-            {showFaqForm ? "Cancelar" : "+ Nueva FAQ"}
-          </button>
-        </div>
-
-        {showFaqForm && (
-          <div className="bg-white/[0.04] border border-white/[0.08] rounded-xl p-4 mb-3 flex flex-col gap-2">
-            <input
-              className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/40 w-full"
-              placeholder="Pregunta"
-              value={newFaq.question}
-              onChange={e => setNewFaq(p => ({ ...p, question: e.target.value }))}
-            />
-            <textarea
-              className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 outline-none focus:border-amber-500/40 w-full resize-none"
-              placeholder="Respuesta"
-              rows={3}
-              value={newFaq.answer}
-              onChange={e => setNewFaq(p => ({ ...p, answer: e.target.value }))}
-            />
+      <div className="grid grid-cols-2 gap-6">
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <SectionTitle>Reglas del bot</SectionTitle>
             <button
-              onClick={saveFaq}
-              disabled={saving || !newFaq.question.trim() || !newFaq.answer.trim()}
-              className="bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+              onClick={() => setShowPolicyForm((value) => !value)}
+              className="text-xs font-medium text-amber-400 hover:text-amber-300"
             >
-              Guardar FAQ
+              {showPolicyForm ? "Cancelar" : "+ Nueva regla"}
             </button>
           </div>
-        )}
 
-        {faqs.length === 0 ? (
-          <div className="text-white/25 text-sm text-center py-6">Sin FAQs configuradas</div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {faqs.map((f, i) => (
-              <div key={f.id || i} className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="text-sm font-medium text-white">{f.question}</div>
-                    <div className="text-xs text-white/40 mt-0.5 leading-relaxed">{f.answer}</div>
-                  </div>
-                  <button
-                    onClick={() => deleteFaq(f.id)}
-                    className="text-white/20 hover:text-red-400 text-lg leading-none flex-shrink-0 mt-0.5"
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
+          <div className="mb-3 grid grid-cols-2 gap-2">
+            {AUTO_AGENCY_POLICY_PRESETS.slice(0, 4).map((preset) => (
+              <button
+                key={preset.name}
+                onClick={() => usePolicyPreset(preset)}
+                className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-3 text-left transition-colors hover:border-amber-500/25 hover:bg-amber-500/[0.06]"
+              >
+                <div className="text-sm font-medium text-white">{preset.name}</div>
+                <div className="mt-1 text-[11px] leading-5 text-white/35">{preset.triggers.slice(0, 3).join(" · ")}</div>
+              </button>
             ))}
           </div>
-        )}
+
+          {showPolicyForm && (
+            <div className="mb-3 flex flex-col gap-2 rounded-xl border border-white/[0.08] bg-white/[0.04] p-4">
+              <input
+                className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-500/40"
+                placeholder="Nombre de la regla"
+                value={newPolicy.name}
+                onChange={(event) => setNewPolicy((prev) => ({ ...prev, name: event.target.value }))}
+              />
+              <textarea
+                className="w-full resize-none rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-500/40"
+                placeholder="Descripción / instrucción para el bot"
+                rows={3}
+                value={newPolicy.description}
+                onChange={(event) => setNewPolicy((prev) => ({ ...prev, description: event.target.value }))}
+              />
+              <input
+                className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-500/40"
+                placeholder="Triggers (separados por coma)"
+                value={newPolicy.triggers}
+                onChange={(event) => setNewPolicy((prev) => ({ ...prev, triggers: event.target.value }))}
+              />
+              <button
+                onClick={savePolicy}
+                disabled={saving || !newPolicy.name.trim()}
+                className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition-colors hover:bg-amber-400 disabled:opacity-40"
+              >
+                Guardar regla
+              </button>
+            </div>
+          )}
+
+          {loadingPolicies ? (
+            <div className="flex flex-col gap-2">
+              {[1, 2, 3].map((index) => (
+                <div key={index} className="h-16 animate-pulse rounded-xl bg-white/[0.03]" />
+              ))}
+            </div>
+          ) : policies.length === 0 ? (
+            <div className="py-6 text-center text-sm text-white/25">Sin reglas configuradas</div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {policies.map((policy, index) => {
+                const triggers = Array.isArray(policy?.triggers) ? policy.triggers : [];
+                return (
+                  <div key={policy.id || index} className="rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-medium text-white">{policy.name}</div>
+                        {policy.description ? (
+                          <div className="mt-0.5 text-xs leading-relaxed text-white/40">{policy.description}</div>
+                        ) : null}
+                        {triggers.length > 0 ? (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {triggers.slice(0, 6).map((trigger, triggerIndex) => (
+                              <span
+                                key={`${policy.id || index}-${triggerIndex}`}
+                                className="rounded-full bg-white/[0.05] px-2 py-0.5 text-[10px] text-white/45"
+                              >
+                                {trigger}
+                              </span>
+                            ))}
+                            {triggers.length > 6 ? (
+                              <span className="rounded-full bg-white/[0.05] px-2 py-0.5 text-[10px] text-white/30">
+                                +{triggers.length - 6}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                      <button
+                        onClick={() => deletePolicy(policy.id)}
+                        className="mt-0.5 text-lg leading-none text-white/20 hover:text-red-400"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <SectionTitle>FAQs del bot</SectionTitle>
+            <button
+              onClick={() => setShowFaqForm((value) => !value)}
+              className="text-xs font-medium text-amber-400 hover:text-amber-300"
+            >
+              {showFaqForm ? "Cancelar" : "+ Nueva FAQ"}
+            </button>
+          </div>
+
+          <div className="mb-3 grid grid-cols-2 gap-2">
+            {AUTO_AGENCY_FAQ_PRESETS.slice(0, 4).map((preset) => (
+              <button
+                key={preset.question}
+                onClick={() => useFaqPreset(preset)}
+                className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-3 text-left transition-colors hover:border-amber-500/25 hover:bg-amber-500/[0.06]"
+              >
+                <div className="text-sm font-medium text-white">{preset.question}</div>
+                <div className="mt-1 text-[11px] leading-5 text-white/35">{preset.answer.slice(0, 78)}...</div>
+              </button>
+            ))}
+          </div>
+
+          {showFaqForm && (
+            <div className="mb-3 flex flex-col gap-2 rounded-xl border border-white/[0.08] bg-white/[0.04] p-4">
+              <input
+                className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-500/40"
+                placeholder="Pregunta"
+                value={newFaq.question}
+                onChange={(event) => setNewFaq((prev) => ({ ...prev, question: event.target.value }))}
+              />
+              <textarea
+                className="w-full resize-none rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-500/40"
+                placeholder="Respuesta"
+                rows={4}
+                value={newFaq.answer}
+                onChange={(event) => setNewFaq((prev) => ({ ...prev, answer: event.target.value }))}
+              />
+              <button
+                onClick={saveFaq}
+                disabled={saving || !newFaq.question.trim() || !newFaq.answer.trim()}
+                className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition-colors hover:bg-amber-400 disabled:opacity-40"
+              >
+                Guardar FAQ
+              </button>
+            </div>
+          )}
+
+          {faqs.length === 0 ? (
+            <div className="py-6 text-center text-sm text-white/25">Sin FAQs configuradas</div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {faqs.map((faq, index) => (
+                <div key={faq.id || index} className="rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-medium text-white">{faq.question}</div>
+                      <div className="mt-0.5 text-xs leading-relaxed text-white/40">{faq.answer}</div>
+                    </div>
+                    <button
+                      onClick={() => deleteFaq(faq.id)}
+                      className="mt-0.5 text-lg leading-none text-white/20 hover:text-red-400"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
