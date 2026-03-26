@@ -9,7 +9,15 @@ import {
 } from './intelligence.js';
 
 import { pool } from './db.js';
-import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from './extract.js';
+import {
+  buildMissingQuestions,
+  computeMissingFields,
+  extractLeadFields,
+  requiredFieldsForIntent,
+  shouldShowResults,
+  detectClosure,
+  detectClosingIntent
+} from './extract.js';
 import { getCatalog } from './catalog.js';
 import { decideAgentAction } from './agent.js';
 
@@ -64,12 +72,16 @@ export async function runPlayground(input: {
       if (chosen.template_override) template = String(chosen.template_override);
     }
 
-    // Guardrails: required fields
+    // ── Guardrail mejorado v5: NO preguntar campos faltantes si el cliente
+    //    pidió ver opciones directamente o si ya tiene datos de filtro suficientes.
     const req = requiredFieldsForIntent(String(pb.intent ?? 'playbook'), pb.config);
     const missing = computeMissingFields(req, extracted);
     const cfg = (pb.config && typeof pb.config === 'object') ? pb.config : {};
     const autoAsk = cfg.autoAskMissing !== undefined ? Boolean(cfg.autoAskMissing) : true;
-    if (autoAsk && missing.length) {
+
+    // v5: si el cliente quiere ver opciones o tiene filtros útiles, saltar el interrogatorio
+    const clientWantsToSee = shouldShowResults(extracted);
+    if (autoAsk && missing.length && !clientWantsToSee) {
       const ask = buildMissingQuestions(req, missing);
       return { reply: ask, intent: String(pb.intent ?? 'playbook'), sources, settings, extracted, missing_fields: missing, variant };
     }
@@ -104,13 +116,39 @@ export async function runPlayground(input: {
         ? state.history.slice(-6)
         : [];
 
+      // Merge: campos extraídos del mensaje actual toman prioridad sobre el estado previo.
+      // Esto garantiza que el agente siempre vea el cuadro más completo del lead.
+      const mergedExtracted = { ...(state?.extracted ?? {}), ...extracted };
+
+      // ── loopData v5: detectar campos pedidos repetidamente sin respuesta ─────
+      const previousMissing: string[] = Array.isArray(state?.missing_fields) ? state.missing_fields : [];
+      const currentMissing: string[] = [];
+      // Si los mismos campos seguían faltando en el turno anterior y siguen faltando ahora,
+      // los marcamos como "repeated" para que el agente no los vuelva a pedir.
+      for (const field of previousMissing) {
+        if (!mergedExtracted[field]) currentMissing.push(field);
+      }
+
+      const turnCount = typeof state?.turnCount === 'number' ? state.turnCount + 1 : 1;
+
+      const loopData = {
+        repeatedMissingFields: currentMissing,
+        turnCount
+      };
+
+      // ── Flags especiales para el agente ─────────────────────────────────────
+      // Propagar intenciones detectadas en extract al mergedExtracted
+      if (detectClosure(text)) mergedExtracted.isClosure = true;
+      if (detectClosingIntent(text)) mergedExtracted.closingIntent = true;
+
       const decision = await decideAgentAction({
         dealershipName: process.env.DEALERSHIP_NAME ?? settings?.dealership_name ?? undefined,
         userMessage: text,
         history,
         catalog,
-        extracted: state?.extracted ?? {},
-        leadScore: state?.leadScore ?? 0
+        extracted: mergedExtracted,
+        leadScore: state?.leadScore ?? 0,
+        loopData
       });
 
       if (decision?.suggestedReply) {
@@ -122,12 +160,13 @@ export async function runPlayground(input: {
           intent: decision.intent ?? 'agent',
           sources,
           settings,
-          extracted: { ...extracted, ...decision.extracted },
+          extracted: { ...mergedExtracted, ...decision.extracted },
           missing_fields: decision.missingFields ?? []
         };
       }
     } catch (e) {
-      // si el agente falla, caemos al mensaje de debug
+      // Log para diagnóstico; no re-throw para no romper el flujo.
+      console.error('[playground] decideAgentAction failed:', e);
     }
   }
 

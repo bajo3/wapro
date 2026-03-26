@@ -173,13 +173,15 @@ export default function TicketsSidebarAutos({
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-auto-muted">
-              Tickets
+              CRM
             </div>
-            <div className="mt-1 text-sm font-semibold text-auto-text">Gestión comercial</div>
+            <div className="mt-0.5 text-sm font-semibold text-auto-text">Bandeja de tickets</div>
           </div>
-          <div className="rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] text-auto-muted">
-            {tickets.length} en vista
-          </div>
+          {!loading && (
+            <div className="rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] text-auto-muted">
+              {tickets.length} resultado{tickets.length !== 1 ? "s" : ""}
+            </div>
+          )}
         </div>
 
         <div className="mt-3 grid grid-cols-3 gap-2">

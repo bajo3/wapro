@@ -1,8 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useHistory } from "react-router-dom";
 import api from "../services/api";
 import toastError from "../errors/toastError";
 
-const STAGES = [
+// STAGES are now loaded dynamically from GET /pipeline/stages.
+// This fallback is only used if the request fails before any data arrives.
+const STAGES_FALLBACK = [
   { value: "",            label: "Sin definir" },
   { value: "new",         label: "Nuevo" },
   { value: "qualified",   label: "Calificado" },
@@ -50,7 +53,7 @@ const upsertKvpTag = (tags, key, value) => {
 
 function SectionLabel({ children }) {
   return (
-    <div className="text-[10px] font-semibold uppercase tracking-wider text-white/30 mb-2">
+    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/35 mb-2.5">
       {children}
     </div>
   );
@@ -58,19 +61,57 @@ function SectionLabel({ children }) {
 
 function Card({ children, className = "" }) {
   return (
-    <div className={`bg-auto-panel2 border border-auto-border rounded-auto-lg p-3 ${className}`}>
+    <div className={`bg-auto-panel2 border border-auto-border rounded-auto-lg p-3.5 ${className}`}>
       {children}
     </div>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Hook: fetch pipeline stages once, shared across renders
+// ---------------------------------------------------------------------------
+function usePipelineStages() {
+  const [stages, setStages] = useState(STAGES_FALLBACK);
+  const fetched = useRef(false);
+
+  useEffect(() => {
+    if (fetched.current) return;
+    fetched.current = true;
+    api
+      .get("/pipeline/stages")
+      .then(({ data }) => {
+        // Normalise: backend returns [{ id, name, ... }]
+        // Map to { value: id (as string), label: name } plus a blank "sin definir" entry
+        const list = Array.isArray(data) ? data : data?.stages || [];
+        if (list.length === 0) return;
+        const mapped = [
+          { value: "", label: "Sin definir" },
+          ...list.map((s) => ({ value: String(s.id), label: s.name, _id: s.id })),
+        ];
+        setStages(mapped);
+      })
+      .catch(() => {
+        // Keep the static fallback silently — not critical
+      });
+  }, []);
+
+  return stages;
+}
+
 export default function LeadPanelAutos({ ticketId }) {
+  const dynamicStages = usePipelineStages();
+  const history = useHistory();
+
   const [loading, setLoading]     = useState(true);
   const [ticket, setTicket]       = useState(null);
   const [tags, setTags]           = useState([]);
   const [notes, setNotes]         = useState([]);
   const [tagInput, setTagInput]   = useState("");
   const [noteInput, setNoteInput] = useState("");
+
+  // Cotizaciones vinculadas a este ticket
+  const [quotations, setQuotations]         = useState([]);
+  const [quotationsLoading, setQuotationsLoading] = useState(false);
 
   const stage    = useMemo(() => parseKvpTag(tags, "stage"),    [tags]);
   const interest = useMemo(() => parseKvpTag(tags, "interest"), [tags]);
@@ -110,6 +151,42 @@ export default function LeadPanelAutos({ ticketId }) {
     return () => { mounted = false; };
   }, [ticketId]);
 
+  // Fetch cotizaciones del ticket
+  useEffect(() => {
+    let mounted = true;
+    if (!ticketId) return;
+    setQuotations([]);
+    setQuotationsLoading(true);
+    api
+      .get("/quotations", { params: { ticketId } })
+      .then(({ data }) => {
+        if (!mounted) return;
+        const list = Array.isArray(data) ? data : data?.quotations || data?.rows || [];
+        setQuotations(list);
+      })
+      .catch(() => {
+        // best-effort: no toast para no sobrecargar si el endpoint no existe aún
+        if (mounted) setQuotations([]);
+      })
+      .finally(() => { if (mounted) setQuotationsLoading(false); });
+    return () => { mounted = false; };
+  }, [ticketId]);
+
+  const goToNewQuotation = () => {
+    if (!ticketId) return;
+    const contact = ticket?.contact;
+    const params = new URLSearchParams();
+    params.set("ticketId", ticketId);
+    if (contact?.id) params.set("contactId", contact.id);
+    if (contact?.name) params.set("contactName", encodeURIComponent(contact.name));
+    // Intentar pre-completar datos del bot desde los tags (best-effort)
+    const botVehicle = parseKvpTag(tags, "vehicle") || parseKvpTag(tags, "vehiculo");
+    const botBudget  = parseKvpTag(tags, "budget")  || parseKvpTag(tags, "presupuesto");
+    if (botVehicle) params.set("vehicleLabel", encodeURIComponent(botVehicle));
+    if (botBudget)  params.set("price", botBudget.replace(/\D/g, ""));
+    history.push(`/quotations?${params.toString()}`);
+  };
+
   const saveTags = async (nextTags) => {
     try {
       const { data } = await api.put(`/tickets/${ticketId}/tags`, { tags: nextTags });
@@ -145,7 +222,36 @@ export default function LeadPanelAutos({ ticketId }) {
     } catch (err) { toastError(err); }
   };
 
-  const setStage    = (v) => saveTags(upsertKvpTag(tags, "stage", v));
+  // Set stage: update kvp tag AND, if the new value maps to a pipeline stage id,
+  // call PUT /pipeline/tickets/:ticketId/stage for the board to stay in sync.
+  const setStage = async (v) => {
+    // Optimistic local update first
+    const nextTags = upsertKvpTag(tags, "stage", v);
+    setTags(nextTags);
+
+    // Persist tags (fire-and-forget, errors toasted inside saveTags)
+    saveTags(nextTags);
+
+    // Sync to pipeline board if value looks like a numeric id (dynamic stages)
+    // or is a known slug (static fallback). We attempt the pipeline call in both
+    // cases; the backend decides whether to accept it.
+    if (ticketId && v) {
+      // Find the matching dynamic stage to get its numeric id
+      const matched = dynamicStages.find(
+        (s) => s.value === v || (s._id !== undefined && String(s._id) === String(v))
+      );
+      const toStageId = matched?._id ?? (Number.isFinite(Number(v)) ? Number(v) : null);
+      if (toStageId) {
+        try {
+          await api.put(`/pipeline/tickets/${ticketId}/stage`, { toStageId });
+        } catch (err) {
+          toastError(err);
+          // Do not roll back the tag — the tag is the source of truth in LeadPanel
+        }
+      }
+    }
+  };
+
   const setInterest = (v) => saveTags(upsertKvpTag(tags, "interest", v));
 
   const contact = ticket?.contact;
@@ -156,26 +262,45 @@ export default function LeadPanelAutos({ ticketId }) {
   return (
     <div className="flex h-full flex-col bg-auto-panel border-l border-auto-border">
       {/* Header */}
-      <div className="border-b border-auto-border px-4 py-3 flex items-center justify-between gap-2">
+      <div className="border-b border-auto-border px-4 py-3 flex items-center justify-between gap-2 shrink-0">
         <div>
-          <div className="text-[13px] font-semibold text-auto-text">Ficha del lead</div>
-          <div className="text-[11px] text-white/30 mt-0.5">Info comercial</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-auto-muted">Lead</div>
+          <div className="mt-0.5 text-[13px] font-semibold text-auto-text">Ficha comercial</div>
         </div>
-        {contact?.leadSource && (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-auto-accent/10 border border-auto-accent/20 text-auto-accent uppercase">
-            {String(contact.leadSource)}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {contact?.leadSource && (
+            <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-auto-accent/10 border border-auto-accent/25 text-auto-accent uppercase tracking-wide">
+              {String(contact.leadSource)}
+            </span>
+          )}
+          {ticket && (
+            <button
+              type="button"
+              onClick={goToNewQuotation}
+              className="h-7 px-2.5 flex items-center gap-1 rounded-auto-md bg-auto-accent text-black text-[11px] font-bold hover:bg-auto-accent2 transition-colors"
+              title="Crear cotización para este ticket"
+            >
+              <span className="text-sm leading-none">+</span>
+              Cotizar
+            </button>
+          )}
+        </div>
       </div>
 
       {loading ? (
-        <div className="p-3 flex flex-col gap-2">
-          {[80, 110, 150].map((h, i) => (
+        <div className="p-4 flex flex-col gap-3">
+          {[72, 120, 96, 140].map((h, i) => (
             <div key={i} className="animate-pulse rounded-auto-lg bg-auto-panel2" style={{ height: h }} />
           ))}
         </div>
       ) : !ticket ? (
-        <div className="p-4 text-sm text-white/30">No se pudo cargar la ficha.</div>
+        <div className="flex flex-col items-center justify-center p-8 text-center gap-2">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full border border-auto-border bg-auto-panel2">
+            <span className="text-auto-hint text-base">!</span>
+          </div>
+          <div className="text-sm font-medium text-auto-muted">No se pudo cargar la ficha</div>
+          <div className="text-xs text-white/25">Reintentá abriendo el ticket nuevamente.</div>
+        </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto p-3 flex flex-col gap-2 scrollbar-thin scrollbar-thumb-auto-border">
 
@@ -220,7 +345,7 @@ export default function LeadPanelAutos({ ticketId }) {
             <div className="flex gap-2 mb-2">
               {stage && (
                 <span className={`text-[11px] font-semibold px-2 py-0.5 rounded border ${STAGE_COLOR[stage] || "text-white/40 bg-white/[0.04] border-white/10"}`}>
-                  {STAGES.find(s => s.value === stage)?.label || stage}
+                  {dynamicStages.find(s => s.value === stage)?.label || stage}
                 </span>
               )}
               {interest && (
@@ -237,7 +362,7 @@ export default function LeadPanelAutos({ ticketId }) {
                   onChange={(e) => setStage(e.target.value)}
                   className="h-8 w-full bg-auto-surface border border-auto-border rounded-auto-md px-2 text-[12px] text-auto-muted outline-none focus:border-auto-accent/50 transition-colors"
                 >
-                  {STAGES.map(s => (
+                  {dynamicStages.map(s => (
                     <option key={s.value} value={s.value}>{s.label}</option>
                   ))}
                 </select>
@@ -294,6 +419,69 @@ export default function LeadPanelAutos({ ticketId }) {
                 ))
               )}
             </div>
+          </Card>
+
+          {/* Cotizaciones vinculadas */}
+          <Card>
+            <div className="flex items-center justify-between mb-2.5">
+              <SectionLabel>Cotizaciones</SectionLabel>
+              <button
+                type="button"
+                onClick={goToNewQuotation}
+                className="h-6 px-2 flex items-center gap-1 rounded-auto-md bg-auto-surface border border-auto-border text-white/40 text-[11px] hover:text-auto-text hover:border-auto-accent/40 transition-colors"
+              >
+                <span className="text-xs leading-none">+</span>
+                Nueva
+              </button>
+            </div>
+            {quotationsLoading ? (
+              <div className="flex gap-2 items-center py-1">
+                <div className="h-3 w-3 rounded-full border-2 border-auto-accent border-t-transparent animate-spin" />
+                <span className="text-[11px] text-white/30">Cargando...</span>
+              </div>
+            ) : quotations.length === 0 ? (
+              <div className="text-[12px] text-white/20">Sin cotizaciones vinculadas</div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {quotations.map((q) => {
+                  const STATUS_CLS = {
+                    draft:    "text-white/40 bg-white/[0.04] border-white/10",
+                    sent:     "text-blue-400 bg-blue-500/10 border-blue-500/20",
+                    accepted: "text-green-400 bg-green-500/10 border-green-500/20",
+                    rejected: "text-red-400 bg-red-500/10 border-red-500/20",
+                  };
+                  const STATUS_LABEL = { draft: "Borrador", sent: "Enviada", accepted: "Aceptada", rejected: "Rechazada" };
+                  const status = q.status || "draft";
+                  const price = q.totalPrice ?? q.basePrice ?? q.price ?? "";
+                  const currency = q.currency ?? "ARS";
+                  const vehicle = q.vehicleLabel ?? q.vehicle?.name ?? q.vehicle?.title ?? "";
+                  return (
+                    <div
+                      key={q.id}
+                      className="flex items-center justify-between gap-2 bg-auto-surface border border-auto-border rounded-auto-md px-2.5 py-2 hover:border-auto-accent/30 transition-colors"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-mono text-white/30">#{q.id}</span>
+                          {vehicle && (
+                            <span className="text-[12px] text-auto-text truncate">{vehicle}</span>
+                          )}
+                        </div>
+                        {price !== "" && (
+                          <div className="text-[11px] text-white/40 mt-0.5">
+                            <span className="text-white/25 mr-0.5">{currency}</span>
+                            {Number(price).toLocaleString("es-AR")}
+                          </div>
+                        )}
+                      </div>
+                      <span className={`flex-shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded border ${STATUS_CLS[status] || STATUS_CLS.draft}`}>
+                        {STATUS_LABEL[status] || status}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </Card>
 
           {/* Notas */}

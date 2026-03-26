@@ -26,12 +26,17 @@ export type CatalogItem = {
   // Vehicle-oriented optional fields (used when catalog comes from public.vehicles)
   brand?: string;
   model?: string;
+  version?: string;
   year?: number;
   km?: number;
+  /** true = 0km (nuevo), false = usado */
+  isNew?: boolean;
   transmission?: string;
   engine?: string;
   fuel?: string;
   color?: string;
+  /** Carrocería: suv | pickup | sedan | hatch | furgon | familiar | monovolumen | coupe */
+  bodywork?: string;
 };
 
 const sample: CatalogItem[] = [
@@ -49,12 +54,14 @@ type VehicleRow = {
   title: string | null;
   brand: string | null;
   model: string | null;
+  version: string | null;
   year: number | null;
   price: string | number | null;
   currency: string | null;
   slug: string | null;
   pictures: string[] | null;
   permalink: string | null;
+  status: string | null;
   // legacy columns
   Km: number | null;
   Motor: string | null;
@@ -65,6 +72,7 @@ type VehicleRow = {
   engine: string | null;
   transmission: string | null;
   color: string | null;
+  bodywork: string | null;
 };
 
 function coerceNumber(v: any): number | undefined {
@@ -72,6 +80,33 @@ function coerceNumber(v: any): number | undefined {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   const n = Number(String(v).trim());
   return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Infiere la carrocería del vehículo a partir de campos de texto.
+ * Prioriza el campo explícito de DB; si falta, intenta parsear desde título/modelo/versión.
+ */
+function inferBodyworkFromRow(
+  title: string,
+  model: string,
+  version: string | undefined,
+  dbBodywork: string | null | undefined
+): string | undefined {
+  if (dbBodywork) {
+    const b = dbBodywork.trim().toLowerCase();
+    if (b) return b;
+  }
+  const txt = `${title} ${model} ${version ?? ""}`.toLowerCase();
+  if (/\b(suv|crossover|4x4|awd|todoterreno)\b/.test(txt)) return "suv";
+  if (/\b(pickup|pick\s*up|doble\s*cabina)\b/.test(txt)) return "pickup";
+  if (/\b(sedan|4\s*puertas?)\b/.test(txt)) return "sedan";
+  if (/\b(hatch|hatchback|3\s*puertas?)\b/.test(txt)) return "hatch";
+  if (/\b(familiar|estate|sw|kombi|touring)\b/.test(txt)) return "familiar";
+  if (/\b(monovolumen|minivan|van|mpv)\b/.test(txt)) return "monovolumen";
+  if (/\b(furgon|utilitario|cargo)\b/.test(txt)) return "furgon";
+  if (/\b(coupe|coup[eé]|2\s*puertas?)\b/.test(txt)) return "coupe";
+  if (/\b(camioneta)\b/.test(txt)) return "pickup"; // camioneta → pickup
+  return undefined;
 }
 
 async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
@@ -89,12 +124,14 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       title,
       brand,
       model,
+      version,
       year,
       price,
       currency,
       slug,
       pictures,
       permalink,
+      status,
       "Km" as "Km",
       "Motor" as "Motor",
       "Caja" as "Caja",
@@ -102,7 +139,8 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       km,
       engine,
       transmission,
-      color
+      color,
+      bodywork
     from public.vehicles
     where ${where.join(" and ")}
     order by updated_at desc nulls last
@@ -122,22 +160,35 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       const title = (row.title ?? "").trim();
       const brand = (row.brand ?? "").trim();
       const model = (row.model ?? "").trim();
+      const version = (row.version ?? "").trim() || undefined;
 
-      const name = title || [brand, model].filter(Boolean).join(" ") || row.id;
+      const name = title || [brand, model, version].filter(Boolean).join(" ") || row.id;
       const year = row.year ?? undefined;
       const km = coerceNumber(row.km ?? row.Km);
+      // isNew: km === 0 explícito, o status contiene "0km" / "nuevo" / "new"
+      const statusStr = (row.status ?? "").toLowerCase();
+      const isNew: boolean = km === 0 || /\b(0\s*km|nuevo|new)\b/.test(statusStr);
       const transmission = (row.transmission ?? row.Caja ?? undefined)?.toString().trim();
       const engine = (row.engine ?? row.Motor ?? undefined)?.toString().trim();
       const fuel = (row.Combustible ?? undefined)?.toString().trim();
       const color = (row.color ?? undefined)?.toString().trim();
+      const bodywork = inferBodyworkFromRow(title, model, version, row.bodywork);
 
       const priceNumber = coerceMoneyNumber(row.price);
-      // Precios por debajo de 1.000.000 en campo "ARS" casi siempre son USD
-      // (el scraper / carga manual a veces no guarda la moneda correcta)
+      // Heurística de moneda:
+      // - Si currency ya dice USD → USD
+      // - Si currency dice ARS pero el precio es < 1.000.000 Y no es 0km → sospecha USD
+      //   (un 0km en ARS puede valer menos de 1M en versiones baratas, no confundir)
+      // - Si currency dice ARS y el precio es < 50.000 → casi seguro USD (nunca ARS tan bajo)
       const rawCurrency = (row.currency ?? 'ARS') as string;
-      const currency = (rawCurrency === 'ARS' && priceNumber !== undefined && priceNumber < 1_000_000)
-        ? 'USD'
-        : rawCurrency as any;
+      const currency = ((): string => {
+        if (rawCurrency.toUpperCase() === 'USD') return 'USD';
+        if (priceNumber !== undefined) {
+          if (priceNumber < 50_000) return 'USD'; // nunca es ARS tan bajo
+          if (!isNew && priceNumber < 1_000_000) return 'USD'; // usado < 1M en ARS → sospecha USD
+        }
+        return rawCurrency;
+      })() as any;
 
       const url = row.permalink
         ? String(row.permalink)
@@ -150,7 +201,11 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
 
       const parts: string[] = [];
       if (year) parts.push(String(year));
-      if (km !== undefined) parts.push(`${Math.round(km).toLocaleString("es-AR")} km`);
+      if (isNew) {
+        parts.push("0 km");
+      } else if (km !== undefined) {
+        parts.push(`${Math.round(km).toLocaleString("es-AR")} km`);
+      }
       if (transmission) parts.push(transmission);
       if (fuel) parts.push(fuel);
       if (engine) parts.push(engine);
@@ -171,12 +226,15 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
         descriptionRaw: undefined,
         brand: brand || undefined,
         model: model || undefined,
+        version,
         year,
         km,
+        isNew,
         transmission,
         engine,
         fuel,
-        color
+        color,
+        bodywork
       } as CatalogItem;
     })
     .filter((x) => x.id && x.name);
@@ -513,40 +571,118 @@ function mapRawCatalog(json: any[]): CatalogItem[] {
     .filter((x) => x.inStock !== false);
 }
 
-export function searchCatalog(items: CatalogItem[], q: string, limit = 5): CatalogItem[] {
-  const query = applySynonyms(normalizeText(q));
-  if (!query) return [];
+/**
+ * Expansión de sinónimos para búsqueda vehicular.
+ * Mapea términos coloquiales a sus equivalentes normalizados.
+ */
+const VEHICLE_SEARCH_SYNONYMS: Record<string, string[]> = {
+  suv: ["crossover", "4x4", "cuatro por cuatro", "todoterreno"],
+  pickup: ["camioneta", "pick up", "doble cabina"],
+  sedan: ["4 puertas"],
+  hatch: ["hatchback", "3 puertas"],
+  familiar: ["estate", "sw", "kombi"],
+  monovolumen: ["minivan", "van", "mpv"],
+  automatico: ["automatica", "tiptronic", "dsg", "cvt"],
+  manual: ["sincronico"],
+  nafta: ["gasolina", "naftero"],
+  diesel: ["gasoil", "turbodiesel"],
+  nuevo: ["0km", "cero km", "okm"],
+  usado: ["segunda mano"],
+};
 
-  const tokens = query.split(/\s+/).filter(Boolean);
+function applyVehicleSynonyms(text: string): string {
+  let t = text;
+  for (const [canonical, aliases] of Object.entries(VEHICLE_SEARCH_SYNONYMS)) {
+    for (const alias of aliases) {
+      const re = new RegExp(`\\b${alias.replace(/\s+/g, "\\s+")}\\b`, "g");
+      t = t.replace(re, canonical);
+    }
+  }
+  return t;
+}
+
+export function searchCatalog(items: CatalogItem[], q: string, limit = 5): CatalogItem[] {
+  const normalized = applyVehicleSynonyms(applySynonyms(normalizeText(q)));
+  if (!normalized) return [];
+
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+
+  // Detectar si la búsqueda pide un tipo de carrocería específico
+  const bodyworkTokens = new Set(["suv", "pickup", "sedan", "hatch", "familiar", "monovolumen", "furgon", "coupe"]);
+  const queriedBodywork = tokens.find((t) => bodyworkTokens.has(t));
+
+  // Detectar si busca 0km o usado
+  const queriesNew = tokens.some((t) => ["nuevo", "0km", "cero"].includes(t));
+  const queriesUsed = tokens.some((t) => t === "usado");
+
+  // Detectar combustible o caja en la query
+  const fuelTokens = new Set(["nafta", "diesel", "gnc", "hibrido", "electrico"]);
+  const txTokens = new Set(["automatico", "manual"]);
+  const queriedFuel = tokens.find((t) => fuelTokens.has(t));
+  const queriedTx = tokens.find((t) => txTokens.has(t));
 
   const scored = items
     .map((item) => {
-      // (Opcional) si querés excluir sin stock también en search:
       if (item.inStock === false) return { item, score: 0 };
 
-      const hay = applySynonyms(
-        normalizeText(
-          `${item.id} ${item.name} ${item.brand ?? ""} ${item.model ?? ""} ${item.year ?? ""} ${item.km ?? ""} ${item.transmission ?? ""} ${item.engine ?? ""} ${item.fuel ?? ""} ${item.color ?? ""} ${item.category ?? ""} ${item.url ?? ""} ${item.description ?? ""}`
+      const versionNorm = normalizeText(item.version ?? "");
+      const bodyworkNorm = normalizeText(item.bodywork ?? "");
+      const fuelNorm = normalizeText(item.fuel ?? "");
+      const txNorm = normalizeText(item.transmission ?? "");
+
+      const hay = applyVehicleSynonyms(
+        applySynonyms(
+          normalizeText(
+            `${item.id} ${item.name} ${item.brand ?? ""} ${item.model ?? ""} ${item.version ?? ""} ${item.year ?? ""} ${item.km ?? ""} ${item.transmission ?? ""} ${item.engine ?? ""} ${item.fuel ?? ""} ${item.color ?? ""} ${item.bodywork ?? ""} ${item.category ?? ""} ${item.description ?? ""}`
+          )
         )
       );
 
       let score = 0;
 
-      // boost fuerte por match en name
+      // Boost por match en name/brand/model (campos de alta densidad semántica)
       const nameHay = applySynonyms(normalizeText(item.name));
+      const brandHay = normalizeText(item.brand ?? "");
+      const modelHay = normalizeText(item.model ?? "");
+
       for (const t of tokens) {
         if (nameHay.includes(t)) score += 5;
+        else if (brandHay.includes(t)) score += 4;
+        else if (modelHay.includes(t)) score += 4;
+        else if (versionNorm.includes(t)) score += 3;
         else if (hay.includes(t)) score += 2;
 
         if (t.length >= 4) {
           const prefix = t.slice(0, Math.min(6, t.length));
-          if (nameHay.includes(prefix)) score += 2;
+          if (nameHay.includes(prefix) || brandHay.includes(prefix) || modelHay.includes(prefix)) score += 2;
           else if (hay.includes(prefix)) score += 1;
         }
       }
 
-      if (hay.includes(query)) score += 2;
-      if (hay.includes(` ${query} `)) score += 1;
+      if (hay.includes(normalized)) score += 2;
+      if (hay.includes(` ${normalized} `)) score += 1;
+
+      // Boost por bodywork match
+      if (queriedBodywork && bodyworkNorm) {
+        if (bodyworkNorm.includes(queriedBodywork)) score += 4;
+        else score -= 1; // penalizar levemente si buscó un tipo y este no lo es
+      }
+
+      // Boost por combustible
+      if (queriedFuel && fuelNorm) {
+        if (fuelNorm.includes(queriedFuel)) score += 3;
+        else score -= 1;
+      }
+
+      // Boost por caja
+      if (queriedTx && txNorm) {
+        if (txNorm.includes(queriedTx)) score += 3;
+        else score -= 1;
+      }
+
+      // Boost por 0km / usado
+      if (queriesNew && item.isNew === true) score += 3;
+      if (queriesUsed && item.isNew === false) score += 2;
 
       return { item, score };
     })
@@ -571,7 +707,13 @@ export function formatItemLine(item: CatalogItem, idx: number) {
   const specs = (() => {
     const parts: string[] = [];
     if (item.year) parts.push(String(item.year));
-    if (typeof item.km === "number" && Number.isFinite(item.km)) parts.push(`${Math.round(item.km).toLocaleString("es-AR")} km`);
+    // 0km explícito > km numérico
+    if (item.isNew) {
+      parts.push("0 km");
+    } else if (typeof item.km === "number" && Number.isFinite(item.km)) {
+      parts.push(`${Math.round(item.km).toLocaleString("es-AR")} km`);
+    }
+    if (item.version) parts.push(item.version);
     if (item.transmission) parts.push(item.transmission);
     if (item.fuel) parts.push(item.fuel);
     if (item.engine) parts.push(item.engine);

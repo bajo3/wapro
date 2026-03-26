@@ -1,0 +1,2 @@
+- [Arquitectura del catálogo vehicular](project_catalog_architecture.md) — capas DB→bot→panel→demandas, campos clave, fuente de verdad
+- [Problemas conocidos del catálogo](project_known_issues.md) — bugs de version/isNew/bodywork/moneda/parseMoney detectados y corregidos en 2026-03-26

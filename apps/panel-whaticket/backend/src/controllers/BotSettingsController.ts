@@ -10,7 +10,10 @@ export const show = async (req: Request, res: Response): Promise<Response> => {
 };
 
 export const update = async (req: Request, res: Response): Promise<Response> => {
-  const enabled = Boolean(req.body?.enabled);
+  // Normalize: accept boolean true/false OR string "true"/"false".
+  // Boolean("false") === true, so we must handle the string case explicitly.
+  const raw = req.body?.enabled;
+  const enabled = raw === "false" || raw === false ? false : Boolean(raw);
 
   const [setting] = await Setting.findOrCreate({
     where: { key: KEY },

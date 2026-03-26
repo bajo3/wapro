@@ -43,8 +43,8 @@ export default function TicketListItemTailwind({ ticket, isSelected, onSelect, o
         type="button"
         onClick={() => !isPending && onSelect?.(ticket.id)}
         className={cn(
-          "flex w-full gap-3 px-4 py-3 text-left",
-          isPending ? "cursor-default pr-[108px]" : "cursor-pointer"
+          "flex w-full gap-3 px-3 py-3 text-left",
+          isPending ? "cursor-default pr-[112px]" : "cursor-pointer"
         )}
       >
         <div className="shrink-0">
@@ -138,11 +138,11 @@ export default function TicketListItemTailwind({ ticket, isSelected, onSelect, o
       </button>
 
       {isPending ? (
-        <div className="absolute inset-y-0 right-0 flex items-center pr-3">
+        <div className="absolute inset-y-0 right-0 flex items-center pr-2.5">
           <button
             type="button"
             onClick={() => onAccept?.(ticket.id)}
-            className="inline-flex h-9 items-center rounded-auto-md bg-auto-accent px-3 text-xs font-bold text-black transition-colors hover:bg-auto-accent2"
+            className="inline-flex h-8 items-center rounded-auto-md bg-auto-accent px-3 text-[12px] font-bold text-black transition-colors hover:bg-auto-accent2"
           >
             Tomar
           </button>

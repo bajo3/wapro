@@ -1,0 +1,2 @@
+- [Rol del usuario en WaPro](user_role.md) — usuario enfocado en inteligencia comercial del bot, espera cambios directos en código con impacto de ventas
+- [Contexto del proyecto WaPro bot](project_wapro_bot.md) — arquitectura, archivos clave, flujo del orquestador y estado de mejoras v4/v5 (2026-03-26)

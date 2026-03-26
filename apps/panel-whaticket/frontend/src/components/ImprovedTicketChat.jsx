@@ -177,8 +177,9 @@ export default function ImprovedTicketChat({
             </div>
           </div>
 
-          <div className="-mx-1 overflow-x-auto pb-1 xl:mx-0 xl:max-w-[58%]">
-            <div className="flex w-max items-center gap-1.5 px-1 xl:justify-end">
+          <div className="-mx-1 overflow-x-auto pb-1 xl:mx-0 xl:max-w-[60%]">
+            <div className="flex w-max items-center gap-1 px-1 xl:justify-end">
+              {/* Acciones primarias */}
               {waLink ? (
                 <a
                   className={actionButtonBase}
@@ -188,7 +189,7 @@ export default function ImprovedTicketChat({
                   title="Abrir en WhatsApp"
                 >
                   <PhoneCall className="h-4 w-4" />
-                  <span>WhatsApp</span>
+                  <span>WA</span>
                 </a>
               ) : null}
 
@@ -196,7 +197,7 @@ export default function ImprovedTicketChat({
                 type="button"
                 onClick={() => onOpenContact?.(1)}
                 className={actionButtonBase}
-                title="Abrir gestión del ticket"
+                title="Gestión del lead"
               >
                 <Info className="h-4 w-4" />
                 <span>Gestión</span>
@@ -206,17 +207,17 @@ export default function ImprovedTicketChat({
                 type="button"
                 onClick={() => history.push("/quotations")}
                 className={actionButtonBase}
-                title="Abrir cotizaciones"
+                title="Ir a cotizaciones"
               >
                 <FileText className="h-4 w-4" />
-                <span>Cotización</span>
+                <span>Cotizar</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => onOpenContact?.(1)}
                 className={actionButtonBase}
-                title="Abrir recontactos y mensajes programados"
+                title="Programar recontacto"
               >
                 <Calendar className="h-4 w-4" />
                 <span>Recontacto</span>
@@ -228,10 +229,10 @@ export default function ImprovedTicketChat({
                 className={clsx(
                   "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-auto-lg border px-3 text-xs font-medium transition-colors",
                   showQuickReplies
-                    ? "border-auto-accent/30 bg-auto-accent text-white"
+                    ? "border-auto-accent/30 bg-auto-accent/15 text-auto-accent"
                     : "border-auto-border bg-auto-surface text-auto-text hover:bg-auto-panel2"
                 )}
-                title="Mostrar u ocultar mensajes rápidos"
+                title="Mensajes rápidos"
               >
                 <Sparkles className="h-4 w-4" />
                 <span>Rápidos</span>
@@ -250,27 +251,39 @@ export default function ImprovedTicketChat({
                 </select>
               ) : null}
 
-              <span className="inline-flex h-9 shrink-0 items-center rounded-auto-lg border border-auto-border bg-auto-surface px-3 text-xs font-medium text-auto-muted">
+              {/* Separador */}
+              <span className="mx-1 h-5 w-px shrink-0 bg-auto-border" aria-hidden="true" />
+
+              {/* Indicador bot */}
+              <span
+                className={clsx(
+                  "inline-flex h-9 shrink-0 items-center rounded-auto-lg border px-2.5 text-xs font-medium",
+                  isHumanOnly
+                    ? "border-blue-500/20 bg-blue-500/10 text-blue-400"
+                    : "border-auto-border bg-auto-surface text-auto-hint"
+                )}
+                title="Modo bot actual"
+              >
                 Bot: {botModeLabel}
               </span>
 
+              {/* Acciones secundarias (menos frecuentes) */}
               <button
                 type="button"
-                onClick={() => onToggleView?.()}
-                className={actionButtonBase}
-                title="Cambiar a vista clásica"
+                onClick={() => history.replace(`/tickets/${ticketId}`)}
+                className={clsx(actionButtonBase, "px-2.5")}
+                title="Refrescar chat"
               >
-                <MessageSquareText className="h-4 w-4" />
-                <span>Vista clásica</span>
+                <RefreshCw className="h-4 w-4" />
               </button>
 
               <button
                 type="button"
-                onClick={() => history.replace(`/tickets/${ticketId}`)}
-                className={actionButtonBase}
-                title="Refrescar chat"
+                onClick={() => onToggleView?.()}
+                className={clsx(actionButtonBase, "px-2.5 text-auto-hint")}
+                title="Cambiar a vista clásica"
               >
-                <RefreshCw className="h-4 w-4" />
+                <MessageSquareText className="h-4 w-4" />
               </button>
             </div>
           </div>

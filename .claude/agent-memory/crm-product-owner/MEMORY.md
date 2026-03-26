@@ -1,0 +1,2 @@
+- [Rol del usuario](user_role.md) — Tech lead / founder que decide producto, espera criterio comercial directo del PO
+- [Contexto del proyecto WaPro](project_wapro_context.md) — Módulos, modelos, estado del diseño y bugs corregidos al 2026-03-26

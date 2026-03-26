@@ -74,19 +74,22 @@ export default function TicketsHeaderAutos({
             <span>{sidebarVisible ? "Ocultar lista" : "Mostrar lista"}</span>
           </button>
 
-          <button onClick={onRefresh} className={actionButtonClass} type="button">
+          <button onClick={onRefresh} className={actionButtonClass} type="button" title="Recargar lista">
             <RefreshCw className="h-4 w-4" />
-            <span>Refrescar</span>
+            <span>Actualizar</span>
           </button>
 
-          <button
-            onClick={onClearFilters}
-            className="inline-flex h-9 items-center gap-2 rounded-auto-lg bg-auto-accent px-3 text-xs font-bold text-black transition-colors hover:bg-auto-accent2"
-            type="button"
-          >
-            <X className="h-4 w-4" />
-            <span>Limpiar filtros</span>
-          </button>
+          {hasActiveFilters ? (
+            <button
+              onClick={onClearFilters}
+              className="inline-flex h-9 items-center gap-2 rounded-auto-lg border border-auto-accent/30 bg-auto-accent/10 px-3 text-xs font-semibold text-auto-accent transition-colors hover:bg-auto-accent/20"
+              type="button"
+              title="Quitar todos los filtros activos"
+            >
+              <X className="h-4 w-4" />
+              <span>Limpiar filtros</span>
+            </button>
+          ) : null}
         </div>
       </div>
     </header>

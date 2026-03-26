@@ -61,6 +61,12 @@ const toNumber = (v: any, def = 0): number => {
   return Number.isFinite(n) ? n : def;
 };
 
+const toValidDate = (v: any): Date | null => {
+  if (!v) return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+};
+
 const fmtMoney = (n: number): string => {
   try {
     return Math.round(n).toLocaleString("es-AR");
@@ -151,9 +157,15 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
   const status = String(req.query.status || "all");
   const q = String(req.query.q || "").trim();
   const limit = Math.min(200, Math.max(1, Number(req.query.limit || 100)));
+  const ticketIdParam = req.query.ticketId;
 
   const where: any = {};
   if (status && status !== "all") where.status = status;
+
+  if (ticketIdParam !== undefined) {
+    const tid = Number(ticketIdParam);
+    where.ticketId = Number.isFinite(tid) ? tid : null;
+  }
 
   if (q) {
     where[Op.or] = [
@@ -175,7 +187,13 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
 
 export const show = async (req: Request, res: Response): Promise<Response> => {
   const id = Number(req.params.id);
-  const quotation = await Quotation.findByPk(id);
+  const quotation = await Quotation.findByPk(id, {
+    include: [
+      { association: "ticket", required: false },
+      { association: "contact", required: false },
+      { association: "createdBy", required: false }
+    ]
+  });
   if (!quotation) throw new AppError("ERR_QUOTATION_NOT_FOUND", 404);
   return res.json({ quotation });
 };
@@ -236,6 +254,7 @@ export const create = async (req: Request, res: Response): Promise<Response> => 
     clientName,
     clientPhone: clientPhone || null,
     contactId: body.contactId ?? null,
+    ticketId: body.ticketId ? Number(body.ticketId) : null,
     vehicleRefId: body.vehicleRefId ?? body.vehicleId ?? null,
     vehicleLabel,
     vehicleData: body.vehicleData ?? null,
@@ -247,7 +266,7 @@ export const create = async (req: Request, res: Response): Promise<Response> => 
     financing: body.financing ?? null,
     tradeIn: body.tradeIn ?? null,
     notes: String(body.notes || "").trim() || null,
-    validUntil: body.validUntil ? new Date(body.validUntil) : null,
+    validUntil: toValidDate(body.validUntil),
     createdByUserId: (req as any).user?.id ?? null,
     meta: body.meta ?? null
   };
@@ -302,6 +321,9 @@ export const update = async (req: Request, res: Response): Promise<Response> => 
     clientName: nextClientName,
     clientPhone: nextClientPhone,
     contactId: body.contactId ?? quotation.contactId,
+    ticketId: body.ticketId !== undefined
+      ? (body.ticketId ? Number(body.ticketId) : null)
+      : quotation.ticketId,
     vehicleRefId: body.vehicleRefId ?? body.vehicleId ?? quotation.vehicleRefId,
     vehicleLabel: nextVehicleLabel,
     vehicleData: body.vehicleData ?? quotation.vehicleData,
@@ -313,7 +335,7 @@ export const update = async (req: Request, res: Response): Promise<Response> => 
     financing: body.financing ?? quotation.financing,
     tradeIn: body.tradeIn ?? quotation.tradeIn,
     notes: body.notes ?? quotation.notes,
-    validUntil: body.validUntil ? new Date(body.validUntil) : quotation.validUntil,
+    validUntil: body.validUntil !== undefined ? toValidDate(body.validUntil) : quotation.validUntil,
     meta: body.meta ?? quotation.meta
   };
 

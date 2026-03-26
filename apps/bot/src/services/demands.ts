@@ -766,12 +766,17 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
       if (demandCtx.maxPrice && v.price) {
         const vp = Number(v.price);
         if (Number.isFinite(vp) && vp > 0) {
+          const extendedMax = demandCtx.maxPrice * 1.10;
           if (vp <= demandCtx.maxPrice) {
             const ratio = vp / demandCtx.maxPrice;
             score += ratio >= 0.75 ? 0.12 : 0.08;
             reasons.price = 'ok';
+          } else if (vp <= extendedMax) {
+            // Dentro del 10% extra: no penalizar, puntaje neutro
+            score += 0.04;
+            reasons.price = 'ok_extended';
           } else {
-            const over = (vp - demandCtx.maxPrice) / demandCtx.maxPrice;
+            const over = (vp - extendedMax) / extendedMax;
             score -= Math.min(0.10, over * 0.15);
             reasons.price = `over_${Math.round(over * 100)}pct`;
           }

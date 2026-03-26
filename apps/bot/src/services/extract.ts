@@ -1,7 +1,7 @@
 /**
  * extract.ts — Extracción estructurada de campos desde texto libre en español.
  *
- * Mejoras v3:
+ * Mejoras v4:
  *  - parseMoney: detecta "30m", "30" en contexto de presupuesto, typos comunes
  *    ("pesod", "millon" sin tilde), rangos "entre X y Y millones"
  *  - extractLeadFields: maxPrice = amount por defecto (cualquier mención de
@@ -9,6 +9,15 @@
  *  - formatMoney / buildConfirmationPhrase: helpers para confirmación visual
  *  - hasUsefulData(): saber si hay suficiente contexto acumulado
  *  - Nuevos alias de marcas (typos frecuentes)
+ *  - Intención implícita: "algo para trabajar" → pickup/utilitario,
+ *    "algo económico" / "económico de mantener" → gnc/diesel implícito,
+ *    "no muy grande" / "chico" / "compacto" → bodywork compacto
+ *  - Variantes 0km/usado: "sin rodar", "nuevo", "de segunda", "de uso", "con km"
+ *  - Permuta/canje mejorado: "cambio", "te doy el mío", "mi auto como parte"
+ *  - Financiación: "con cuotas", "en cuotas", "con crédito", "banco", "anticipo"
+ *  - detectShowIntent(): detecta cuando el cliente pide VER opciones directamente
+ *  - detectClosingIntent(): detecta señales de cierre / avance concreto
+ *  - detectRangeExpansion(): detecta "algo mejor por un poco más"
  */
 
 function norm(s: string): string {
@@ -64,11 +73,14 @@ function parseKm(text: string): number | null {
 }
 
 /**
- * parseMoney — v3:
+ * parseMoney — v4:
  * - "entre X y Y millones" → toma el mayor como techo
- * - "13m" shorthand de millones
+ * - "13m" / "800k" shorthand de millones/miles (pegados al número)
  * - typos: "millon", "palos", "kilos"
+ * - "medio millon" / "media palo" → 500.000
+ * - "0.8 millones" / "1.5 palos" → decimales
  * - contexto de presupuesto: "tengo 30" → 30 millones
+ * - "800" suelto con contexto vehicular → 800.000 (ARS miles) o 800 (USD)
  */
 export function parseMoney(text: string): { amount: number; currency: 'ARS' | 'USD' } | null {
   const t = norm(text);
@@ -82,17 +94,31 @@ export function parseMoney(text: string): { amount: number; currency: 'ARS' | 'U
     return { amount: Math.round(cap * 1_000_000), currency };
   }
 
-  // "13 palos" — ARS coloquial
+  // "medio millon" / "media palo" → 500.000
+  if (/\bmedio\s+mill?(?:ones?)?|media\s+palo\b/.test(t)) return { amount: 500_000, currency };
+
+  // "13 palos" / "1.5 palos" — ARS coloquial
   const palos = t.match(/\b(\d+(?:[.,]\d+)?)\s*palos?\b/);
   if (palos) return { amount: Math.round(Number(palos[1].replace(',', '.')) * 1_000_000), currency: 'ARS' };
 
-  // "13 millones" / "13m" / "13 mill" / "13 millon"
-  const mill = t.match(/\b(\d+(?:[.,]\d+)?)\s*(?:mill?(?:ones?)?|millon(?:es)?|m)\b/);
+  // "13 millones" / "13 mill" / "0.8 millones" (con espacio)
+  const mill = t.match(/\b(\d+(?:[.,]\d+)?)\s*(?:mill?(?:ones?)?|millon(?:es)?)\b/);
   if (mill) return { amount: Math.round(Number(mill[1].replace(',', '.')) * 1_000_000), currency };
+
+  // "13m" shorthand pegado: solo si la m está pegada al número sin espacio
+  const mShort = t.match(/\b(\d+(?:[.,]\d+)?)m\b/);
+  if (mShort) {
+    const n = Number(mShort[1].replace(',', '.'));
+    if (n >= 1 && n <= 999) return { amount: Math.round(n * 1_000_000), currency };
+  }
 
   // "800 mil" / "1500 kilos"
   const miles = t.match(/\b(\d{3,4})\s*(?:mil|kilos?)\b/);
-  if (miles) { const n = Number(miles[1]) * 1000; if (n > 50000) return { amount: n, currency }; }
+  if (miles) { const n = Number(miles[1]) * 1000; if (n > 50_000) return { amount: n, currency }; }
+
+  // "800k" shorthand de miles (k pegado al número)
+  const kShort = t.match(/\b(\d{3,4})k\b/);
+  if (kShort) { const n = Number(kShort[1]) * 1000; if (n > 50_000) return { amount: n, currency }; }
 
   // "$ 13.800.000"
   const pesos = t.match(/\$\s*([0-9.,]+)/);
@@ -109,6 +135,20 @@ export function parseMoney(text: string): { amount: number; currency: 'ARS' | 'U
     if (loose) {
       const n = Number(loose[1]);
       if (n >= 5 && n <= 9999) return { amount: n * 1_000_000, currency };
+    }
+  }
+
+  // "800" con contexto vehicular explícito → 800k ARS o 800 USD
+  const vehicleCtx = /\b(?:auto|coche|carro|vehiculo|0\s*km|usado|precio|vale|cuesta|oferta|busco)\b/i.test(t);
+  if (vehicleCtx) {
+    const midNum = t.match(/\b(\d{3,4})\b/);
+    if (midNum) {
+      const n = Number(midNum[1]);
+      if (n >= 100 && n <= 9999) {
+        // USD: dejar el número tal cual (800 USD = 800)
+        // ARS: interpretar como miles (800 ARS → 800.000)
+        return { amount: isUSD ? n : n * 1_000, currency };
+      }
     }
   }
 
@@ -201,7 +241,8 @@ const USE_CASE_MAP: Record<string, string> = {
   trabajo: 'trabajo', laburo: 'trabajo',
   campo: 'campo', rural: 'campo', offroad: 'campo',
   ciudad: 'city', city: 'city',
-  ruta: 'viaje', viaje: 'viaje'
+  ruta: 'viaje', viaje: 'viaje',
+  reparto: 'reparto', delivery: 'reparto', carga: 'reparto'
 };
 
 const CITY_LIST = [
@@ -284,7 +325,7 @@ function detectGNC(text: string): boolean | null {
 }
 
 function detectTradeIn(text: string): { hasTradeIn: boolean; tradeInModel?: string; tradeInYear?: number; tradeInKm?: number } | null {
-  const triggers = /\b(?:tengo\s+un|entrego|parte\s+de\s+pago|doy\s+en\s+parte|permut[ao]|canje|mi\s+(?:auto|coche|carro))\b/i;
+  const triggers = /\b(?:tengo\s+(?:un|una)|entrego|parte\s+de\s+pago|doy\s+en\s+parte|permut[ao]|canje|cambio|te\s+(?:doy|traigo|llevo)\s+(?:el|la|mi)|mi\s+(?:auto|coche|carro|camioneta|moto)\s+(?:como|de|en)|lo\s+cambio|lo\s+entrego|dar\s+en\s+parte)\b/i;
   if (!triggers.test(text)) return null;
   const out: any = { hasTradeIn: true };
   const bm = detectBrandModel(text);
@@ -295,6 +336,114 @@ function detectTradeIn(text: string): { hasTradeIn: boolean; tradeInModel?: stri
   const km = parseKm(text);
   if (km !== null) out.tradeInKm = km;
   return out;
+}
+
+/**
+ * detectCondition — v4: detecta si el cliente busca 0km o usado.
+ * Cubre variantes coloquiales y errores ortográficos comunes.
+ */
+function detectCondition(text: string): 'nuevo' | 'usado' | null {
+  const t = norm(text);
+
+  // 0km explícito
+  if (/\b(?:0\s*km|cero\s*km|okm|0km|sin\s*rodar|sin\s*uso|brand\s*new|nuevo\s+de\s+agencia|directo\s+de\s+agencia)\b/.test(t)) return 'nuevo';
+  // "0km" como atributo de búsqueda
+  if (/\b(?:quiero|busco|necesito|dame|mostrame)\b.*\b(?:nuevo|0\s*km)\b/.test(t)) return 'nuevo';
+
+  // Usado explícito
+  if (/\b(?:usado|usada|de\s*segunda|segunda\s*mano|de\s*uso|con\s*km|con\s*kilometros?|km\s+recorridos?|semi\s*nuevo|seminuevo|oc[au]sion|de\s*ocasi[oó]n)\b/.test(t)) return 'usado';
+
+  return null;
+}
+
+/**
+ * detectFinancing — v4: detecta intención de financiación aunque no se digan cuotas exactas.
+ */
+function detectFinancing(text: string): boolean {
+  const t = norm(text);
+  return /\b(?:con\s*cuotas?|en\s*cuotas?|a\s*cuotas?|financiado|financiacion|credito|banco|prestamo|anticipo|cuota\s*fija|pago\s*mensual|a\s*plazos?|plan\s*de\s*pago|lotes?)\b/.test(t);
+}
+
+/**
+ * detectShowIntent — v4: detecta cuando el cliente quiere ver opciones directamente,
+ * sin necesidad de que el bot siga preguntando datos.
+ */
+export function detectShowIntent(text: string): boolean {
+  const t = norm(text);
+  return /\b(?:mostrame|mostra|muestrame|muestra|que\s+tenes|que\s+tienen|que\s+hay|listame|lista|ver\s+opciones?|quiero\s+ver|dame\s+opciones?|que\s+opciones?|que\s+modelos?|tenes\s+algo|tienen\s+algo|hay\s+algo|que\s+tienen\s+de|manda|mandame|pasame)\b/.test(t);
+}
+
+/**
+ * detectClosingIntent — v4: detecta señales de cierre o avance concreto hacia la compra.
+ */
+export function detectClosingIntent(text: string): boolean {
+  const t = norm(text);
+  return /\b(?:quiero\s+reservar|reservalo|lo\s+reservo|cuando\s+puedo\s+ir|voy\s+a\s+verlo|paso\s+a\s+verlo|me\s+lo\s+llevo|lo\s+compro|hacemos\s+algo|cerramos|hablo\s+con\s+alguien|quiero\s+hablar\s+con|me\s+comunicas?|me\s+da[ns]?\s+un\s+contacto|senal|sena|señ[ao]|abonar|pagar)\b/.test(t);
+}
+
+/**
+ * detectClosure — v4: detecta despedidas y agradecimientos para responder con cierre cálido.
+ */
+export function detectClosure(text: string): boolean {
+  const t = norm(text).trim();
+  return /^(?:chau|bye|adios|hasta\s+luego|gracias|muchas\s+gracias|ok\s+gracias|listo\s+gracias|dale\s+gracias|buenas|ok|listo|entendido|ah\s+ok|ya\s+entendi|me\s+quedo\s+pensando|lo\s+pienso)\.?$/.test(t)
+    || /\b(?:gracias\s+(?:y\s+)?(?:chau|hasta\s+luego|bye)|chau\s+gracias)\b/.test(t);
+}
+
+/**
+ * detectRangeExpansion — v4: detecta cuando el cliente pide ver opciones de nivel superior.
+ * Ej: "y algo mejor por un poco más" → expandir rango en +15-20%.
+ */
+export function detectRangeExpansion(text: string): boolean {
+  const t = norm(text);
+  return /\b(?:algo\s+mejor|un\s+poco\s+mas|poco\s+mas\s+de\s+presupuesto|estiro\s+el\s+presupuesto|puedo\s+llegar\s+a\s+(?:un\s+poco\s+)?mas|subiendo\s+el\s+presupuesto|y\s+(?:si\s+)?subo|que\s+mas\s+tenes\s+(?:por\s+)?arriba|que\s+me\s+das\s+por\s+mas|siguiente\s+nivel|algo\s+mejor\s+(?:por\s+)?un\s+poco)\b/.test(t);
+}
+
+/**
+ * detectCheapestRequest — v4: detecta cuando el cliente quiere ver los más baratos.
+ */
+export function detectCheapestRequest(text: string): boolean {
+  const t = norm(text);
+  return /\b(?:lo\s+mas\s+barato|los\s+mas\s+baratos?|mas\s+economico|mas\s+accesible|mas\s+bajo\s+de\s+precio|menor\s+precio|el\s+mas\s+economico|opciones?\s+economicas?|algo\s+barato|el\s+mas\s+barato)\b/.test(t);
+}
+
+/**
+ * detectImplicitBodywork — v4: detecta intenciones implícitas que se traducen a tipo de vehículo.
+ * "algo para trabajar" → pickup/utilitario
+ * "algo familiar" / "para la familia" → familiar/suv
+ * "no muy grande" / "algo chico" → compacto
+ */
+function detectImplicitBodywork(text: string): string | null {
+  const t = norm(text);
+
+  // Pickup / utilitario por uso laboral
+  if (/\b(?:para\s+trabajar|para\s+el\s+laburo|para\s+cargar|para\s+transportar|llevar\s+herramientas?|carga|negocio)\b/.test(t)) return 'pickup';
+
+  // Familiar / SUV por necesidad de espacio
+  if (/\b(?:para\s+(?:la\s+)?familia|somos\s+(?:muchos|\d+)|viaj[ao](?:mos)?\s+(?:mucho|seguido)|varios\s+chicos?|con\s+chicos?|baulera\s+grande|maletero\s+grande)\b/.test(t)) return 'suv';
+
+  // Compacto por tamaño reducido
+  if (/\b(?:no\s+muy\s+grande|algo\s+chico|chiquito|compacto|facil\s+de\s+maniobrar|para\s+la\s+ciudad|estacion(?:ar)?\s+facil|poco\s+espacio)\b/.test(t)) return 'hatch';
+
+  return null;
+}
+
+/**
+ * detectImplicitFuel — v4: detecta preferencia de combustible por contexto implícito.
+ * "económico de mantener" / "gasto poco" → gnc o diesel implícito
+ */
+function detectImplicitFuelPreference(text: string): string | null {
+  const t = norm(text);
+
+  if (/\b(?:economico\s+de\s+mantener|gasto\s+(?:poco|menos)|bajo\s+consumo|que\s+consuma\s+poco|no\s+gaste\s+mucho\s+(?:nafta|gasoil|combustible)|ahorrar\s+en\s+combustible|rendidor|que\s+rinda)\b/.test(t)) {
+    return 'gnc'; // sugerencia implícita de bajo costo operativo
+  }
+
+  if (/\b(?:muchos\s+km|muchos\s+kilometros?|viajo\s+(?:mucho|lejos|largas?\s+distancias?)|ruta\s+(?:siempre|seguido)|muchos\s+viajes)\b/.test(t)) {
+    return 'diesel'; // sugerencia implícita para viajes largos
+  }
+
+  return null;
 }
 
 // ─── Exported interface ───────────────────────────────────────────────────────
@@ -352,7 +501,13 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
   if (color) out.color = color;
 
   const fuel = detectFuel(t);
-  if (fuel) out.fuel = fuel;
+  if (fuel) {
+    out.fuel = fuel;
+  } else if (!out.fuel) {
+    // Intención implícita de combustible (v4) — solo si no hay preferencia explícita
+    const implicitFuel = detectImplicitFuelPreference(t);
+    if (implicitFuel) out.implicitFuelHint = implicitFuel;
+  }
 
   const tx = detectTransmission(t);
   if (tx) out.transmission = tx;
@@ -363,12 +518,43 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
   const use = detectUseCase(t);
   if (use) out.useCase = use;
 
-  // Bodywork
+  // Condition: 0km vs usado (v4)
+  const condition = detectCondition(t);
+  if (condition) out.condition = condition;
+
+  // Financing intent (v4)
+  if (detectFinancing(t)) out.wantsFinancing = true;
+
+  // Show intent flag (v4) — informa al agente que debe mostrar, no preguntar
+  if (detectShowIntent(t)) out.showIntent = true;
+
+  // Closing intent flag (v4)
+  if (detectClosingIntent(t)) out.closingIntent = true;
+
+  // Closure / farewell flag (v4)
+  if (detectClosure(t)) out.isClosure = true;
+
+  // Range expansion flag (v4)
+  if (detectRangeExpansion(t)) out.rangeExpansion = true;
+
+  // Cheapest request flag (v4)
+  if (detectCheapestRequest(t)) out.cheapestRequest = true;
+
+  // Bodywork — explícito primero, luego implícito
   if (/\b(?:suv|crossover|4x4|cuatro\s*por\s*cuatro)\b/i.test(t)) out.bodywork = 'suv';
   else if (/\b(?:sedan|4\s*puertas?)\b/i.test(t)) out.bodywork = 'sedan';
   else if (/\b(?:hatch|hatchback|3\s*puertas?)\b/i.test(t)) out.bodywork = 'hatch';
-  else if (/\b(?:pickup|pick\s*up|doble\s*cabina)\b/i.test(t)) out.bodywork = 'pickup';
+  else if (/\b(?:pickup|pick\s*up|doble\s*cabina|camioneta)\b/i.test(t)) out.bodywork = 'pickup';
   else if (/\b(?:furgon|utilitario)\b/i.test(t)) out.bodywork = 'furgon';
+  else if (/\b(?:familiar|station\s*wagon|sw)\b/i.test(t)) out.bodywork = 'familiar';
+  else if (/\b(?:compacto|compacta)\b/i.test(t)) out.bodywork = 'hatch';
+  else if (/\b(?:monovolumen|minivan|van)\b/i.test(t)) out.bodywork = 'monovolumen';
+  else if (/\b(?:coupe|coup[eé]|2\s*puertas?)\b/i.test(t)) out.bodywork = 'coupe';
+  // Intención implícita de carrocería (v4) — solo si no hay bodywork explícito ya
+  if (!out.bodywork) {
+    const implicitBody = detectImplicitBodywork(t);
+    if (implicitBody) out.bodywork = implicitBody;
+  }
 
   // People info
   const city = detectCity(t);
@@ -513,8 +699,47 @@ export function buildConfirmationPhrase(ex: Extracted): string {
 }
 
 /**
- * hasUsefulData — indica si hay suficiente contexto para buscar resultados.
+ * hasUsefulData — v4: indica si hay suficiente contexto para buscar resultados.
+ * Incluye flags de intención explícita de ver opciones.
  */
 export function hasUsefulData(ctx: Extracted): boolean {
-  return !!(ctx?.brand || ctx?.model || ctx?.maxPrice || ctx?.amount || ctx?.bodywork);
+  return !!(
+    ctx?.brand ||
+    ctx?.model ||
+    ctx?.maxPrice ||
+    ctx?.amount ||
+    ctx?.bodywork ||
+    ctx?.showIntent ||
+    ctx?.condition ||
+    ctx?.useCase
+  );
+}
+
+/**
+ * shouldShowResults — v4: decide si el bot debe mostrar resultados directamente
+ * sin pedir más datos. Retorna true si hay al menos un filtro útil O si el cliente
+ * pidió explícitamente ver opciones.
+ */
+export function shouldShowResults(ctx: Extracted): boolean {
+  if (ctx?.showIntent) return true;
+  if (ctx?.cheapestRequest) return true;
+  const hasFilter = !!(ctx?.brand || ctx?.model || ctx?.maxPrice || ctx?.amount || ctx?.bodywork || ctx?.condition || ctx?.useCase || ctx?.fuel || ctx?.transmission);
+  return hasFilter;
+}
+
+/**
+ * getLeadTemperature — v4: clasifica el lead según datos disponibles e intenciones detectadas.
+ */
+export function getLeadTemperature(ctx: Extracted): 'frio' | 'tibio' | 'caliente' {
+  if (ctx?.closingIntent) return 'caliente';
+  if (ctx?.wantsFinancing && (ctx?.brand || ctx?.model || ctx?.maxPrice)) return 'caliente';
+
+  const dataPoints = [
+    ctx?.brand, ctx?.model, ctx?.maxPrice, ctx?.bodywork,
+    ctx?.fuel, ctx?.transmission, ctx?.condition, ctx?.useCase
+  ].filter(Boolean).length;
+
+  if (dataPoints >= 2) return 'tibio';
+  if (dataPoints === 1) return 'tibio';
+  return 'frio';
 }

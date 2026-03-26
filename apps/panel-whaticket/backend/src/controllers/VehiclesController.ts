@@ -385,7 +385,11 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
 
   try {
     const source = await detectSource();
-    if (!source) return res.json({ vehicles: [] });
+    if (!source) {
+      // Return empty array (preserves frontend contract) but expose diagnostic
+      // via a non-breaking field so the panel can show a warning.
+      return res.json({ vehicles: [], _catalogError: "no_source_detected" });
+    }
 
     const { schema, table, map } = source;
 
@@ -495,6 +499,8 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
     return res.json({ vehicles });
   } catch (err) {
     console.error("[vehicles#index] lookup failed", err);
-    return res.json({ vehicles: [] });
+    // Preserve frontend contract but expose error type for diagnostics.
+    const msg = err instanceof Error ? err.message : String(err);
+    return res.json({ vehicles: [], _catalogError: msg || "lookup_failed" });
   }
 };    

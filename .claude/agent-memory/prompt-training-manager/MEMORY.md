@@ -1,0 +1,1 @@
+- [WaPro Training System — Estado actual](project_wapro_training.md) — Arquitectura, migraciones SQL, prompts y estado del sistema de entrenamiento del bot automotriz

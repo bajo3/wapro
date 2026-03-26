@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { Op } from "sequelize";
+import sequelize from "../database";
 import PipelineStage from "../models/PipelineStage";
 import Ticket from "../models/Ticket";
 import Contact from "../models/Contact";
@@ -72,16 +73,37 @@ export const deleteStage = async (req: Request, res: Response) => {
   const count = await PipelineStage.count();
   if (count <= 1) throw new AppError("Cannot delete last stage", 400);
 
-  const defaultStage = await GetDefaultPipelineStage();
-  if (!defaultStage) throw new AppError("Default stage missing", 500);
+  // Resolve fallback stage BEFORE any mutation.
+  // If the stage being deleted is the default one, GetDefaultPipelineStage()
+  // would return this same stage — so we must pick a different one first.
+  let fallbackStage = await GetDefaultPipelineStage();
+  if (!fallbackStage || String(fallbackStage.id) === String(stage.id)) {
+    // Pick any other stage as fallback.
+    fallbackStage = await PipelineStage.findOne({
+      where: { id: { [Op.ne]: stage.id } },
+      order: [["order", "ASC"], ["id", "ASC"]]
+    });
+  }
+  if (!fallbackStage) throw new AppError("No fallback stage available", 500);
 
-  // Reassign tickets to default stage
-  await Ticket.update(
-    { pipelineStageId: defaultStage.id, stageChangedAt: new Date() },
-    { where: { pipelineStageId: stage.id } }
-  );
+  // Wrap all mutations in a transaction to prevent partial state:
+  // - two stages marked as default
+  // - tickets with a destroyed stageId (orphaned)
+  await sequelize.transaction(async t => {
+    // If we are deleting the default stage, promote the fallback to default first.
+    if (stage.isDefault) {
+      await fallbackStage!.update({ isDefault: true }, { transaction: t });
+    }
 
-  await stage.destroy();
+    // Reassign tickets to fallback stage before destroying.
+    await Ticket.update(
+      { pipelineStageId: fallbackStage!.id, stageChangedAt: new Date() },
+      { where: { pipelineStageId: stage.id }, transaction: t }
+    );
+
+    await stage.destroy({ transaction: t });
+  });
+
   return res.json({ ok: true });
 };
 

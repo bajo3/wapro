@@ -126,6 +126,10 @@ export const counts = async (req: Request, res: Response): Promise<Response> => 
 export const store = async (req: Request, res: Response): Promise<Response> => {
   const { contactId, status, userId }: TicketData = req.body;
 
+  if (!contactId) {
+    return res.status(400).json({ error: "ERR_TICKET_CONTACT_REQUIRED" });
+  }
+
   const ticket = await CreateTicketService({ contactId, status, userId });
 
   const io = getIO();

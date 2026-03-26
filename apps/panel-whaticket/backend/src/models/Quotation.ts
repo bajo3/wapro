@@ -13,6 +13,7 @@ import {
 
 import Contact from "./Contact";
 import User from "./User";
+import Ticket from "./Ticket";
 
 export type QuotationStatus = "draft" | "sent" | "accepted" | "rejected" | "viewed";
 
@@ -85,6 +86,13 @@ class Quotation extends Model<Quotation> {
 
   @Column(DataType.DATE)
   sentAt: Date;
+
+  @ForeignKey(() => Ticket)
+  @Column(DataType.INTEGER)
+  ticketId: number | null;
+
+  @BelongsTo(() => Ticket, { foreignKey: "ticketId", as: "ticket" })
+  ticket: Ticket;
 
   @ForeignKey(() => User)
   @Column

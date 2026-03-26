@@ -243,7 +243,7 @@ const LoggedInLayout = ({ children }) => {
             noWrap
             className={classes.title}
           >
-            WhaTicket
+            WaPro
           </Typography>
 
           <div className={classes.themeSwitchContainer}>
