@@ -117,6 +117,7 @@ const useStyles = makeStyles((theme) => ({
     overflow: "hidden",
     fontSize: 12,
     lineHeight: 1.45,
+    color: "rgba(255, 255, 255, 0.75)",
   },
 
   quotedSideColorLeft: {
@@ -211,17 +212,33 @@ const useStyles = makeStyles((theme) => ({
 
   textContentItem: {
     overflowWrap: "break-word",
-    // padding-bottom mayor para dejar espacio al timestamp relativo
     padding: "10px 12px 28px 12px",
     fontSize: 14,
     lineHeight: 1.55,
+    color: "inherit",
+    // Links dentro del mensaje: color visible sobre fondos oscuros
+    "& a": { color: "#93c5fd", textDecoration: "underline" },
+    // Code inline: fondo sutil, texto siempre legible
+    "& code": {
+      backgroundColor: "rgba(255,255,255,0.08)",
+      color: "inherit",
+      borderRadius: 4,
+      padding: "1px 5px",
+      fontSize: 13,
+      fontFamily: "monospace",
+    },
+    // Strong y em heredan color del bubble
+    "& strong, & b": { color: "inherit", fontWeight: 700 },
+    "& em, & i": { color: "inherit" },
   },
 
   textContentItemDeleted: {
     fontStyle: "italic",
-    color: "rgba(255, 255, 255, 0.35)",
+    color: "rgba(255, 255, 255, 0.45)",
     overflowWrap: "break-word",
     padding: "10px 12px 28px 12px",
+    // Links en mensajes eliminados también visibles
+    "& a": { color: "rgba(147, 197, 253, 0.6)" },
   },
 
   messageMedia: {

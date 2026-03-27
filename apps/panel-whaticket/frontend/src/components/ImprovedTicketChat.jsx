@@ -132,10 +132,10 @@ export default function ImprovedTicketChat({
 
   return (
     <div className={clsx("flex h-full min-h-0 flex-col overflow-hidden bg-auto-panel", className)}>
-      {/* ── Header compacto: una sola fila con info + acciones ── */}
-      <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-2 md:px-4">
-        <div className="flex min-w-0 items-center gap-2">
-
+      {/* ── Header: fila 1 = info del contacto, fila 2 = barra de acciones con scroll ── */}
+      <div className="shrink-0 border-b border-auto-border bg-auto-panel">
+        {/* Fila 1: avatar + nombre + estado + teléfono */}
+        <div className="flex min-w-0 items-center gap-2 px-3 pt-2 pb-1.5 md:px-4">
           {/* Botón volver (mobile) */}
           <button
             type="button"
@@ -147,17 +147,16 @@ export default function ImprovedTicketChat({
           </button>
 
           {/* Avatar */}
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-auto-border bg-auto-accent/10 text-auto-accent">
-            <UserRound className="h-4 w-4" />
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-auto-border bg-auto-accent/10 text-auto-accent">
+            <UserRound className="h-3.5 w-3.5" />
           </div>
 
-          {/* Info del contacto — ocupa el espacio disponible */}
+          {/* Info del contacto */}
           <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 items-center gap-1.5">
               <span className="truncate text-sm font-semibold text-auto-text">
                 {loading ? "Cargando…" : displayName}
               </span>
-              {/* Badge de estado — siempre visible */}
               <span
                 className={clsx(
                   "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold",
@@ -170,141 +169,130 @@ export default function ImprovedTicketChat({
               >
                 {statusLabel}
               </span>
-              {leadSource ? (
-                <span className="hidden shrink-0 rounded-full border border-auto-border bg-auto-surface px-2 py-0.5 text-[10px] text-auto-muted sm:inline">
-                  {leadSource}
-                </span>
-              ) : null}
               {isHumanOnly ? (
                 <span className="shrink-0 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-400">
                   HUMANO
                 </span>
               ) : null}
             </div>
-            {/* Línea secundaria: teléfono + asesor + canal */}
-            <div className="mt-0.5 flex min-w-0 items-center gap-x-2 gap-y-0 overflow-hidden text-[11px] text-auto-muted">
-              {phone ? (
-                <span className="shrink-0 font-mono tracking-tight">{phone}</span>
+            <div className="flex min-w-0 items-center gap-x-2 text-[11px] text-auto-muted">
+              {phone ? <span className="shrink-0 font-mono tracking-tight">{phone}</span> : null}
+              {assignedTo ? (
+                <>
+                  <span className="text-auto-border">·</span>
+                  <span className="truncate">{assignedTo}</span>
+                </>
               ) : null}
-              {phone && (assignedTo || waName || ticket?.id) ? (
-                <span className="text-auto-border">·</span>
-              ) : null}
-              {assignedTo ? <span className="truncate">Asesor: {assignedTo}</span> : null}
-              {waName ? <span className="hidden truncate xl:inline">Canal: {waName}</span> : null}
-              {ticket?.id ? (
-                <span className="hidden shrink-0 xl:inline">#{ticket.id}</span>
-              ) : null}
+              {ticket?.id ? <span className="hidden shrink-0 xl:inline text-auto-border">#{ticket.id}</span> : null}
             </div>
           </div>
+        </div>
 
-          {/* ── Acciones: barra scrollable horizontal ── */}
-          <div className="shrink-0 overflow-x-auto">
-            <div className="flex items-center gap-1">
-              {waLink ? (
-                <a
-                  className={actionButtonBase}
-                  href={waLink}
-                  target="_blank"
-                  rel="noreferrer"
-                  title="Abrir en WhatsApp"
-                >
-                  <PhoneCall className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">WA</span>
-                </a>
-              ) : null}
-
-              <button
-                type="button"
-                onClick={() => onOpenContact?.(1)}
+        {/* Fila 2: barra de acciones — scroll horizontal completo */}
+        <div className="w-full overflow-x-auto border-t border-auto-border/50 px-2 py-1 md:px-3">
+          <div className="flex w-max items-center gap-1">
+            {waLink ? (
+              <a
                 className={actionButtonBase}
-                title="Gestión del lead"
+                href={waLink}
+                target="_blank"
+                rel="noreferrer"
+                title="Abrir en WhatsApp"
               >
-                <Info className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Gestión</span>
-              </button>
+                <PhoneCall className="h-3.5 w-3.5" />
+                <span>WA</span>
+              </a>
+            ) : null}
 
-              <button
-                type="button"
-                onClick={() => history.push("/quotations")}
-                className={actionButtonBase}
-                title="Ir a cotizaciones"
+            <button
+              type="button"
+              onClick={() => onOpenContact?.(1)}
+              className={actionButtonBase}
+              title="Gestión del lead"
+            >
+              <Info className="h-3.5 w-3.5" />
+              <span>Gestión</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => history.push("/quotations")}
+              className={actionButtonBase}
+              title="Ir a cotizaciones"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              <span>Cotizar</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onOpenContact?.(1)}
+              className={actionButtonBase}
+              title="Programar recontacto"
+            >
+              <Calendar className="h-3.5 w-3.5" />
+              <span>Recontacto</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowQuickReplies((value) => !value)}
+              className={clsx(
+                "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-auto-lg border px-3 text-xs font-medium transition-colors",
+                showQuickReplies
+                  ? "border-auto-accent/30 bg-auto-accent/15 text-auto-accent"
+                  : "border-auto-border bg-auto-surface text-auto-text hover:bg-auto-panel2"
+              )}
+              title="Mensajes rápidos"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Rápidos</span>
+            </button>
+
+            {ticket?.id ? (
+              <select
+                value={statusKey}
+                onChange={(event) => handleChangeStatus(event.target.value)}
+                className="inline-flex h-9 shrink-0 items-center rounded-auto-lg border border-auto-border bg-auto-surface px-2 text-xs font-medium text-auto-text outline-none transition-colors hover:bg-auto-panel2 focus:border-auto-accent/40"
+                title="Cambiar estado del ticket"
               >
-                <FileText className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Cotizar</span>
-              </button>
+                <option value="pending">En cola</option>
+                <option value="open">Trabajando</option>
+                <option value="closed">Cerrado</option>
+              </select>
+            ) : null}
 
-              <button
-                type="button"
-                onClick={() => onOpenContact?.(1)}
-                className={actionButtonBase}
-                title="Programar recontacto"
-              >
-                <Calendar className="h-3.5 w-3.5" />
-                <span className="hidden md:inline">Recontacto</span>
-              </button>
+            <span className="mx-0.5 h-4 w-px shrink-0 bg-auto-border" aria-hidden="true" />
 
-              <button
-                type="button"
-                onClick={() => setShowQuickReplies((value) => !value)}
-                className={clsx(
-                  "inline-flex h-8 shrink-0 items-center gap-1 rounded-auto-lg border px-2.5 text-xs font-medium transition-colors",
-                  showQuickReplies
-                    ? "border-auto-accent/30 bg-auto-accent/15 text-auto-accent"
-                    : "border-auto-border bg-auto-surface text-auto-text hover:bg-auto-panel2"
-                )}
-                title="Mensajes rápidos"
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Rápidos</span>
-              </button>
+            <span
+              className={clsx(
+                "inline-flex h-9 shrink-0 items-center rounded-auto-lg border px-2 text-[11px] font-medium",
+                isHumanOnly
+                  ? "border-blue-500/20 bg-blue-500/10 text-blue-400"
+                  : "border-auto-border bg-auto-surface text-auto-hint"
+              )}
+              title="Modo bot actual"
+            >
+              Bot: {botModeLabel}
+            </span>
 
-              {ticket?.id ? (
-                <select
-                  value={statusKey}
-                  onChange={(event) => handleChangeStatus(event.target.value)}
-                  className="inline-flex h-8 shrink-0 items-center rounded-auto-lg border border-auto-border bg-auto-surface px-2 text-xs font-medium text-auto-text outline-none transition-colors hover:bg-auto-panel2 focus:border-auto-accent/40"
-                  title="Cambiar estado del ticket"
-                >
-                  <option value="pending">En cola</option>
-                  <option value="open">Trabajando</option>
-                  <option value="closed">Cerrado</option>
-                </select>
-              ) : null}
+            <button
+              type="button"
+              onClick={() => history.replace(`/tickets/${ticketId}`)}
+              className={clsx(actionButtonBase, "px-2")}
+              title="Refrescar chat"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
 
-              {/* Separador */}
-              <span className="mx-0.5 h-4 w-px shrink-0 bg-auto-border" aria-hidden="true" />
-
-              {/* Indicador bot — compacto */}
-              <span
-                className={clsx(
-                  "inline-flex h-8 shrink-0 items-center rounded-auto-lg border px-2 text-[11px] font-medium",
-                  isHumanOnly
-                    ? "border-blue-500/20 bg-blue-500/10 text-blue-400"
-                    : "border-auto-border bg-auto-surface text-auto-hint"
-                )}
-                title="Modo bot actual"
-              >
-                Bot: {botModeLabel}
-              </span>
-
-              <button
-                type="button"
-                onClick={() => history.replace(`/tickets/${ticketId}`)}
-                className={clsx(actionButtonBase, "px-2")}
-                title="Refrescar chat"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onToggleView?.()}
-                className={clsx(actionButtonBase, "px-2 text-auto-hint")}
-                title="Cambiar a vista clásica"
-              >
-                <MessageSquareText className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => onToggleView?.()}
+              className={clsx(actionButtonBase, "px-2 text-auto-hint")}
+              title="Cambiar a vista clásica"
+            >
+              <MessageSquareText className="h-3.5 w-3.5" />
+            </button>
           </div>
         </div>
       </div>
