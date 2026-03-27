@@ -298,10 +298,21 @@ function asCleanString(value: any): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function inferCurrency(currency: any, price: number): string {
+function inferCurrency(currency: any, price: number, status?: string): string {
   const current = asCleanString(currency).toUpperCase();
-  if (current === "USD" || current === "US$" || current === "ARS") return current === "US$" ? "USD" : current;
-  if (price > 0 && price < 1_000_000) return "USD";
+  // Si la fuente declara moneda explícita y coherente, respetarla.
+  if (current === "USD" || current === "US$") return "USD";
+  if (current === "ARS") {
+    // ARS declarado: solo sospechar si el precio es claramente imposible en ARS
+    // (< 50.000 ARS: nunca un auto, ni 0km barato).
+    if (price > 0 && price < 50_000) return "USD";
+    return "ARS";
+  }
+  // Sin moneda declarada: inferir por magnitud y contexto.
+  const statusStr = asCleanString(status).toLowerCase();
+  const isNew = /\b(0\s*km|nuevo|new)\b/.test(statusStr);
+  if (price > 0 && price < 50_000) return "USD";        // siempre USD, ARS imposible
+  if (!isNew && price > 0 && price < 500_000) return "USD"; // usado < 500k ARS → sospecha USD
   return current || "ARS";
 }
 
@@ -363,13 +374,24 @@ function buildVehicleLabel(row: any): string {
   const title = normalizeLabelToken(parsed.title);
 
   const base = compactUnique([brand, model, year]);
-  const titleNorm = normalizeForCompare(title);
   const versionNorm = normalizeForCompare(version);
   const baseNorm = normalizeForCompare(base.join(" "));
+  const titleNorm = normalizeForCompare(title);
 
   const extras: string[] = [];
+  // Agregar version solo si no está contenida en base.
   if (version && versionNorm && !baseNorm.includes(versionNorm)) extras.push(version);
-  if (title && titleNorm && !baseNorm.includes(titleNorm) && !extras.some((x) => normalizeForCompare(x) === titleNorm)) {
+
+  // Agregar title solo si aporta información que no está en base+version.
+  // NO usar includesBaseNorm(titleNorm) porque title SIEMPRE es más largo (tiene brand+model+version).
+  // En cambio: si title empieza por brand+model (normalizado), el title no agrega nada nuevo
+  // ya que brand+model+version+year ya está en base+extras.
+  const brandModelNorm = normalizeForCompare([brand, model].filter(Boolean).join(" "));
+  const titleStartsWithBrandModel = brandModelNorm && titleNorm.startsWith(brandModelNorm);
+  const extrasNorm = extras.map((x) => normalizeForCompare(x));
+  const titleAlreadyCovered = titleStartsWithBrandModel || extrasNorm.some((x) => x === titleNorm);
+
+  if (title && titleNorm && !titleAlreadyCovered) {
     extras.push(title);
   }
 
@@ -478,7 +500,7 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
         version: parsed.version,
         title: parsed.title,
         precio: price,
-        currency: inferCurrency(v.currency, price),
+        currency: inferCurrency(v.currency, price, v.status),
         year: v.year ?? null,
         km: v.km ?? null,
         transmission: asCleanString(v.transmission),

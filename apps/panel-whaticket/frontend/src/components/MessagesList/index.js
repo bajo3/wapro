@@ -54,6 +54,7 @@ const useStyles = makeStyles((theme) => ({
     minHeight: 0,
     padding: "18px 18px 24px",
     overflowY: "auto",
+    scrollBehavior: "smooth",
     [theme.breakpoints.down("sm")]: {
       padding: "14px 12px 90px",
     },
@@ -70,15 +71,16 @@ const useStyles = makeStyles((theme) => ({
     transform: "translateX(-50%)",
   },
 
+  // ── Mensaje del cliente (izquierda, gris azulado) ───────────────────────
   messageLeft: {
     marginRight: "auto",
     marginTop: 4,
     minWidth: 120,
-    maxWidth: "min(78%, 720px)",
+    maxWidth: "min(72%, 680px)",
     height: "auto",
     display: "block",
     position: "relative",
-    border: "1px solid rgba(255, 255, 255, 0.07)",
+    border: "1px solid rgba(255, 255, 255, 0.08)",
     "&:hover #messageActionsButton": {
       display: "flex",
       position: "absolute",
@@ -86,14 +88,14 @@ const useStyles = makeStyles((theme) => ({
       right: 2,
     },
     whiteSpace: "pre-wrap",
-    backgroundColor: "#1e2637",
-    color: "#e2e8f0",
+    backgroundColor: "#1e2840",
+    color: "#dde4f0",
     alignSelf: "flex-start",
-    borderTopLeftRadius: 8,
+    borderTopLeftRadius: 4,
     borderTopRightRadius: 18,
     borderBottomLeftRadius: 18,
     borderBottomRightRadius: 18,
-    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.35)",
+    boxShadow: "0 1px 4px rgba(0, 0, 0, 0.40)",
     overflow: "hidden",
   },
 
@@ -101,7 +103,7 @@ const useStyles = makeStyles((theme) => ({
     margin: "0 0 8px",
     overflow: "hidden",
     backgroundColor: "rgba(255, 255, 255, 0.06)",
-    borderRadius: 12,
+    borderRadius: 10,
     display: "flex",
     position: "relative",
   },
@@ -119,19 +121,20 @@ const useStyles = makeStyles((theme) => ({
 
   quotedSideColorLeft: {
     flex: "none",
-    width: 4,
+    width: 3,
     backgroundColor: "#6bcbef",
   },
 
+  // ── Mensaje propio / operador (derecha, azul/teal) ─────────────────────
   messageRight: {
     marginLeft: "auto",
     marginTop: 4,
     minWidth: 120,
-    maxWidth: "min(78%, 720px)",
+    maxWidth: "min(72%, 680px)",
     height: "auto",
     display: "block",
     position: "relative",
-    border: "1px solid rgba(52, 211, 153, 0.15)",
+    border: "1px solid rgba(52, 211, 153, 0.18)",
     "&:hover #messageActionsButton": {
       display: "flex",
       position: "absolute",
@@ -139,14 +142,14 @@ const useStyles = makeStyles((theme) => ({
       right: 2,
     },
     whiteSpace: "pre-wrap",
-    backgroundColor: "#1a3a28",
+    backgroundColor: "#0f3020",
     color: "#d1fae5",
     alignSelf: "flex-end",
     borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    borderTopRightRadius: 4,
     borderBottomLeftRadius: 18,
-    borderBottomRightRadius: 8,
-    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.35)",
+    borderBottomRightRadius: 18,
+    boxShadow: "0 1px 4px rgba(0, 0, 0, 0.40)",
     overflow: "hidden",
   },
 
@@ -154,7 +157,7 @@ const useStyles = makeStyles((theme) => ({
     margin: "0 0 8px",
     overflowY: "hidden",
     backgroundColor: "rgba(255, 255, 255, 0.06)",
-    borderRadius: 12,
+    borderRadius: 10,
     display: "flex",
     position: "relative",
   },
@@ -168,7 +171,7 @@ const useStyles = makeStyles((theme) => ({
 
   quotedSideColorRight: {
     flex: "none",
-    width: 4,
+    width: 3,
     backgroundColor: "#35cd96",
   },
 
@@ -190,30 +193,35 @@ const useStyles = makeStyles((theme) => ({
     marginBottom: 6,
   },
 
+  // ── Badge "Bot" visible y diferenciado ────────────────────────────────
   senderBadge: {
     display: "inline-flex",
     alignItems: "center",
-    padding: "3px 7px",
+    gap: 3,
+    padding: "2px 8px",
     borderRadius: 999,
     fontSize: 10,
     fontWeight: 700,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    color: "#94a3b8",
+    letterSpacing: "0.03em",
+    backgroundColor: "rgba(139, 92, 246, 0.18)",
+    border: "1px solid rgba(139, 92, 246, 0.30)",
+    color: "#a78bfa",
     marginBottom: 6,
   },
 
   textContentItem: {
     overflowWrap: "break-word",
-    padding: "10px 80px 12px 12px",
+    // padding-bottom mayor para dejar espacio al timestamp relativo
+    padding: "10px 12px 28px 12px",
     fontSize: 14,
-    lineHeight: 1.5,
+    lineHeight: 1.55,
   },
 
   textContentItemDeleted: {
     fontStyle: "italic",
     color: "rgba(255, 255, 255, 0.35)",
     overflowWrap: "break-word",
-    padding: "10px 80px 12px 12px",
+    padding: "10px 12px 28px 12px",
   },
 
   messageMedia: {
@@ -221,60 +229,67 @@ const useStyles = makeStyles((theme) => ({
     width: 280,
     maxWidth: "100%",
     height: 220,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 14,
+    borderTopRightRadius: 14,
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
   },
 
+  // ── Timestamp: al fondo del bubble, legible ────────────────────────────
   timestamp: {
     fontSize: 11,
     position: "absolute",
-    bottom: 8,
-    right: 10,
-    color: "rgba(255, 255, 255, 0.40)",
+    bottom: 7,
+    right: 9,
+    color: "rgba(255, 255, 255, 0.52)",
     display: "inline-flex",
     alignItems: "center",
+    gap: 2,
+    userSelect: "none",
   },
 
+  // ── Separador de día ──────────────────────────────────────────────────
   dailyTimestamp: {
     alignItems: "center",
     textAlign: "center",
     alignSelf: "center",
     width: "auto",
-    backgroundColor: "rgba(30, 38, 55, 0.90)",
-    margin: "10px auto",
+    backgroundColor: "rgba(20, 28, 46, 0.92)",
+    margin: "14px auto",
     borderRadius: 999,
-    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.4)",
-    border: "1px solid rgba(255, 255, 255, 0.08)",
+    boxShadow: "0 1px 6px rgba(0, 0, 0, 0.45)",
+    border: "1px solid rgba(255, 255, 255, 0.09)",
   },
 
   dailyTimestampText: {
     color: "#94a3b8",
-    padding: "6px 12px",
+    padding: "5px 14px",
     alignSelf: "center",
     marginLeft: 0,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 600,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
   },
 
   ackIcons: {
-    fontSize: 17,
+    fontSize: 15,
     verticalAlign: "middle",
-    marginLeft: 4,
+    marginLeft: 3,
+    opacity: 0.7,
   },
 
   deletedIcon: {
-    fontSize: 16,
+    fontSize: 15,
     verticalAlign: "middle",
     marginRight: 4,
   },
 
   ackDoneAllIcon: {
     color: green[500],
-    fontSize: 17,
+    fontSize: 15,
     verticalAlign: "middle",
-    marginLeft: 4,
+    marginLeft: 3,
   },
 
   downloadMedia: {
@@ -283,6 +298,34 @@ const useStyles = makeStyles((theme) => ({
     justifyContent: "center",
     backgroundColor: "inherit",
     padding: 12,
+  },
+
+  // ── Mensaje del bot: variante izquierda con acento púrpura ────────────
+  messageBotLeft: {
+    marginRight: "auto",
+    marginTop: 4,
+    minWidth: 120,
+    maxWidth: "min(72%, 680px)",
+    height: "auto",
+    display: "block",
+    position: "relative",
+    border: "1px solid rgba(139, 92, 246, 0.22)",
+    "&:hover #messageActionsButton": {
+      display: "flex",
+      position: "absolute",
+      top: 2,
+      right: 2,
+    },
+    whiteSpace: "pre-wrap",
+    backgroundColor: "#1a1535",
+    color: "#e9e4ff",
+    alignSelf: "flex-start",
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 18,
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
+    boxShadow: "0 1px 4px rgba(0, 0, 0, 0.40)",
+    overflow: "hidden",
   },
 }));
 
@@ -429,7 +472,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
 
   const scrollToBottom = () => {
     if (lastMessageRef.current) {
-      lastMessageRef.current.scrollIntoView({});
+      lastMessageRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   };
 
@@ -637,7 +680,13 @@ const MessagesList = ({ ticketId, isGroup }) => {
   const renderMessages = () => {
     if (messagesList.length > 0) {
       const viewMessagesList = messagesList.map((message, index) => {
-        const isBotMessage = !!message.fromMe && String(message.id || "").startsWith("bot-");
+        // Detectar mensaje de bot: fromMe=true y (flag explícito o prefijo de id)
+        const isBotMessage =
+          !!message.fromMe &&
+          (message.fromBot === true ||
+            message.agent === true ||
+            String(message.id || "").startsWith("bot-"));
+
         if (!message.fromMe) {
           return (
             <React.Fragment key={message.id}>
@@ -660,7 +709,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
                   </span>
                 )}
                 {(message.mediaUrl || message.mediaType === "location" || message.mediaType === "vcard"
-                  //|| message.mediaType === "multi_vcard" 
+                  //|| message.mediaType === "multi_vcard"
                 ) && checkMessageMedia(message)}
                 <div className={classes.textContentItem}>
                   {message.quotedMsg && renderQuotedMessage(message)}
@@ -673,11 +722,13 @@ const MessagesList = ({ ticketId, isGroup }) => {
             </React.Fragment>
           );
         } else {
+          // fromMe=true → operador humano o bot
+          const bubbleClass = isBotMessage ? classes.messageBotLeft : classes.messageRight;
           return (
             <React.Fragment key={message.id}>
               {renderDailyTimestamps(message, index)}
               {renderMessageDivider(message, index)}
-              <div className={classes.messageRight}>
+              <div className={bubbleClass}>
                 <IconButton
                   variant="contained"
                   size="small"
@@ -689,7 +740,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
                   <ExpandMore />
                 </IconButton>
                 {(message.mediaUrl || message.mediaType === "location" || message.mediaType === "vcard"
-                  //|| message.mediaType === "multi_vcard" 
+                  //|| message.mediaType === "multi_vcard"
                 ) && checkMessageMedia(message)}
                 <div
                   className={clsx(classes.textContentItem, {
@@ -720,7 +771,19 @@ const MessagesList = ({ ticketId, isGroup }) => {
       });
       return viewMessagesList;
     } else {
-      return <div style={{ textAlign: "center", color: "rgba(71, 85, 105, 0.9)", padding: "20px 0" }}>Todavía no hay mensajes en esta conversación.</div>;
+      return (
+        <div
+          ref={lastMessageRef}
+          style={{
+            textAlign: "center",
+            color: "rgba(148, 163, 184, 0.70)",
+            padding: "32px 0",
+            fontSize: 13,
+          }}
+        >
+          Todavía no hay mensajes en esta conversación.
+        </div>
+      );
     }
   };
 
@@ -737,7 +800,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
         className={classes.messagesList}
         onScroll={handleScroll}
       >
-        {messagesList.length > 0 ? renderMessages() : []}
+        {renderMessages()}
       </div>
       {loading && (
         <div>

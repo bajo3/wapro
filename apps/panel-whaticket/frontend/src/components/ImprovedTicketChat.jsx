@@ -132,54 +132,74 @@ export default function ImprovedTicketChat({
 
   return (
     <div className={clsx("flex h-full min-h-0 flex-col overflow-hidden bg-auto-panel", className)}>
-      <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-3 md:px-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <button
-              type="button"
-              onClick={() => history.push("/tickets")}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-auto-lg border border-auto-border bg-auto-surface text-auto-text hover:bg-auto-panel2 xl:hidden"
-              title="Volver a la lista"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
+      {/* ── Header compacto: una sola fila con info + acciones ── */}
+      <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-2 md:px-4">
+        <div className="flex min-w-0 items-center gap-2">
 
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-auto-border bg-auto-accent/10 text-auto-accent">
-              <UserRound className="h-5 w-5" />
-            </div>
+          {/* Botón volver (mobile) */}
+          <button
+            type="button"
+            onClick={() => history.push("/tickets")}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-auto-lg border border-auto-border bg-auto-surface text-auto-text hover:bg-auto-panel2 xl:hidden"
+            title="Volver a la lista"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
 
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <div className="truncate text-base font-semibold text-auto-text">
-                  {loading ? "Cargando…" : displayName}
-                </div>
-                <span className="rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] font-medium text-auto-text">
-                  {statusLabel}
+          {/* Avatar */}
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-auto-border bg-auto-accent/10 text-auto-accent">
+            <UserRound className="h-4 w-4" />
+          </div>
+
+          {/* Info del contacto — ocupa el espacio disponible */}
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm font-semibold text-auto-text">
+                {loading ? "Cargando…" : displayName}
+              </span>
+              {/* Badge de estado — siempre visible */}
+              <span
+                className={clsx(
+                  "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                  statusKey === "open"
+                    ? "border-emerald-500/25 bg-emerald-500/12 text-emerald-400"
+                    : statusKey === "pending"
+                    ? "border-amber-500/25 bg-amber-500/12 text-amber-400"
+                    : "border-auto-border bg-auto-surface text-auto-muted"
+                )}
+              >
+                {statusLabel}
+              </span>
+              {leadSource ? (
+                <span className="hidden shrink-0 rounded-full border border-auto-border bg-auto-surface px-2 py-0.5 text-[10px] text-auto-muted sm:inline">
+                  {leadSource}
                 </span>
-                {leadSource ? (
-                  <span className="rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] text-auto-muted">
-                    {leadSource}
-                  </span>
-                ) : null}
-                {isHumanOnly ? (
-                  <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-[11px] text-blue-400">
-                    HUMANO
-                  </span>
-                ) : null}
-              </div>
-
-              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-auto-muted">
-                {phone ? <span className="truncate">{phone}</span> : null}
-                {assignedTo ? <span className="truncate">Asesor: {assignedTo}</span> : null}
-                {waName ? <span className="truncate">Canal: {waName}</span> : null}
-                {ticket?.id ? <span>Ticket #{ticket.id}</span> : null}
-              </div>
+              ) : null}
+              {isHumanOnly ? (
+                <span className="shrink-0 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-400">
+                  HUMANO
+                </span>
+              ) : null}
+            </div>
+            {/* Línea secundaria: teléfono + asesor + canal */}
+            <div className="mt-0.5 flex min-w-0 items-center gap-x-2 gap-y-0 overflow-hidden text-[11px] text-auto-muted">
+              {phone ? (
+                <span className="shrink-0 font-mono tracking-tight">{phone}</span>
+              ) : null}
+              {phone && (assignedTo || waName || ticket?.id) ? (
+                <span className="text-auto-border">·</span>
+              ) : null}
+              {assignedTo ? <span className="truncate">Asesor: {assignedTo}</span> : null}
+              {waName ? <span className="hidden truncate xl:inline">Canal: {waName}</span> : null}
+              {ticket?.id ? (
+                <span className="hidden shrink-0 xl:inline">#{ticket.id}</span>
+              ) : null}
             </div>
           </div>
 
-          <div className="-mx-1 overflow-x-auto pb-1 xl:mx-0 xl:max-w-[60%]">
-            <div className="flex w-max items-center gap-1 px-1 xl:justify-end">
-              {/* Acciones primarias */}
+          {/* ── Acciones: barra scrollable horizontal ── */}
+          <div className="shrink-0 overflow-x-auto">
+            <div className="flex items-center gap-1">
               {waLink ? (
                 <a
                   className={actionButtonBase}
@@ -188,8 +208,8 @@ export default function ImprovedTicketChat({
                   rel="noreferrer"
                   title="Abrir en WhatsApp"
                 >
-                  <PhoneCall className="h-4 w-4" />
-                  <span>WA</span>
+                  <PhoneCall className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">WA</span>
                 </a>
               ) : null}
 
@@ -199,8 +219,8 @@ export default function ImprovedTicketChat({
                 className={actionButtonBase}
                 title="Gestión del lead"
               >
-                <Info className="h-4 w-4" />
-                <span>Gestión</span>
+                <Info className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Gestión</span>
               </button>
 
               <button
@@ -209,8 +229,8 @@ export default function ImprovedTicketChat({
                 className={actionButtonBase}
                 title="Ir a cotizaciones"
               >
-                <FileText className="h-4 w-4" />
-                <span>Cotizar</span>
+                <FileText className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Cotizar</span>
               </button>
 
               <button
@@ -219,30 +239,30 @@ export default function ImprovedTicketChat({
                 className={actionButtonBase}
                 title="Programar recontacto"
               >
-                <Calendar className="h-4 w-4" />
-                <span>Recontacto</span>
+                <Calendar className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">Recontacto</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setShowQuickReplies((value) => !value)}
                 className={clsx(
-                  "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-auto-lg border px-3 text-xs font-medium transition-colors",
+                  "inline-flex h-8 shrink-0 items-center gap-1 rounded-auto-lg border px-2.5 text-xs font-medium transition-colors",
                   showQuickReplies
                     ? "border-auto-accent/30 bg-auto-accent/15 text-auto-accent"
                     : "border-auto-border bg-auto-surface text-auto-text hover:bg-auto-panel2"
                 )}
                 title="Mensajes rápidos"
               >
-                <Sparkles className="h-4 w-4" />
-                <span>Rápidos</span>
+                <Sparkles className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Rápidos</span>
               </button>
 
               {ticket?.id ? (
                 <select
                   value={statusKey}
                   onChange={(event) => handleChangeStatus(event.target.value)}
-                  className="inline-flex h-9 shrink-0 items-center rounded-auto-lg border border-auto-border bg-auto-surface px-2.5 text-xs font-medium text-auto-text outline-none transition-colors hover:bg-auto-panel2 focus:border-auto-accent/40"
+                  className="inline-flex h-8 shrink-0 items-center rounded-auto-lg border border-auto-border bg-auto-surface px-2 text-xs font-medium text-auto-text outline-none transition-colors hover:bg-auto-panel2 focus:border-auto-accent/40"
                   title="Cambiar estado del ticket"
                 >
                   <option value="pending">En cola</option>
@@ -252,12 +272,12 @@ export default function ImprovedTicketChat({
               ) : null}
 
               {/* Separador */}
-              <span className="mx-1 h-5 w-px shrink-0 bg-auto-border" aria-hidden="true" />
+              <span className="mx-0.5 h-4 w-px shrink-0 bg-auto-border" aria-hidden="true" />
 
-              {/* Indicador bot */}
+              {/* Indicador bot — compacto */}
               <span
                 className={clsx(
-                  "inline-flex h-9 shrink-0 items-center rounded-auto-lg border px-2.5 text-xs font-medium",
+                  "inline-flex h-8 shrink-0 items-center rounded-auto-lg border px-2 text-[11px] font-medium",
                   isHumanOnly
                     ? "border-blue-500/20 bg-blue-500/10 text-blue-400"
                     : "border-auto-border bg-auto-surface text-auto-hint"
@@ -267,23 +287,22 @@ export default function ImprovedTicketChat({
                 Bot: {botModeLabel}
               </span>
 
-              {/* Acciones secundarias (menos frecuentes) */}
               <button
                 type="button"
                 onClick={() => history.replace(`/tickets/${ticketId}`)}
-                className={clsx(actionButtonBase, "px-2.5")}
+                className={clsx(actionButtonBase, "px-2")}
                 title="Refrescar chat"
               >
-                <RefreshCw className="h-4 w-4" />
+                <RefreshCw className="h-3.5 w-3.5" />
               </button>
 
               <button
                 type="button"
                 onClick={() => onToggleView?.()}
-                className={clsx(actionButtonBase, "px-2.5 text-auto-hint")}
+                className={clsx(actionButtonBase, "px-2 text-auto-hint")}
                 title="Cambiar a vista clásica"
               >
-                <MessageSquareText className="h-4 w-4" />
+                <MessageSquareText className="h-3.5 w-3.5" />
               </button>
             </div>
           </div>
@@ -291,22 +310,22 @@ export default function ImprovedTicketChat({
       </div>
 
       {showQuickReplies ? (
-        <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-2 md:px-4">
-          <div className="-mx-1 overflow-x-auto pb-1">
-            <div className="flex w-max gap-2 px-1">
+        <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-1.5 md:px-4">
+          <div className="overflow-x-auto">
+            <div className="flex w-max items-center gap-1.5 py-0.5">
+              <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-auto-hint">Rápidos:</span>
               {QUICK_REPLIES.map((quickReply) => (
                 <button
                   key={quickReply.label}
                   type="button"
                   onClick={() => prefill(quickReply.text)}
-                  className="shrink-0 rounded-full border border-auto-border bg-auto-surface px-3 py-1.5 text-xs text-auto-text transition-colors hover:bg-auto-panel2"
+                  className="shrink-0 rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] text-auto-text transition-colors hover:border-auto-accent/30 hover:bg-auto-accent/10 hover:text-auto-accent"
                 >
                   {quickReply.label}
                 </button>
               ))}
             </div>
           </div>
-          <div className="mt-1 text-[11px] text-auto-muted">Clic en un chip para precargar el mensaje.</div>
         </div>
       ) : null}
 

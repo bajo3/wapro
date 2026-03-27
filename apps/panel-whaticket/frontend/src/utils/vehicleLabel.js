@@ -40,19 +40,28 @@ export const buildVehicleLabel = (vehicle) => {
 
   const brand = normalizeVehicleToken(vehicle.marca || vehicle.brand);
   const model = normalizeVehicleToken(vehicle.modelo || vehicle.model);
+  const year = normalizeVehicleToken(vehicle.year);
   const version = normalizeVehicleToken(vehicle.version);
   const title = normalizeVehicleToken(vehicle.title || vehicle.name);
   const explicitLabel = normalizeVehicleToken(vehicle.label);
 
-  const base = compactUniqueVehicleParts([brand, model]);
+  const base = compactUniqueVehicleParts([brand, model, year]);
   const baseNorm = normalizeVehicleCompare(base.join(" "));
   const extras = [];
 
+  // Agregar version solo si no está contenida en base.
   const versionNorm = normalizeVehicleCompare(version);
   if (version && versionNorm && !baseNorm.includes(versionNorm)) extras.push(version);
 
+  // Agregar title solo si aporta info no cubierta por brand+model+version+year.
+  // Si title empieza por brand+model (normalizado), ya está cubierto.
+  const brandModelNorm = normalizeVehicleCompare([brand, model].filter(Boolean).join(" "));
   const titleNorm = normalizeVehicleCompare(title);
-  if (title && titleNorm && !baseNorm.includes(titleNorm) && !extras.some((x) => normalizeVehicleCompare(x) === titleNorm)) {
+  const titleStartsWithBrandModel = brandModelNorm && titleNorm.startsWith(brandModelNorm);
+  const extrasNorm = extras.map((x) => normalizeVehicleCompare(x));
+  const titleAlreadyCovered = titleStartsWithBrandModel || extrasNorm.some((x) => x === titleNorm);
+
+  if (title && titleNorm && !titleAlreadyCovered) {
     extras.push(title);
   }
 
@@ -60,6 +69,6 @@ export const buildVehicleLabel = (vehicle) => {
     compactUniqueVehicleParts([...base, ...extras]).join(" ").trim() ||
     explicitLabel ||
     title ||
-    compactUniqueVehicleParts([brand, model, version]).join(" ").trim()
+    compactUniqueVehicleParts([brand, model, version, year]).join(" ").trim()
   );
 };

@@ -28,6 +28,59 @@ export type PlaygroundSource = {
   intent?: string | null;
 };
 
+// ─── NLU ligera: intenciones conversacionales ────────────────────────────────
+// Resuelve saludos y cierres ANTES de tocar FAQ/policy/playbook/RAG.
+// Evita el fallback "sin respuesta" ante el mensaje más común de un lead: "hola".
+
+function normLight(s: string): string {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .trim();
+}
+
+const GREETING_PATTERNS = [
+  /^(hola|holi|ola|holas|holaa+)[\s!.?]*$/,
+  /^(buen[ao]s?\s*(dias?|tardes?|noches?)?)[\s!.?]*$/,
+  /^(buenas?|buen\s*dia)[\s!.?]*$/,
+  /^(hey|hi|hello|heyy+)[\s!.?]*$/,
+  /^(que\s*tal|como\s*(estas?|andas?|van?))[\s!.?]*$/,
+];
+
+const CLOSURE_LIGHT_PATTERNS = [
+  /^(chau|chao|bye|adios|hasta\s*(luego|pronto|la\s*vista))[\s!.?]*$/,
+  /^(gracias?|muchas?\s*gracias?)[\s!.?]*$/,
+  /^(listo|ok|dale|perfecto|genial|de\s*acuerdo|entendido)[\s!.?]*$/,
+  /^(lo\s*pienso|despues\s*te\s*aviso|voy\s*a\s*ver)[\s!.?]*$/,
+];
+
+const GREETING_REPLIES = [
+  '¡Hola! Bienvenido. ¿Estás buscando un auto nuevo, o tenés algo en mente? Te ayudo a encontrar opciones.',
+  '¡Buenas! ¿Buscás un 0km o un usado? ¿Tenés marca o presupuesto en mente?',
+  '¡Hola! Contame, ¿qué tipo de auto estás buscando? Puedo mostrarte opciones de stock o arrancamos desde lo que tenés.',
+];
+
+const CLOSURE_LIGHT_REPLIES = [
+  'Dale, cuando quieras retomamos. Si necesitás más info o querés ver opciones, acá estoy. ¡Éxitos!',
+  'Perfecto, sin apuro. Cualquier consulta me avisás. ¡Hasta pronto!',
+  'Cuando quieras seguimos. Si querés ver más opciones o te surge alguna duda, escribime.',
+];
+
+function pickRandom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function isGreeting(text: string): boolean {
+  const t = normLight(text);
+  return GREETING_PATTERNS.some(re => re.test(t));
+}
+
+function isCasualClosure(text: string): boolean {
+  const t = normLight(text);
+  return CLOSURE_LIGHT_PATTERNS.some(re => re.test(t));
+}
+
 export async function runPlayground(input: {
   text: string;
   state?: any;
@@ -38,6 +91,14 @@ export async function runPlayground(input: {
 
   const sources: PlaygroundSource[] = [];
   const extracted = extractLeadFields(text, state?.extracted ?? state?.lead ?? {});
+
+  // ── Intenciones conversacionales: responder antes de buscar en knowledge base ──
+  if (isGreeting(text)) {
+    return { reply: pickRandom(GREETING_REPLIES), intent: 'greeting', sources, settings, extracted, missing_fields: [] };
+  }
+  if (isCasualClosure(text)) {
+    return { reply: pickRandom(CLOSURE_LIGHT_REPLIES), intent: 'closure', sources, settings, extracted, missing_fields: [] };
+  }
 
   const policy = await matchPolicy(text);
   if (policy?.body) {

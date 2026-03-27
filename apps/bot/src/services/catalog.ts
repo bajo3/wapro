@@ -245,14 +245,17 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
 
 
 async function loadVehiclesFromSimpleDb(timeoutMs: number): Promise<CatalogItem[]> {
+  // Fallback ligero: usa los nombres canónicos de la tabla public.vehicles.
+  // Intenta columnas en español (marca/modelo/precio) con COALESCE para compatibilidad,
+  // pero las columnas principales son brand/model/price (schema actual).
   const sql = `
     select
       id,
-      marca,
-      modelo,
+      COALESCE(brand, marca)                     as brand,
+      COALESCE(model, modelo)                    as model,
       version,
       year,
-      precio,
+      COALESCE(price::text, precio::text, NULL)  as price,
       currency
     from public.vehicles
     limit 500
@@ -268,11 +271,11 @@ async function loadVehiclesFromSimpleDb(timeoutMs: number): Promise<CatalogItem[
 
   return rows
     .map((row: any) => {
-      const brand = String(row.marca ?? '').trim();
-      const model = String(row.modelo ?? '').trim();
+      const brand = String(row.brand ?? '').trim();
+      const model = String(row.model ?? '').trim();
       const version = String(row.version ?? '').trim();
       const year = coerceNumber(row.year);
-      const priceNumber = coerceMoneyNumber(row.precio);
+      const priceNumber = coerceMoneyNumber(row.price);
       const currency = String(row.currency ?? (priceNumber !== undefined ? 'ARS' : '')).trim() || undefined;
       const name = [brand, model, version].filter(Boolean).join(' ').trim() || String(row.id ?? '');
       return {
@@ -284,6 +287,7 @@ async function loadVehiclesFromSimpleDb(timeoutMs: number): Promise<CatalogItem[
         category: brand || 'autos',
         brand: brand || undefined,
         model: model || undefined,
+        version: version || undefined,
         year
       } as CatalogItem;
     })

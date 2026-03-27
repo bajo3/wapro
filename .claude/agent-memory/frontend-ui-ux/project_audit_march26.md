@@ -59,11 +59,58 @@ type: project
 - Ampliado con: `--wapro-panel3`, `--wapro-info`, `--wapro-r-xs`, `--wapro-shadow-xs`, `--wapro-glow`, escala `--sp-*`
 - Nuevas clases utilitarias: `.wapro-card-sm`, `.wapro-btn-primary`, `.wapro-badge-*` (todos los estados), `.wapro-section-label`, `.wapro-scroll`
 
+## Cambios 2026-03-27 — Chat de tickets: legibilidad y layout
+
+### `components/MessagesList/index.js`
+- Colores de burbujas rediseñados: cliente = `#1e2840` azul oscuro, operador = `#0f3020` verde oscuro, bot = `#1a1535` púrpura oscuro
+- Badge "Bot" diferenciado con fondo y borde púrpura (`#a78bfa`) — antes era gris neutro indistinguible
+- Nuevo estilo `messageBotLeft`: burbujas del bot van alineadas a la izquierda (antes iban a la derecha igual que el operador), lo que facilita la lectura del flujo
+- Padding del texto cambiado de `padding: "10px 80px 12px 12px"` a `padding: "10px 12px 28px 12px"` — elimina el exceso de padding derecho que aplastaba el contenido, el timestamp ahora flota limpio en el corner inferior
+- Timestamp: opacidad subida de 0.40 a 0.52, gap entre hora y ack icon
+- `scrollToBottom` mejorado: usa `{ behavior: "smooth", block: "end" }` — antes usaba `{}` y podía saltar de golpe
+- `scrollBehavior: "smooth"` agregado al contenedor `messagesList`
+- Detección de bot ampliada: antes solo `id.startsWith("bot-")`; ahora también chequea `message.fromBot === true` y `message.agent === true`
+- Estado vacío: antes retornaba `[]` (nada), ahora muestra mensaje de texto con `ref={lastMessageRef}` para que el ancla de scroll funcione
+- Render principal: `{messagesList.length > 0 ? renderMessages() : []}` reemplazado por `{renderMessages()}` para que el estado vacío siempre se muestre
+- Separador de día: margen subido a 14px, fuente 11px uppercase tracking
+
+### `components/ImprovedMessageInput.jsx`
+- Auto-resize del textarea: `handleAutoResize()` ajusta la altura al contenido (máx 160px) al escribir y al recibir prefill
+- `style={{ resize: "none" }}` — eliminado el resize manual que era inconsistente con el auto-resize
+- Placeholders informativos: `"pending"` → "Tomá el ticket para responder"; `"closed"` → "Ticket cerrado — reabrilo para responder"; `"open"` → hint de Shift+Enter
+- `overflow-y-auto` en lugar de `resize-y` para scroll interno cuando hay mucho texto
+
+### `components/ImprovedTicketChat.jsx`
+- Header colapsado de dos filas a una sola fila compacta (py-3 → py-2)
+- Info del contacto: nombre + badge de estado semántico (verde = open, ámbar = pending, gris = closed) + teléfono en `font-mono` inline
+- Estado badge con colores semánticos por statusKey (antes todos iguales `bg-auto-surface`)
+- Acciones en barra scrollable horizontal dentro del header — ya no expanden el header verticalmente
+- Iconos de botones reducidos a h-3.5 w-3.5, altura h-8 (antes h-9)
+- Labels de acciones colapsados en mobile con `hidden sm:inline` para no perder ancho en pantallas chicas
+- Quick replies: compactado a una sola línea (py-1.5), se eliminó el texto "Clic en un chip..." para ganar espacio
+- Chips de quick replies con hover animado hacia el accent color
+
+## Cambios 2026-03-27 — Cotizaciones: mejoras comerciales y visuales
+
+### `pages/Quotations/QuotationsManager.jsx`
+- Precio destacado en tabla: badge de moneda con color semántico (ARS = sky azul, USD = emerald verde) + número en `text-[15px] font-bold tabular-nums` — antes era texto plano muted
+- Vehículo con jerarquía: título en bold blanco, subtexto año/versión en muted debajo — antes todo era un solo string gris
+- Eliminada columna "Actualizado" para reducir scroll horizontal (8 columnas en lugar de 9)
+- Acciones contextuales por estado: draft → "Enviar" (amber), sent → "Consultar" (blue), accepted → "Ver deal" (green). Antes siempre aparecían Editar/Enviar/Eliminar independientemente del estado
+- Botón "Eliminar" ahora solo visible en draft y rejected (no en sent/accepted para evitar borrado accidental de deals activos)
+- Nuevo botón icono WA (SVG inline, sin deps) por fila: copia texto formateado al portapapeles con fallback execCommand para contextos sin permisos de clipboard
+- Función `buildWhatsAppText(q)`: genera texto con negrita WhatsApp (`*Precio: ...*`), separadores, cliente, vehículo, precio con moneda, vigencia y notas
+- Formulario dialog reorganizado en 4 secciones con separadores visuales: Identificacion / Cliente / Vehículo / Precio / Condiciones
+- Preview de precio en tiempo real dentro del header de sección "Precio" — muestra moneda + monto formateado al tipear
+- `lookupLoading` movido al header de sección Cliente (más contextual)
+- Placeholder de notas actualizado: "Forma de pago, descuentos acordados, condiciones especiales..." (antes "Condiciones especiales, descuentos acordados...")
+- Label "Notas" mejorado con aclaración inline "(no se envian al cliente)"
+
 ## Pendiente / próximas iteraciones
 
 - **Pipeline real**: `pages/Pipeline/index.js` es un stub con `as any` en TypeScript falso — no hay board real en este path. Hay que identificar dónde está el pipeline real y migrarlo/mejorarlo.
 - **TicketsSidebarAutos scroll infinito**: solo carga `pageNumber: 1`, no hay paginación ni scroll infinito.
-- **Quotations window.confirm**: el `remove()` usa `window.confirm()` — reemplazar por modal de confirmación propio.
+- **Quotations window.confirm**: el `remove()` sigue usando `window.confirm()` — reemplazar por modal de confirmación propio.
 - **LoggedInLayout sidebar**: el drawer sigue siendo MUI puro. Candidato a migración futura.
 - **Filtros de tickets**: los `<select>` nativos del sidebar no siguen el estilo del design system (usan `bg-auto-panel2` pero podrían ser más accesibles).
 - **Pipeline/index.js `as any`**: hay un `{} as any` que sugiere que alguien copió TypeScript en un archivo .js — hay que reescribir ese archivo completo.

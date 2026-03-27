@@ -17,12 +17,23 @@ export default function ImprovedMessageInput({ ticketStatus }) {
   const [sending, setSending] = useState(false);
   const inputRef = useRef(null);
 
+  // Auto-resize: ajusta altura del textarea al contenido
+  const handleAutoResize = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  };
+
   useEffect(() => {
     const onPrefill = (e) => {
       const text = e?.detail?.text;
       if (typeof text === "string") {
         setMessage(text);
-        requestAnimationFrame(() => inputRef.current?.focus?.());
+        requestAnimationFrame(() => {
+          inputRef.current?.focus?.();
+          handleAutoResize();
+        });
       }
     };
     window.addEventListener("tickets:prefill", onPrefill);
@@ -48,7 +59,10 @@ export default function ImprovedMessageInput({ ticketStatus }) {
       });
       setMessage("");
       setReplyingMessage(null);
-      requestAnimationFrame(() => inputRef.current?.focus?.());
+      requestAnimationFrame(() => {
+        inputRef.current?.focus?.();
+        handleAutoResize();
+      });
     } catch (err) {
       toastError(err);
     } finally {
@@ -78,7 +92,10 @@ export default function ImprovedMessageInput({ ticketStatus }) {
           rows={1}
           value={message}
           disabled={sending || ticketStatus !== "open"}
-          onChange={(e) => setMessage(e.target.value)}
+          onChange={(e) => {
+            setMessage(e.target.value);
+            handleAutoResize();
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -87,10 +104,13 @@ export default function ImprovedMessageInput({ ticketStatus }) {
           }}
           placeholder={
             ticketStatus === "open"
-              ? "Escribí un mensaje..."
-              : "El ticket está cerrado"
+              ? "Escribí tu respuesta... (Enter para enviar, Shift+Enter para nueva línea)"
+              : ticketStatus === "pending"
+              ? "Tomá el ticket para responder"
+              : "Ticket cerrado — reabrilo para responder"
           }
-          className="min-h-[44px] max-h-40 flex-1 resize-y rounded-auto-lg border border-auto-border bg-auto-surface px-3 py-2 text-sm text-auto-text outline-none placeholder:text-auto-muted focus:border-auto-accent/40 focus:ring-2 focus:ring-auto-accent/20 disabled:cursor-not-allowed disabled:opacity-60"
+          style={{ resize: "none" }}
+          className="min-h-[44px] max-h-40 flex-1 overflow-y-auto rounded-auto-lg border border-auto-border bg-auto-surface px-3 py-2.5 text-sm text-auto-text outline-none placeholder:text-auto-muted focus:border-auto-accent/40 focus:ring-2 focus:ring-auto-accent/20 disabled:cursor-not-allowed disabled:opacity-60"
         />
         <button
           type="button"

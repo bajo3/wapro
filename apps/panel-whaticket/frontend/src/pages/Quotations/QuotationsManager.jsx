@@ -10,6 +10,7 @@ import { toast } from "react-toastify";
 import { format, differenceInHours, parseISO } from "date-fns";
 import { useLocation, useHistory } from "react-router-dom";
 import api from "../../services/api";
+import { buildVehicleLabel } from "../../utils/vehicleLabel";
 
 /**
  * QuotationsManager (MVP)
@@ -39,56 +40,6 @@ async function safeGet(url, config) {
     throw e;
   }
 }
-
-const normalizeVehicleToken = (value) => String(value ?? "").trim();
-
-const normalizeVehicleCompare = (value) =>
-  normalizeVehicleToken(value)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-
-const compactUniqueVehicleParts = (parts) => {
-  const seen = new Set();
-  return (parts || []).reduce((acc, part) => {
-    const value = normalizeVehicleToken(part);
-    const key = normalizeVehicleCompare(value);
-    if (!value || !key || seen.has(key)) return acc;
-    seen.add(key);
-    acc.push(value);
-    return acc;
-  }, []);
-};
-
-const buildVehicleLabel = (v) => {
-  if (!v) return "";
-  const brand = normalizeVehicleToken(v.marca || v.brand);
-  const model = normalizeVehicleToken(v.modelo || v.model);
-  const year = normalizeVehicleToken(v.year);
-  const version = normalizeVehicleToken(v.version);
-  const title = normalizeVehicleToken(v.title || v.name);
-  const explicitLabel = normalizeVehicleToken(v.label);
-
-  const base = compactUniqueVehicleParts([brand, model, year]);
-  const baseNorm = normalizeVehicleCompare(base.join(" "));
-  const versionNorm = normalizeVehicleCompare(version);
-  const titleNorm = normalizeVehicleCompare(title);
-  const extras = [];
-
-  if (version && versionNorm && !baseNorm.includes(versionNorm)) extras.push(version);
-  if (title && titleNorm && !baseNorm.includes(titleNorm) && !extras.some((x) => normalizeVehicleCompare(x) === titleNorm)) {
-    extras.push(title);
-  }
-
-  return (
-    compactUniqueVehicleParts([...base, ...extras]).join(" ").trim() ||
-    explicitLabel ||
-    title ||
-    compactUniqueVehicleParts([brand, model, version, year]).join(" ").trim()
-  );
-};
 
 async function safePost(url, payload) {
   const { data } = await api.post(url, payload);
@@ -144,6 +95,9 @@ export default function QuotationsManager() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ ...emptyForm });
+
+  // Modal de confirmación (reemplaza window.confirm)
+  const [confirmState, setConfirmState] = useState({ open: false, quotation: null });
 
   // lookups (best-effort)
   const [vehicleQuery, setVehicleQuery] = useState("");
@@ -366,12 +320,15 @@ export default function QuotationsManager() {
     }
   };
 
-  const remove = async (q) => {
+  const remove = (q) => {
     if (!q?.id) return;
-    // eslint-disable-next-line no-alert
-    const ok = window.confirm(`Eliminar cotización #${q.id}?`);
-    if (!ok) return;
+    setConfirmState({ open: true, quotation: q });
+  };
 
+  const confirmRemove = async () => {
+    const q = confirmState.quotation;
+    setConfirmState({ open: false, quotation: null });
+    if (!q?.id) return;
     try {
       await safeDelete(`/quotations/${q.id}`);
       toast.success("Cotización eliminada");
@@ -473,6 +430,69 @@ export default function QuotationsManager() {
     );
   };
 
+  // Genera texto formateado para copiar por WhatsApp
+  const buildWhatsAppText = (q) => {
+    const clientName = q.clientName ?? q.contactName ?? q.contact?.name ?? "";
+    const vehicle = q.vehicleLabel ?? q.vehicle?.name ?? q.vehicle?.title ?? "";
+    const currency = q.currency ?? "ARS";
+    const rawPrice = q.totalPrice ?? q.basePrice ?? q.price ?? q.amount;
+    const price = rawPrice !== undefined && rawPrice !== null && rawPrice !== ""
+      ? `${currency} ${Number(rawPrice).toLocaleString("es-AR")}`
+      : null;
+
+    let validUntilStr = "";
+    if (q.validUntil) {
+      try {
+        validUntilStr = format(
+          typeof q.validUntil === "string" ? parseISO(q.validUntil) : new Date(q.validUntil),
+          "dd/MM/yyyy"
+        );
+      } catch { validUntilStr = ""; }
+    }
+
+    const lines = [];
+    lines.push("*Cotizacion WaPro*");
+    lines.push("─────────────────");
+    if (clientName) lines.push(`Cliente: ${clientName}`);
+    if (vehicle) lines.push(`Vehiculo: ${vehicle}`);
+    if (price) lines.push(`Precio: *${price}*`);
+    if (validUntilStr) lines.push(`Vigencia: ${validUntilStr}`);
+    if (q.notes) lines.push(`Notas: ${q.notes}`);
+    lines.push("─────────────────");
+    lines.push("Consultas por este medio.");
+    return lines.join("\n");
+  };
+
+  const copyToWhatsApp = (q) => {
+    const text = buildWhatsAppText(q);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(() => toast.success("Texto copiado para WhatsApp"))
+        .catch(() => {
+          // fallback para contextos sin permisos de clipboard
+          const el = document.createElement("textarea");
+          el.value = text;
+          el.style.position = "fixed";
+          el.style.opacity = "0";
+          document.body.appendChild(el);
+          el.select();
+          document.execCommand("copy");
+          document.body.removeChild(el);
+          toast.success("Texto copiado para WhatsApp");
+        });
+    } else {
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.style.position = "fixed";
+      el.style.opacity = "0";
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+      toast.success("Texto copiado para WhatsApp");
+    }
+  };
+
   const inputCls = "h-10 w-full rounded-xl border border-white/[0.08] bg-[#1e2333] px-3 text-sm text-[#f1f5f9] outline-none transition-colors placeholder:text-white/25 focus:border-[#f59e0b]/50";
   const selectCls = "h-10 w-full rounded-xl border border-white/[0.08] bg-[#1e2333] px-3 text-sm text-[#94a3b8] outline-none transition-colors focus:border-[#f59e0b]/50 cursor-pointer";
   const labelCls = "block text-[11px] font-semibold uppercase tracking-wider text-white/35 mb-1.5";
@@ -520,15 +540,15 @@ export default function QuotationsManager() {
         {loading ? (
           <div className="flex flex-col gap-2 p-4">
             {[1,2,3,4].map((i) => (
-              <div key={i} className="h-12 animate-pulse rounded-lg bg-white/[0.04]" />
+              <div key={i} className="h-14 animate-pulse rounded-lg bg-white/[0.04]" />
             ))}
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-left text-sm">
+            <table className="w-full min-w-[700px] text-left text-sm">
               <thead>
                 <tr className="border-b border-white/[0.06]">
-                  {["#", "Cliente", "Vehículo", "Precio", "Estado", "Vence", "Ticket", "Actualizado", ""].map((h, i) => (
+                  {["#", "Cliente", "Vehículo", "Precio", "Estado", "Vence", "Ticket", ""].map((h, i) => (
                     <th
                       key={i}
                       className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-white/35"
@@ -541,7 +561,7 @@ export default function QuotationsManager() {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={9}>
+                    <td colSpan={8}>
                       <div className="flex flex-col items-center justify-center px-4 py-16 text-center">
                         <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.04]">
                           <svg className="h-5 w-5 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -559,20 +579,61 @@ export default function QuotationsManager() {
                   </tr>
                 ) : (
                   filtered.map((q) => {
-                    const updatedAt = q.updatedAt || q.updated_at || q.createdAt || q.created_at;
-                    const when = updatedAt ? (() => {
-                      try { return format(new Date(updatedAt), "dd/MM/yy HH:mm"); } catch { return String(updatedAt); }
-                    })() : "-";
-                    const price = q.totalPrice ?? q.basePrice ?? q.price ?? q.amount ?? "";
+                    const rawPrice = q.totalPrice ?? q.basePrice ?? q.price ?? q.amount;
+                    const hasPrice = rawPrice !== undefined && rawPrice !== null && rawPrice !== "";
                     const currency = q.currency ?? "ARS";
+                    const status = q.status ?? "draft";
+
+                    // Vehículo con jerarquía visual
+                    const vehicleRaw = q.vehicleData || q.vehicle || {};
+                    const vehicleMain = q.vehicleLabel ?? vehicleRaw?.name ?? vehicleRaw?.title ?? "";
+                    const vehicleYear = vehicleRaw?.year ?? "";
+                    const vehicleVersion = vehicleRaw?.version ?? "";
+                    const vehicleSub = [vehicleVersion, vehicleYear].filter(Boolean).join(" · ");
+
+                    // Expiry node
+                    const validUntil = q.validUntil;
+                    let expiryNode = <span className="text-[12px] text-white/25">—</span>;
+                    if (validUntil) {
+                      const hours = hoursUntilExpiry(validUntil);
+                      let dateStr = "";
+                      try {
+                        dateStr = format(
+                          typeof validUntil === "string" ? parseISO(validUntil) : new Date(validUntil),
+                          "dd/MM/yy"
+                        );
+                      } catch { dateStr = String(validUntil); }
+
+                      if (hours !== null && hours < 0) {
+                        expiryNode = (
+                          <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-400">
+                            Vencida {dateStr}
+                          </span>
+                        );
+                      } else if (hours !== null && hours < 48) {
+                        expiryNode = (
+                          <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-400">
+                            {dateStr} · {hours}h
+                          </span>
+                        );
+                      } else {
+                        expiryNode = <span className="text-[12px] text-white/40">{dateStr}</span>;
+                      }
+                    }
+
                     return (
                       <tr
                         key={q.id || Math.random()}
                         className="border-b border-white/[0.05] transition-colors last:border-0 hover:bg-white/[0.02]"
                       >
-                        <td className="px-4 py-3 text-[12px] font-mono text-white/40">#{q.id ?? "-"}</td>
-                        <td className="px-4 py-3">
-                          <div className="font-medium text-[#f1f5f9]">
+                        {/* ID */}
+                        <td className="px-4 py-3.5 text-[12px] font-mono text-white/40 whitespace-nowrap">
+                          #{q.id ?? "-"}
+                        </td>
+
+                        {/* Cliente */}
+                        <td className="px-4 py-3.5">
+                          <div className="font-medium text-[#f1f5f9] leading-snug">
                             {q.clientName ?? q.contactName ?? q.contact?.name ?? "-"}
                           </div>
                           {(q.clientPhone ?? q.contact?.number) && (
@@ -581,51 +642,49 @@ export default function QuotationsManager() {
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-[13px] text-[#94a3b8]">
-                          {q.vehicleLabel ?? q.vehicle?.name ?? q.vehicle?.title ?? "-"}
-                        </td>
-                        <td className="px-4 py-3 text-[13px] font-semibold text-[#f1f5f9]">
-                          {price !== "" ? (
-                            <span>
-                              <span className="text-[11px] font-normal text-white/40 mr-1">{currency}</span>
-                              {Number(price).toLocaleString("es-AR")}
-                            </span>
-                          ) : "-"}
-                        </td>
-                        <td className="px-4 py-3">
-                          <StatusBadge status={q.status ?? "draft"} />
-                        </td>
-                        <td className="px-4 py-3">
-                          {(() => {
-                            const validUntil = q.validUntil;
-                            if (!validUntil) return <span className="text-[12px] text-white/25">—</span>;
-                            const hours = hoursUntilExpiry(validUntil);
-                            let dateStr = "";
-                            try {
-                              dateStr = format(
-                                typeof validUntil === "string" ? parseISO(validUntil) : new Date(validUntil),
-                                "dd/MM/yy"
-                              );
-                            } catch { dateStr = String(validUntil); }
 
-                            if (hours !== null && hours < 0) {
-                              return (
-                                <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-400">
-                                  Vencida {dateStr}
-                                </span>
-                              );
-                            }
-                            if (hours !== null && hours < 48) {
-                              return (
-                                <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-400">
-                                  {dateStr} · {hours}h
-                                </span>
-                              );
-                            }
-                            return <span className="text-[12px] text-white/40">{dateStr}</span>;
-                          })()}
+                        {/* Vehículo con jerarquía */}
+                        <td className="px-4 py-3.5 max-w-[200px]">
+                          <div className="font-medium text-[#f1f5f9] leading-snug truncate" title={vehicleMain}>
+                            {vehicleMain || "-"}
+                          </div>
+                          {vehicleSub && (
+                            <div className="mt-0.5 text-[11px] text-white/40 truncate">{vehicleSub}</div>
+                          )}
                         </td>
-                        <td className="px-4 py-3">
+
+                        {/* Precio destacado */}
+                        <td className="px-4 py-3.5 whitespace-nowrap">
+                          {hasPrice ? (
+                            <div className="flex items-baseline gap-1.5">
+                              <span
+                                className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${
+                                  currency === "USD"
+                                    ? "bg-emerald-500/15 text-emerald-400"
+                                    : "bg-sky-500/15 text-sky-400"
+                                }`}
+                              >
+                                {currency}
+                              </span>
+                              <span className="text-[15px] font-bold text-[#f1f5f9] tabular-nums">
+                                {Number(rawPrice).toLocaleString("es-AR")}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-[12px] text-white/25">Sin precio</span>
+                          )}
+                        </td>
+
+                        {/* Estado */}
+                        <td className="px-4 py-3.5">
+                          <StatusBadge status={status} />
+                        </td>
+
+                        {/* Vence */}
+                        <td className="px-4 py-3.5 whitespace-nowrap">{expiryNode}</td>
+
+                        {/* Ticket */}
+                        <td className="px-4 py-3.5">
                           {q.ticketId ? (
                             <a
                               href={`/tickets/${q.ticketId}`}
@@ -637,9 +696,52 @@ export default function QuotationsManager() {
                             <span className="text-[12px] text-white/25">—</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-[12px] text-white/35">{when}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center justify-end gap-1.5">
+
+                        {/* Acciones contextuales */}
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            {/* CTA principal segun estado */}
+                            {status === "draft" && (
+                              <button
+                                type="button"
+                                onClick={() => send(q)}
+                                className="inline-flex h-8 items-center rounded-lg border border-[#f59e0b]/30 bg-[#f59e0b]/10 px-3 text-xs font-semibold text-[#f59e0b] transition-colors hover:bg-[#f59e0b]/20 whitespace-nowrap"
+                              >
+                                Enviar
+                              </button>
+                            )}
+                            {status === "sent" && (
+                              <button
+                                type="button"
+                                onClick={() => openEdit(q)}
+                                className="inline-flex h-8 items-center rounded-lg border border-blue-500/25 bg-blue-500/10 px-3 text-xs font-semibold text-blue-400 transition-colors hover:bg-blue-500/15 whitespace-nowrap"
+                              >
+                                Consultar
+                              </button>
+                            )}
+                            {status === "accepted" && (
+                              <button
+                                type="button"
+                                onClick={() => openEdit(q)}
+                                className="inline-flex h-8 items-center rounded-lg border border-green-500/25 bg-green-500/10 px-3 text-xs font-semibold text-green-400 transition-colors hover:bg-green-500/15 whitespace-nowrap"
+                              >
+                                Ver deal
+                              </button>
+                            )}
+
+                            {/* Copiar para WhatsApp — siempre visible */}
+                            <button
+                              type="button"
+                              onClick={() => copyToWhatsApp(q)}
+                              title="Copiar texto para WhatsApp"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.03] text-white/40 transition-colors hover:border-green-500/30 hover:bg-green-500/10 hover:text-green-400"
+                            >
+                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z" />
+                              </svg>
+                            </button>
+
+                            {/* Editar — siempre visible */}
                             <button
                               type="button"
                               onClick={() => openEdit(q)}
@@ -647,20 +749,17 @@ export default function QuotationsManager() {
                             >
                               Editar
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => send(q)}
-                              className="inline-flex h-8 items-center rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/15"
-                            >
-                              Enviar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => remove(q)}
-                              className="inline-flex h-8 items-center rounded-lg border border-red-500/20 bg-red-500/[0.06] px-3 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10"
-                            >
-                              Eliminar
-                            </button>
+
+                            {/* Eliminar — solo en draft o rejected */}
+                            {(status === "draft" || status === "rejected") && (
+                              <button
+                                type="button"
+                                onClick={() => remove(q)}
+                                className="inline-flex h-8 items-center rounded-lg border border-red-500/20 bg-red-500/[0.06] px-3 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10"
+                              >
+                                Eliminar
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -690,190 +789,247 @@ export default function QuotationsManager() {
           </span>
         </DialogTitle>
         <DialogContent style={{ paddingTop: 20 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div>
-              <label className={labelCls}>Título (opcional)</label>
-              <input
-                className={inputCls}
-                placeholder="Ej: Toyota Corolla — Juan García"
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-              />
-            </div>
 
-            <div>
-              <label className={labelCls}>Estado</label>
-              <select
-                className={selectCls}
-                value={form.status}
-                onChange={(e) => setForm({ ...form, status: e.target.value })}
-              >
-                <option value="draft">Borrador</option>
-                <option value="sent">Enviada</option>
-                <option value="accepted">Aceptada</option>
-                <option value="rejected">Rechazada</option>
-              </select>
+          {/* Seccion: identificacion */}
+          <div className="mb-5">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-white/30">Identificacion</span>
+              <div className="flex-1 border-t border-white/[0.05]" />
             </div>
-
-            <div>
-              <label className={labelCls}>Buscar cliente</label>
-              <input
-                className={inputCls}
-                placeholder="Nombre o número..."
-                value={contactQuery}
-                onChange={(e) => setContactQuery(e.target.value)}
-              />
-            </div>
-
-            <div>
-              <label className={labelCls}>Cliente</label>
-              <select
-                className={selectCls}
-                value={form.contactId || ""}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  const found = contactOptions.find((c) => String(c.id) === String(id));
-                  setForm({
-                    ...form,
-                    contactId: id,
-                    contactName: found?.label || form.contactName,
-                    contactPhone: found?.phone || form.contactPhone,
-                  });
-                }}
-              >
-                <option value="">(Sin seleccionar)</option>
-                {contactOptions.map((c) => (
-                  <option key={c.id} value={c.id}>{c.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className={labelCls}>Nombre cliente (manual)</label>
-              <input
-                className={inputCls}
-                placeholder="Nombre completo"
-                value={form.contactName}
-                onChange={(e) => setForm({ ...form, contactName: e.target.value })}
-              />
-            </div>
-
-            <div>
-              <label className={labelCls}>Teléfono cliente (manual)</label>
-              <input
-                className={inputCls}
-                placeholder="+54 9 11..."
-                value={form.contactPhone}
-                onChange={(e) => setForm({ ...form, contactPhone: e.target.value })}
-              />
-            </div>
-
-            <div>
-              <label className={labelCls}>Buscar vehículo</label>
-              <input
-                className={inputCls}
-                placeholder="Marca, modelo, año..."
-                value={vehicleQuery}
-                onChange={(e) => setVehicleQuery(e.target.value)}
-              />
-            </div>
-
-            <div>
-              <label className={labelCls}>Vehículo</label>
-              <select
-                className={selectCls}
-                value={form.vehicleId || ""}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  const found = vehicleOptions.find((v) => String(v.id) === String(id));
-                  setForm({
-                    ...form,
-                    vehicleId: id,
-                    vehicleLabel: found?.label || form.vehicleLabel,
-                    vehicleData: found?.raw || form.vehicleData,
-                  });
-                }}
-              >
-                <option value="">(Sin seleccionar)</option>
-                {vehicleOptions.map((v) => (
-                  <option key={v.id} value={v.id}>{v.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label className={labelCls}>Vehículo (manual)</label>
-              <input
-                className={inputCls}
-                placeholder="Toyota Corolla 2024 XEI"
-                value={form.vehicleLabel}
-                onChange={(e) => setForm({ ...form, vehicleLabel: e.target.value })}
-              />
-            </div>
-
-            <div>
-              <label className={labelCls}>Moneda</label>
-              <select
-                className={selectCls}
-                value={form.currency}
-                onChange={(e) => setForm({ ...form, currency: e.target.value })}
-              >
-                <option value="ARS">ARS — Pesos</option>
-                <option value="USD">USD — Dólares</option>
-              </select>
-            </div>
-
-            <div>
-              <label className={labelCls}>Precio</label>
-              <input
-                className={inputCls}
-                type="number"
-                placeholder="0"
-                value={form.price}
-                onChange={(e) => setForm({ ...form, price: e.target.value })}
-              />
-            </div>
-
-            <div>
-              <label className={labelCls}>Válida hasta</label>
-              <input
-                className={inputCls}
-                type="date"
-                value={form.validUntil}
-                onChange={(e) => setForm({ ...form, validUntil: e.target.value })}
-                style={{ colorScheme: "dark" }}
-              />
-            </div>
-
-            <div>
-              <label className={labelCls}>Ticket vinculado (ID)</label>
-              <input
-                className={inputCls}
-                type="text"
-                placeholder="ID del ticket (si aplica)"
-                value={form.ticketId}
-                onChange={(e) => setForm({ ...form, ticketId: e.target.value })}
-              />
-            </div>
-
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label className={labelCls}>Notas internas (no se envían al cliente)</label>
-              <textarea
-                rows={4}
-                className="w-full rounded-xl border border-white/[0.08] bg-[#1e2333] px-3 py-2.5 text-sm text-[#f1f5f9] outline-none transition-colors placeholder:text-white/25 focus:border-[#f59e0b]/50 resize-none"
-                placeholder="Condiciones especiales, descuentos acordados, observaciones..."
-                value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label className={labelCls}>Título (opcional)</label>
+                <input
+                  className={inputCls}
+                  placeholder="Ej: Toyota Corolla — Juan García"
+                  value={form.title}
+                  onChange={(e) => setForm({ ...form, title: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Estado</label>
+                <select
+                  className={selectCls}
+                  value={form.status}
+                  onChange={(e) => setForm({ ...form, status: e.target.value })}
+                >
+                  <option value="draft">Borrador</option>
+                  <option value="sent">Enviada</option>
+                  <option value="accepted">Aceptada</option>
+                  <option value="rejected">Rechazada</option>
+                </select>
+              </div>
             </div>
           </div>
 
-          {lookupLoading && (
-            <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center" }}>
-              <CircularProgress size={14} style={{ color: "#f59e0b" }} />
-              <span style={{ fontSize: 12, color: "#94a3b8" }}>Buscando...</span>
+          {/* Seccion: cliente */}
+          <div className="mb-5">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-white/30">Cliente</span>
+              <div className="flex-1 border-t border-white/[0.05]" />
+              {lookupLoading && (
+                <span className="flex items-center gap-1.5">
+                  <CircularProgress size={11} style={{ color: "#f59e0b" }} />
+                  <span style={{ fontSize: 11, color: "#94a3b8" }}>Buscando...</span>
+                </span>
+              )}
             </div>
-          )}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label className={labelCls}>Buscar cliente</label>
+                <input
+                  className={inputCls}
+                  placeholder="Nombre o número..."
+                  value={contactQuery}
+                  onChange={(e) => setContactQuery(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Seleccionar cliente</label>
+                <select
+                  className={selectCls}
+                  value={form.contactId || ""}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    const found = contactOptions.find((c) => String(c.id) === String(id));
+                    setForm({
+                      ...form,
+                      contactId: id,
+                      contactName: found?.label || form.contactName,
+                      contactPhone: found?.phone || form.contactPhone,
+                    });
+                  }}
+                >
+                  <option value="">(Sin seleccionar)</option>
+                  {contactOptions.map((c) => (
+                    <option key={c.id} value={c.id}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Nombre (manual)</label>
+                <input
+                  className={inputCls}
+                  placeholder="Nombre completo"
+                  value={form.contactName}
+                  onChange={(e) => setForm({ ...form, contactName: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Teléfono (manual)</label>
+                <input
+                  className={inputCls}
+                  placeholder="+54 9 11..."
+                  value={form.contactPhone}
+                  onChange={(e) => setForm({ ...form, contactPhone: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Seccion: vehículo */}
+          <div className="mb-5">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-white/30">Vehículo</span>
+              <div className="flex-1 border-t border-white/[0.05]" />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label className={labelCls}>Buscar vehículo</label>
+                <input
+                  className={inputCls}
+                  placeholder="Marca, modelo, año..."
+                  value={vehicleQuery}
+                  onChange={(e) => setVehicleQuery(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Seleccionar vehículo</label>
+                <select
+                  className={selectCls}
+                  value={form.vehicleId || ""}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    const found = vehicleOptions.find((v) => String(v.id) === String(id));
+                    setForm({
+                      ...form,
+                      vehicleId: id,
+                      vehicleLabel: found?.label || form.vehicleLabel,
+                      vehicleData: found?.raw || form.vehicleData,
+                    });
+                  }}
+                >
+                  <option value="">(Sin seleccionar)</option>
+                  {vehicleOptions.map((v) => (
+                    <option key={v.id} value={v.id}>{v.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label className={labelCls}>Descripción manual</label>
+                <input
+                  className={inputCls}
+                  placeholder="Toyota Corolla 2024 XEI"
+                  value={form.vehicleLabel}
+                  onChange={(e) => setForm({ ...form, vehicleLabel: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Seccion: precio */}
+          <div className="mb-5">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-white/30">Precio</span>
+              <div className="flex-1 border-t border-white/[0.05]" />
+              {/* Preview del precio */}
+              {form.price && Number(form.price) > 0 && (
+                <div className="flex items-baseline gap-1.5">
+                  <span
+                    className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${
+                      form.currency === "USD"
+                        ? "bg-emerald-500/15 text-emerald-400"
+                        : "bg-sky-500/15 text-sky-400"
+                    }`}
+                  >
+                    {form.currency}
+                  </span>
+                  <span className="text-[14px] font-bold text-[#f1f5f9] tabular-nums">
+                    {Number(form.price).toLocaleString("es-AR")}
+                  </span>
+                </div>
+              )}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label className={labelCls}>Moneda</label>
+                <select
+                  className={selectCls}
+                  value={form.currency}
+                  onChange={(e) => setForm({ ...form, currency: e.target.value })}
+                >
+                  <option value="ARS">ARS — Pesos argentinos</option>
+                  <option value="USD">USD — Dólares</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Monto</label>
+                <input
+                  className={inputCls}
+                  type="number"
+                  placeholder="0"
+                  value={form.price}
+                  onChange={(e) => setForm({ ...form, price: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Seccion: condiciones */}
+          <div className="mb-1">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-white/30">Condiciones</span>
+              <div className="flex-1 border-t border-white/[0.05]" />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label className={labelCls}>Válida hasta</label>
+                <input
+                  className={inputCls}
+                  type="date"
+                  value={form.validUntil}
+                  onChange={(e) => setForm({ ...form, validUntil: e.target.value })}
+                  style={{ colorScheme: "dark" }}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Ticket vinculado</label>
+                <input
+                  className={inputCls}
+                  type="text"
+                  placeholder="ID del ticket (si aplica)"
+                  value={form.ticketId}
+                  onChange={(e) => setForm({ ...form, ticketId: e.target.value })}
+                />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label className={labelCls}>
+                  Notas y condiciones
+                  <span className="ml-1.5 text-[10px] font-normal normal-case tracking-normal text-white/25">
+                    (no se envian al cliente)
+                  </span>
+                </label>
+                <textarea
+                  rows={3}
+                  className="w-full rounded-xl border border-white/[0.08] bg-[#1e2333] px-3 py-2.5 text-sm text-[#f1f5f9] outline-none transition-colors placeholder:text-white/25 focus:border-[#f59e0b]/50 resize-none"
+                  placeholder="Forma de pago, descuentos acordados, condiciones especiales..."
+                  value={form.notes}
+                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+
         </DialogContent>
         <DialogActions style={{ borderTop: "1px solid rgba(255,255,255,0.08)", padding: "12px 20px", gap: 8 }}>
           <button
@@ -899,6 +1055,60 @@ export default function QuotationsManager() {
             }}
           >
             {saving ? "Guardando..." : form.id ? "Guardar cambios" : "Crear cotización"}
+          </button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Modal de confirmación de eliminación */}
+      <Dialog
+        open={confirmState.open}
+        onClose={() => setConfirmState({ open: false, quotation: null })}
+        PaperProps={{
+          style: {
+            background: "#1a1d2e",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 16,
+            padding: "8px 4px",
+            maxWidth: 360,
+            width: "100%",
+          },
+        }}
+      >
+        <DialogTitle style={{ color: "#f1f5f9", fontSize: 15, fontWeight: 700, paddingBottom: 4 }}>
+          Eliminar cotización
+        </DialogTitle>
+        <DialogContent>
+          <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+            ¿Confirmás la eliminación de la cotización{" "}
+            <strong style={{ color: "#f1f5f9" }}>
+              #{confirmState.quotation?.id}
+              {confirmState.quotation?.title ? ` — ${confirmState.quotation.title}` : ""}
+            </strong>
+            ? Esta acción no se puede deshacer.
+          </p>
+        </DialogContent>
+        <DialogActions style={{ padding: "8px 20px 16px" }}>
+          <button
+            type="button"
+            onClick={() => setConfirmState({ open: false, quotation: null })}
+            style={{
+              height: 36, padding: "0 16px", borderRadius: 10,
+              background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
+              color: "#94a3b8", fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={confirmRemove}
+            style={{
+              height: 36, padding: "0 16px", borderRadius: 10,
+              background: "#ef4444", border: "none",
+              color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer",
+            }}
+          >
+            Eliminar
           </button>
         </DialogActions>
       </Dialog>

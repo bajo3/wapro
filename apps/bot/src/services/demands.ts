@@ -220,9 +220,21 @@ async function getVehicleSource(): Promise<VehicleSource | null> {
 }
 
 function buildVehicleTitle(row: any) {
-  return String(
-    row.title || row.version || [row.brand, row.model, row.year].filter(Boolean).join(' ')
-  ).trim();
+  // Construir siempre un label estructurado con brand+model+version+year cuando estén disponibles.
+  // Preferirlo sobre title si es más rico (title puede ser solo la marca o solo "BAIC").
+  const structured = [row.brand, row.model, row.version, row.year]
+    .map((v) => String(v ?? '').trim())
+    .filter(Boolean)
+    .join(' ');
+
+  const titleStr = String(row.title ?? '').trim();
+
+  // Usar el más informativo: structured si tiene al menos brand+model (>=2 tokens),
+  // de lo contrario caer a title o version como fallback.
+  const structuredTokens = structured.split(/\s+/).filter(Boolean).length;
+  if (structuredTokens >= 2) return structured;
+  if (titleStr && titleStr.split(/\s+/).filter(Boolean).length > 1) return titleStr;
+  return structured || titleStr || String(row.version ?? '').trim() || String(row.id ?? '');
 }
 
 async function listVehiclesForScan(since?: Date) {

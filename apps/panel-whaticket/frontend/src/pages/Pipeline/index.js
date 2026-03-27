@@ -45,7 +45,25 @@ function savePref(key, value) {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function LoadingState() {
+function LoadingState({ viewMode = "focus" }) {
+  if (viewMode === "kanban") {
+    return (
+      <div className="flex gap-4 overflow-x-hidden pb-3">
+        {[1, 2, 3].map((i) => (
+          <div
+            key={i}
+            className="flex w-[320px] shrink-0 flex-col gap-3 rounded-[20px] border border-white/[0.06] bg-auto-panel p-3"
+            style={{ maxHeight: "calc(100vh - 160px)" }}
+          >
+            <div className="animate-pulse rounded-lg bg-white/[0.06]" style={{ height: 44 }} />
+            {[1, 2].map((j) => (
+              <div key={j} className="animate-pulse rounded-2xl bg-white/[0.04]" style={{ height: 110 }} />
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-3 p-4">
       {[1, 2, 3].map((i) => (
@@ -191,6 +209,11 @@ function TicketCard({ ticket, stages, stageId, onMove, movingId }) {
             {ticket.status}
           </span>
         )}
+        {(ticket.value || ticket.quotationValue) && (
+          <span className="rounded-full border border-auto-accent/20 bg-auto-accent/10 px-2 py-0.5 text-[10px] font-medium text-auto-accent">
+            $ {(ticket.value || ticket.quotationValue).toLocaleString("es-AR")}
+          </span>
+        )}
       </div>
 
       {/* Actions */}
@@ -209,9 +232,9 @@ function TicketCard({ ticket, stages, stageId, onMove, movingId }) {
 function KanbanColumn({ stage, stages, onMove, movingId }) {
   const tickets = stage.tickets || [];
   return (
-    <div className="flex w-[320px] shrink-0 flex-col rounded-[20px] border border-white/[0.08] bg-auto-panel shadow-auto-soft">
+    <div className="flex w-[320px] shrink-0 flex-col rounded-[20px] border border-white/[0.08] bg-auto-panel shadow-auto-soft" style={{ maxHeight: "calc(100vh - 160px)" }}>
       {/* Column header */}
-      <div className="border-b border-white/[0.06] px-4 py-3">
+      <div className="sticky top-0 z-10 rounded-t-[20px] border-b border-white/[0.06] bg-auto-panel px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div
@@ -435,7 +458,7 @@ export default function Pipeline() {
 
     setMovingId(ticketId);
     try {
-      await api.put(`/pipeline/tickets/${ticketId}/stage`, { toStageId });
+      await api.patch(`/pipeline/tickets/${ticketId}/stage`, { toStageId });
     } catch (err) {
       // Roll back on failure
       toastError(err);
@@ -502,7 +525,7 @@ export default function Pipeline() {
 
       {/* Body */}
       {loading ? (
-        <LoadingState />
+        <LoadingState viewMode={viewMode} />
       ) : error ? (
         <ErrorState message={error} onRetry={fetchBoard} />
       ) : stages.length === 0 ? (
