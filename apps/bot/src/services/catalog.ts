@@ -162,7 +162,8 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       const model = (row.model ?? "").trim();
       const version = (row.version ?? "").trim() || undefined;
 
-      const name = title || [brand, model, version].filter(Boolean).join(" ") || row.id;
+      const structuredName = [brand, model, version].filter(Boolean).join(" ");
+      const name = structuredName || title || row.id;
       const year = row.year ?? undefined;
       const km = coerceNumber(row.km ?? row.Km);
       // isNew: km === 0 explícito, o status contiene "0km" / "nuevo" / "new"
@@ -184,8 +185,8 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       const currency = ((): string => {
         if (rawCurrency.toUpperCase() === 'USD') return 'USD';
         if (priceNumber !== undefined) {
-          if (priceNumber < 50_000) return 'USD'; // nunca es ARS tan bajo
-          if (!isNew && priceNumber < 1_000_000) return 'USD'; // usado < 1M en ARS → sospecha USD
+          if (priceNumber < 10_000) return 'USD'; // por debajo de 10k ARS es claramente USD
+          if (!isNew && priceNumber < 500_000) return 'USD'; // usado < 500k ARS → sospecha USD
         }
         return rawCurrency;
       })() as any;
@@ -205,6 +206,8 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
         parts.push("0 km");
       } else if (km !== undefined) {
         parts.push(`${Math.round(km).toLocaleString("es-AR")} km`);
+      } else {
+        parts.push("km sin datos");
       }
       if (transmission) parts.push(transmission);
       if (fuel) parts.push(fuel);
@@ -712,6 +715,8 @@ export function formatItemLine(item: CatalogItem, idx: number) {
       parts.push("0 km");
     } else if (typeof item.km === "number" && Number.isFinite(item.km)) {
       parts.push(`${Math.round(item.km).toLocaleString("es-AR")} km`);
+    } else {
+      parts.push("km sin datos");
     }
     if (item.version) parts.push(item.version);
     if (item.transmission) parts.push(item.transmission);

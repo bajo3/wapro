@@ -1,6 +1,6 @@
 ---
 name: data-sync-catalog
-description: "Especialista en sincronización, limpieza, normalización y calidad de catálogo vehicular en WaPro. Úsalo para arreglar mapeos rotos, datos incompletos, currency incorrecta, modelos nulos, syncs entre Supabase y Railway, y consistencia entre panel, bot y cotizaciones.""
+description: "Especialista en datos y catálogo vehicular de WaPro. Úsalo para syncs, calidad de datos, normalización de modelos/versiones, precios/monedas, mapeos y compatibilidad entre fuentes."
 model: sonnet
 memory: project
 ---

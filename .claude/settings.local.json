@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(find /c/Users/Usuario/Desktop/Feli/Feli-web/wapro -name tsc -path */node_modules/.bin/*)"
+    ]
+  }
+}

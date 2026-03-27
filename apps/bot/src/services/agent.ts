@@ -13,6 +13,20 @@
  *  - Intenciones implícitas propagadas desde extract.ts al prompt.
  */
 
+export interface AgentDecision {
+  intent?: string;
+  confidence?: number;
+  action?: string;
+  extracted?: Record<string, any>;
+  missingFields?: string[];
+  vehicleIds?: (string | number)[];
+  leadScore?: number;
+  urgency?: string;
+  handoffRecommended?: boolean;
+  suggestedReply?: string;
+  internalReason?: string;
+}
+
 export interface AgentLoopData {
   /**
    * Fields that have been requested repeatedly without user response. The agent

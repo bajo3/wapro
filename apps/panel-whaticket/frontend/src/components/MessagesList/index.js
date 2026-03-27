@@ -39,6 +39,8 @@ const useStyles = makeStyles((theme) => ({
     display: "flex",
     flexDirection: "column",
     flexGrow: 1,
+    minHeight: 0,
+    height: "100%",
     background: "rgba(15, 17, 23, 0.35)",
   },
 
@@ -49,8 +51,9 @@ const useStyles = makeStyles((theme) => ({
     display: "flex",
     flexDirection: "column",
     flexGrow: 1,
+    minHeight: 0,
     padding: "18px 18px 24px",
-    overflowY: "scroll",
+    overflowY: "auto",
     [theme.breakpoints.down("sm")]: {
       padding: "14px 12px 90px",
     },

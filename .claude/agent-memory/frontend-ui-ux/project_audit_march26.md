@@ -59,52 +59,11 @@ type: project
 - Ampliado con: `--wapro-panel3`, `--wapro-info`, `--wapro-r-xs`, `--wapro-shadow-xs`, `--wapro-glow`, escala `--sp-*`
 - Nuevas clases utilitarias: `.wapro-card-sm`, `.wapro-btn-primary`, `.wapro-badge-*` (todos los estados), `.wapro-section-label`, `.wapro-scroll`
 
-## Cambios 2026-03-26 (segunda sesión)
-
-### 10. `pages/Pipeline/index.js` — reescritura completa (P0)
-- Era un stub con `{} as any` y handlers vacíos. Reescrito como componente funcional real.
-- Carga stages y tickets desde `GET /pipeline/board`
-- Mover ticket: botón "Mover a [etapa]" en cada card → `PUT /pipeline/tickets/:id/stage`
-- Optimistic update: mueve el ticket en estado local antes de la respuesta; rollback con `fetchBoard()` si el PUT falla
-- Vista Foco (una columna a la vez, full width) y Vista Kanban (scroll horizontal, columnas fijas 320px)
-- Preferencia de vista guardada en `localStorage.pipelinePrefs.viewMode`
-- Estados de carga (skeleton), error (con retry) y vacío correctos
-- Sin nueva dependencia DnD — se usaron botones de mover
-
-### 11. `components/LeadPanelAutos.jsx` — stages dinámicos
-- Hook `usePipelineStages()` carga stages desde `GET /pipeline/stages` una sola vez (guarded con `useRef`)
-- Fallback a `STAGES_FALLBACK` si el endpoint falla (sin toast, sin romper UI)
-- Select de etapa usa `dynamicStages` (stages del backend) en lugar de la constante hardcodeada
-- Badge de etapa activa también lee de `dynamicStages`
-- `setStage()` ahora: (1) optimistic update de tags localmente, (2) persiste tags en backend, (3) si el stage tiene id numérico, llama `PUT /pipeline/tickets/:ticketId/stage` para mantener el board sincronizado
-
-## Cambios 2026-03-26 (tercera sesión — cotizaciones vinculadas + validUntil)
-
-### 12. `pages/Quotations/QuotationsManager.jsx` — ticketId + validUntil
-- `emptyForm` ampliado con `ticketId: ""` y `validUntil: ""`
-- Import de `differenceInHours`, `parseISO` (date-fns) y `useLocation`, `useHistory` (react-router-dom v5)
-- `openCreate(overrides)` acepta overrides para pre-cargar formulario desde LeadPanel
-- `useEffect` al montar: lee query params `ticketId`, `contactId`, `contactName`, `vehicleLabel`, `price` — abre dialog pre-cargado y limpia la URL con `history.replace`
-- `openEdit` rellena `ticketId` y `validUntil` desde datos del servidor
-- Payload del `save` incluye `ticketId` (como número si posible) y `validUntil`
-- Tabla: nueva columna "Vence" con badge rojo si `hours < 0`, amber si `hours < 48`, texto neutro si no
-- Tabla: nueva columna "Ticket" con link `#ticketId` → `/tickets/:id`
-- Formulario: campo `<input type="date">` "Válida hasta" con `colorScheme: dark`
-- Formulario: campo "Ticket vinculado (ID)" text input (editable manualmente si no vino de redirect)
-
-### 13. `components/LeadPanelAutos.jsx` — botón Cotizar + sección cotizaciones
-- Import `useHistory` (react-router-dom v5)
-- Estado `quotations`, `quotationsLoading` para las cotizaciones del ticket
-- `useEffect` que hace `GET /quotations?ticketId=X` (best-effort, sin toast si falla para no romper cuando el campo no existe aún)
-- `goToNewQuotation()`: navega a `/quotations?ticketId=X&contactId=Y&contactName=...&vehicleLabel=...&price=...`, leyendo datos del bot desde tags KVP (`vehicle:`, `vehiculo:`, `budget:`, `presupuesto:`)
-- Header: botón "Cotizar" amber visible solo cuando el ticket está cargado
-- Nueva card "Cotizaciones" entre Tags y Notas: lista compacta de cotizaciones con ID, vehículo, precio, badge de estado; botón "+ Nueva" inline
-
 ## Pendiente / próximas iteraciones
 
+- **Pipeline real**: `pages/Pipeline/index.js` es un stub con `as any` en TypeScript falso — no hay board real en este path. Hay que identificar dónde está el pipeline real y migrarlo/mejorarlo.
 - **TicketsSidebarAutos scroll infinito**: solo carga `pageNumber: 1`, no hay paginación ni scroll infinito.
 - **Quotations window.confirm**: el `remove()` usa `window.confirm()` — reemplazar por modal de confirmación propio.
 - **LoggedInLayout sidebar**: el drawer sigue siendo MUI puro. Candidato a migración futura.
-- **Filtros de tickets**: los `<select>` nativos del sidebar no siguen el estilo del design system.
-- **Pipeline — filtros y búsqueda**: el board nuevo no tiene filtro por contacto/etapa ni búsqueda. Se puede agregar en iteración siguiente.
-- **Pipeline — STAGE_COLOR dinámico**: el `STAGE_COLOR` en LeadPanelAutos es estático (slugs hardcodeados). Si el backend retorna stages con `color` hex, conectarlo también al badge.
+- **Filtros de tickets**: los `<select>` nativos del sidebar no siguen el estilo del design system (usan `bg-auto-panel2` pero podrían ser más accesibles).
+- **Pipeline/index.js `as any`**: hay un `{} as any` que sugiere que alguien copió TypeScript en un archivo .js — hay que reescribir ese archivo completo.

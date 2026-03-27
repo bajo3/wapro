@@ -295,244 +295,217 @@ export default function Demands() {
   };
 
   return (
-    <MainContainer>
-      <MainHeader>
-        <Title>CRM · Demandas</Title>
-        <MainHeaderButtonsWrapper>
-          <TextField
-            select
-            size="small"
-            variant="outlined"
+    <div className="flex h-full flex-col bg-[#0f1117]">
+      {/* Header */}
+      <div className="flex shrink-0 items-center justify-between border-b border-white/[0.06] px-6 py-4">
+        <div>
+          <h1 className="text-lg font-bold text-white">Demandas</h1>
+          <p className="mt-0.5 text-xs text-white/40">Búsquedas activas de clientes con alertas automáticas</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            style={{ minWidth: 140, marginRight: 8 }}
+            className="h-9 rounded-lg border border-white/[0.1] bg-[#1a1f2e] px-3 text-sm text-white/80 focus:outline-none focus:ring-1 focus:ring-amber-400/40"
           >
-            <MenuItem value="open">Abiertas</MenuItem>
-            <MenuItem value="closed">Cerradas</MenuItem>
-          </TextField>
-          <Button variant="outlined" onClick={forceScan} startIcon={<RefreshIcon />}>
-            Scan
-          </Button>
-          <Button variant="outlined" onClick={forceRecontact} startIcon={<DoneAllIcon />} style={{ marginLeft: 8 }}>
-            Recontactar
-          </Button>
-          <Button
-            variant="contained"
-            color="primary"
+            <option value="open">Abiertas</option>
+            <option value="closed">Cerradas</option>
+          </select>
+          <button
+            onClick={forceScan}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#1a1f2e] px-3 text-sm text-white/70 hover:bg-white/[0.06] transition-colors"
+          >
+            <RefreshIcon style={{ fontSize: 16 }} /> Scan
+          </button>
+          <button
+            onClick={forceRecontact}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#1a1f2e] px-3 text-sm text-white/70 hover:bg-white/[0.06] transition-colors"
+          >
+            <DoneAllIcon style={{ fontSize: 16 }} /> Recontactar
+          </button>
+          <button
             onClick={openNew}
-            startIcon={<AddIcon />}
-            style={{ marginLeft: 8 }}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-amber-400 px-4 text-sm font-bold text-black hover:bg-amber-300 transition-colors"
           >
-            Nueva
-          </Button>
-        </MainHeaderButtonsWrapper>
-      </MainHeader>
+            <AddIcon style={{ fontSize: 16 }} /> Nueva demanda
+          </button>
+        </div>
+      </div>
 
-      <Paper style={{ flex: 1, padding: 8, overflowY: "auto" }}>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell />
-              <TableCell>Cliente</TableCell>
-              <TableCell>Pedido</TableCell>
-              <TableCell>Años</TableCell>
-              <TableCell>Presupuesto</TableCell>
-              <TableCell>Auto-notify</TableCell>
-              <TableCell>Recontacto</TableCell>
-              <TableCell>Actualizado</TableCell>
-              <TableCell align="right">Acciones</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {demands.map((d) => (
-              <React.Fragment key={d.id}>
-                <TableRow hover>
-                  <TableCell width={48}>
-                    <IconButton size="small" onClick={() => toggleExpand(d.id)}>
-                      {expanded[d.id] ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                    </IconButton>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" style={{ fontWeight: 600 }}>
-                      {d.contactName || "(sin nombre)"}
-                    </Typography>
-                    <Typography variant="caption" color="textSecondary">
-                      {d.remoteJid || d.phone || ""}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" style={{ fontWeight: 600 }}>
-                      {d.query}
-                    </Typography>
-                    <Typography variant="caption" color="textSecondary">
-                      {(d.brand || d.model) ? `${d.brand || ""} ${d.model || ""}`.trim() : ""}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    {(d.minYear || d.maxYear) ? `${d.minYear || ""}–${d.maxYear || ""}` : "—"}
-                  </TableCell>
-                  <TableCell>
-                    {d.maxPrice ? `${d.currency || ""} ${d.maxPrice}` : "—"}
-                  </TableCell>
-                  <TableCell>
-                    <Tooltip title={`Min score: ${scorePct(d.notifyMinScore)} · Cooldown: ${d.notifyCooldownMin} min`}>
-                      <span>
-                        <Switch
-                          checked={!!d.notifyOnMatch}
-                          onChange={async (e) => {
-                            try {
-                              await updateDemand(d.id, { notifyOnMatch: e.target.checked });
-                              load();
-                            } catch (err) {
-                              toastError(err);
-                            }
-                          }}
-                          color="primary"
-                        />
-                      </span>
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell>
-                    <Tooltip title={`Cada ${d.recontactEveryDays} días · ${d.recontactCount}/${d.recontactMax} · Próx: ${d.recontactNextAt ? fmtDate(d.recontactNextAt) : "—"}`}>
-                      <span>
-                        <Box display="flex" alignItems="center" gridGap={8}>
-                          <Switch
-                            checked={!!d.recontactEnabled}
-                            onChange={async (e) => {
-                              try {
-                                await updateDemand(d.id, { recontactEnabled: e.target.checked });
-                                load();
-                              } catch (err) {
-                                toastError(err);
-                              }
-                            }}
-                            color="primary"
-                          />
-                          <Typography variant="caption" color="textSecondary">
-                            {`${Number(d.recontactCount || 0)}/${Number(d.recontactMax || 0)} · quedan ${Math.max(0, Number(d.recontactMax || 0) - Number(d.recontactCount || 0))}`}
-                          </Typography>
-                        </Box>
-                      </span>
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell>{fmtDate(d.updatedAt)}</TableCell>
-                  <TableCell align="right">
-                    <Tooltip title="Editar">
-                      <IconButton size="small" onClick={() => openEdit(d)}>
-                        <EditIcon />
-                      </IconButton>
-                    </Tooltip>
-                    {d.status === "open" && (
-                      <Tooltip title="Cerrar">
-                        <IconButton size="small" onClick={() => doClose(d.id)}>
-                          <CloseIcon />
-                        </IconButton>
-                      </Tooltip>
+      {/* Table */}
+      <div className="flex-1 overflow-auto px-6 py-4">
+        <div className="rounded-xl border border-white/[0.08] bg-[#171b26] overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-white/[0.06]">
+                  <th className="w-10 px-4 py-3" />
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-white/40">Cliente</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-white/40">Pedido</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-white/40">Años</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-white/40">Presupuesto</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-white/40">Notify</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-white/40">Recontacto</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-white/40">Actualizado</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-white/40 text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {demands.map((d) => (
+                  <React.Fragment key={d.id}>
+                    <tr className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => toggleExpand(d.id)}
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-white/40 hover:bg-white/[0.08] hover:text-white/80 transition-colors"
+                        >
+                          {expanded[d.id] ? <ExpandLessIcon style={{ fontSize: 18 }} /> : <ExpandMoreIcon style={{ fontSize: 18 }} />}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-white">{d.contactName || "(sin nombre)"}</p>
+                        <p className="text-xs text-white/40">{d.remoteJid || d.phone || ""}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-white">{d.query}</p>
+                        {(d.brand || d.model) && (
+                          <p className="text-xs text-white/40">{`${d.brand || ""} ${d.model || ""}`.trim()}</p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-white/60">
+                        {(d.minYear || d.maxYear) ? `${d.minYear || ""}–${d.maxYear || ""}` : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-white/60">
+                        {d.maxPrice ? `${d.currency || ""} ${Number(d.maxPrice).toLocaleString("es-AR")}` : "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Tooltip title={`Min score: ${scorePct(d.notifyMinScore)} · Cooldown: ${d.notifyCooldownMin} min`}>
+                          <span>
+                            <Switch
+                              checked={!!d.notifyOnMatch}
+                              onChange={async (e) => {
+                                try { await updateDemand(d.id, { notifyOnMatch: e.target.checked }); load(); }
+                                catch (err) { toastError(err); }
+                              }}
+                              color="primary"
+                            />
+                          </span>
+                        </Tooltip>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Tooltip title={`Cada ${d.recontactEveryDays} días · Próx: ${d.recontactNextAt ? fmtDate(d.recontactNextAt) : "—"}`}>
+                          <span className="flex items-center gap-2">
+                            <Switch
+                              checked={!!d.recontactEnabled}
+                              onChange={async (e) => {
+                                try { await updateDemand(d.id, { recontactEnabled: e.target.checked }); load(); }
+                                catch (err) { toastError(err); }
+                              }}
+                              color="primary"
+                            />
+                            <span className="text-xs text-white/40">
+                              {`${Number(d.recontactCount || 0)}/${Number(d.recontactMax || 0)}`}
+                            </span>
+                          </span>
+                        </Tooltip>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-white/40">{fmtDate(d.updatedAt)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => openEdit(d)}
+                          className="mr-1 inline-flex h-7 w-7 items-center justify-center rounded-lg text-white/40 hover:bg-white/[0.08] hover:text-white/80 transition-colors"
+                          title="Editar"
+                        >
+                          <EditIcon style={{ fontSize: 16 }} />
+                        </button>
+                        {d.status === "open" && (
+                          <button
+                            onClick={() => doClose(d.id)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-white/40 hover:bg-red-500/20 hover:text-red-400 transition-colors"
+                            title="Cerrar demanda"
+                          >
+                            <CloseIcon style={{ fontSize: 16 }} />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+
+                    {/* Expanded row */}
+                    {expanded[d.id] && (
+                      <tr className="border-b border-white/[0.04] bg-[#13172000]">
+                        <td colSpan={9} className="px-6 py-4">
+                          <div className="rounded-lg border border-white/[0.06] bg-[#0f1117] p-4">
+                            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-white/40">Matches (top 30)</p>
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-white/[0.06]">
+                                  <th className="py-2 pr-4 text-left text-xs text-white/30">Score</th>
+                                  <th className="py-2 pr-4 text-left text-xs text-white/30">Auto</th>
+                                  <th className="py-2 pr-4 text-left text-xs text-white/30">Año</th>
+                                  <th className="py-2 pr-4 text-left text-xs text-white/30">Precio</th>
+                                  <th className="py-2 text-left text-xs text-white/30">Notificado</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(matches[d.id] || []).map((m) => (
+                                  <tr key={m.id || `${m.vehicleId}-${m.notifiedAt || ""}`} className="border-b border-white/[0.03]">
+                                    <td className="py-2 pr-4 font-bold text-amber-400">{scorePct(pickScore(m))}</td>
+                                    <td className="py-2 pr-4 text-white/80">{m.vehicle?.title || `${m.vehicle?.brand || ""} ${m.vehicle?.model || ""}`.trim() || m.vehicleId}</td>
+                                    <td className="py-2 pr-4 text-white/60">{m.vehicle?.year || "—"}</td>
+                                    <td className="py-2 pr-4 text-white/60">{m.vehicle?.price ? `${m.vehicle?.currency || ""} ${m.vehicle?.price}` : "—"}</td>
+                                    <td className="py-2 text-white/40 text-xs">{m.notifiedAt ? fmtDate(m.notifiedAt) : "—"}</td>
+                                  </tr>
+                                ))}
+                                {!matches[d.id]?.length && (
+                                  <tr><td colSpan={5} className="py-3 text-xs text-white/30">Sin matches todavía.</td></tr>
+                                )}
+                              </tbody>
+                            </table>
+
+                            <p className="mb-3 mt-5 text-xs font-semibold uppercase tracking-wider text-white/40">Historial de recontactos</p>
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-white/[0.06]">
+                                  <th className="py-2 pr-4 text-left text-xs text-white/30">Fecha</th>
+                                  <th className="py-2 pr-4 text-left text-xs text-white/30">Intento</th>
+                                  <th className="py-2 pr-4 text-left text-xs text-white/30">Matches</th>
+                                  <th className="py-2 text-left text-xs text-white/30">Mensaje</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(recontacts[d.id] || []).map((rc) => (
+                                  <tr key={rc.id} className="border-b border-white/[0.03]">
+                                    <td className="py-2 pr-4 text-white/60 text-xs">{fmtDate(rc.sentAt)}</td>
+                                    <td className="py-2 pr-4 text-white/60">{rc.attempt}</td>
+                                    <td className="py-2 pr-4 text-white/60">{Array.isArray(rc.matchVehicleIds) && rc.matchVehicleIds.length ? rc.matchVehicleIds.length : 0}</td>
+                                    <td className="py-2 text-white/40 text-xs whitespace-pre-wrap">{String(rc.message || "").slice(0, 300)}{String(rc.message || "").length > 300 ? "…" : ""}</td>
+                                  </tr>
+                                ))}
+                                {!recontacts[d.id]?.length && (
+                                  <tr><td colSpan={4} className="py-3 text-xs text-white/30">Sin recontactos aún.</td></tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                  </TableCell>
-                </TableRow>
+                  </React.Fragment>
+                ))}
 
-                <TableRow>
-                  <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={9}>
-                    <Collapse in={!!expanded[d.id]} timeout="auto" unmountOnExit>
-                      <Box margin={1}>
-                        <Typography variant="subtitle2" gutterBottom>
-                          Matches (top 30)
-                        </Typography>
-                        <Table size="small">
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>Score</TableCell>
-                              <TableCell>Auto</TableCell>
-                              <TableCell>Año</TableCell>
-                              <TableCell>Precio</TableCell>
-                              <TableCell>Notificado</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {(matches[d.id] || []).map((m) => (
-                              <TableRow key={m.id || `${m.vehicleId}-${m.notifiedAt || ""}` }>
-                                <TableCell style={{ fontWeight: 700 }}>{scorePct(pickScore(m))}</TableCell>
-                                <TableCell>
-                                  {m.vehicle?.title || `${m.vehicle?.brand || ""} ${m.vehicle?.model || ""}`.trim() || m.vehicleId}
-                                </TableCell>
-                                <TableCell>{m.vehicle?.year || "—"}</TableCell>
-                                <TableCell>
-                                  {m.vehicle?.price ? `${m.vehicle?.currency || ""} ${m.vehicle?.price}` : "—"}
-                                </TableCell>
-                                <TableCell>{m.notifiedAt ? fmtDate(m.notifiedAt) : "—"}</TableCell>
-                              </TableRow>
-                            ))}
-                            {!matches[d.id]?.length && (
-                              <TableRow>
-                                <TableCell colSpan={5}>
-                                  <Typography variant="caption" color="textSecondary">
-                                    Sin matches todavía.
-                                  </Typography>
-                                </TableCell>
-                              </TableRow>
-                            )}
-                          </TableBody>
-                        </Table>
-
-                        <Box mt={2}>
-                          <Typography variant="subtitle2" gutterBottom>
-                            Historial de recontactos (últimos 30)
-                          </Typography>
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>Fecha</TableCell>
-                                <TableCell>Intento</TableCell>
-                                <TableCell>Incluyó matches</TableCell>
-                                <TableCell>Mensaje</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {(recontacts[d.id] || []).map((rc) => (
-                                <TableRow key={rc.id}>
-                                  <TableCell>{fmtDate(rc.sentAt)}</TableCell>
-                                  <TableCell>{rc.attempt}</TableCell>
-                                  <TableCell>{Array.isArray(rc.matchVehicleIds) && rc.matchVehicleIds.length ? rc.matchVehicleIds.length : 0}</TableCell>
-                                  <TableCell>
-                                    <Typography variant="caption" style={{ whiteSpace: "pre-wrap" }}>
-                                      {String(rc.message || "").slice(0, 300)}
-                                      {String(rc.message || "").length > 300 ? "…" : ""}
-                                    </Typography>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                              {!recontacts[d.id]?.length && (
-                                <TableRow>
-                                  <TableCell colSpan={4}>
-                                    <Typography variant="caption" color="textSecondary">
-                                      Sin recontactos aún.
-                                    </Typography>
-                                  </TableCell>
-                                </TableRow>
-                              )}
-                            </TableBody>
-                          </Table>
-                        </Box>
-                      </Box>
-                    </Collapse>
-                  </TableCell>
-                </TableRow>
-              </React.Fragment>
-            ))}
-
-            {!loading && demands.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={9}>
-                  <Typography variant="body2" color="textSecondary">
-                    No hay demandas.
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </Paper>
+                {!loading && demands.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="py-16 text-center">
+                      <p className="text-sm text-white/30">No hay demandas {status === "open" ? "abiertas" : "cerradas"}.</p>
+                      <p className="mt-1 text-xs text-white/20">Creá una nueva demanda para empezar a rastrear búsquedas de clientes.</p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
 
       <Dialog open={modalOpen} onClose={() => setModalOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>{editing ? `Editar demanda #${editing.id}` : "Nueva demanda"}</DialogTitle>

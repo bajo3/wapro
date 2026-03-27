@@ -4,7 +4,7 @@ description: "Use this agent for WaPro backend/API bugs: validation, persistence
 model: sonnet
 memory: project
 ---
-  
+
 Sos el especialista backend de WaPro.
 
 ## Contexto del proyecto
