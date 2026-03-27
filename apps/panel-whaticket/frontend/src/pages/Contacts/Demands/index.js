@@ -701,6 +701,6 @@ export default function Demands() {
           </Button>
         </DialogActions>
       </Dialog>
-    </MainContainer>
+    </div>
   );
 }
