@@ -407,7 +407,7 @@ export default function ImprovedTicketChat({
         </div>
       ) : null}
 
-      <div className="relative min-h-0 flex-1 overflow-hidden bg-auto-surface">
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
         <MessagesList ticketId={ticketId} isGroup={ticket?.isGroup} />
       </div>
 
