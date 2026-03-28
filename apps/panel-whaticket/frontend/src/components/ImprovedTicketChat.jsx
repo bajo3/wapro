@@ -264,17 +264,30 @@ export default function ImprovedTicketChat({
 
             <span className="mx-0.5 h-4 w-px shrink-0 bg-auto-border" aria-hidden="true" />
 
-            <span
+            <select
+              value={botMode}
+              onChange={async (e) => {
+                const next = e.target.value;
+                try {
+                  await api.put(`/tickets/${ticket.id}/bot-mode`, { botMode: next });
+                } catch (err) {
+                  toastError(err);
+                }
+              }}
               className={clsx(
-                "inline-flex h-9 shrink-0 items-center rounded-auto-lg border px-2 text-[11px] font-medium",
+                "inline-flex h-9 shrink-0 cursor-pointer items-center rounded-auto-lg border px-2 text-[11px] font-medium outline-none transition-colors",
                 isHumanOnly
                   ? "border-blue-500/20 bg-blue-500/10 text-blue-400"
-                  : "border-auto-border bg-auto-surface text-auto-hint"
+                  : botMode === "OFF"
+                    ? "border-red-500/20 bg-red-500/10 text-red-400"
+                    : "border-auto-border bg-auto-surface text-auto-hint hover:bg-auto-panel2"
               )}
-              title="Modo bot actual"
+              title="Cambiar modo del bot"
             >
-              Bot: {botModeLabel}
-            </span>
+              <option value="ON">Bot: Auto</option>
+              <option value="HUMAN_ONLY">Bot: Humano</option>
+              <option value="OFF">Bot: Off</option>
+            </select>
 
             <button
               type="button"

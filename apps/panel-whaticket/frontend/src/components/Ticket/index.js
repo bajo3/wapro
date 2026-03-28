@@ -10,7 +10,6 @@ import ContactDrawer from "../ContactDrawer";
 import MessageInput from "../MessageInput/";
 import MessagesList from "../MessagesList";
 import ImprovedTicketChat from "../ImprovedTicketChat";
-import SlideOver from "../SlideOver";
 import LeadPanelAutos from "../LeadPanelAutos";
 import api from "../../services/api";
 import { ReplyMessageProvider } from "../../context/ReplyingMessage/ReplyingMessageContext";
@@ -146,28 +145,18 @@ const Ticket = () => {
 
   return (
     <div className={classes.root} id="drawer-container">
+      {/* ── Chat area: flex-1, se contrae cuando gestión está abierto ── */}
       <div className={classes.classicWrapper}>
         <ReplyMessageProvider>
           {proView ? (
-            <>
-              <ImprovedTicketChat
-                loading={loading}
-                ticketId={ticketId}
-                ticket={ticket}
-                contact={contact}
-                onOpenContact={handleDrawerOpen}
-                onToggleView={() => setProView(false)}
-              />
-
-              <SlideOver
-                open={drawerOpen}
-                onClose={handleDrawerClose}
-                title={contact?.name ? `Gestión · ${contact.name}` : "Gestión del lead"}
-                widthClass="w-[420px] lg:w-[460px]"
-              >
-                <LeadPanelAutos ticketId={ticketId} />
-              </SlideOver>
-            </>
+            <ImprovedTicketChat
+              loading={loading}
+              ticketId={ticketId}
+              ticket={ticket}
+              contact={contact}
+              onOpenContact={handleDrawerOpen}
+              onToggleView={() => setProView(false)}
+            />
           ) : (
             <>
               <div className={classes.mobileBackBar}>
@@ -200,6 +189,62 @@ const Ticket = () => {
           )}
         </ReplyMessageProvider>
       </div>
+
+      {/* ── Panel gestión: inline a la derecha, empuja el chat ── */}
+      {proView && drawerOpen ? (
+        <div
+          style={{
+            width: 420,
+            minWidth: 420,
+            height: "100%",
+            display: "flex",
+            flexDirection: "column",
+            borderLeft: "1px solid var(--auto-border, rgba(148,163,184,0.18))",
+            background: "var(--auto-panel, #0f1623)",
+          }}
+        >
+          {/* Header del panel */}
+          <div
+            style={{
+              height: 48,
+              minHeight: 48,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "0 16px",
+              borderBottom: "1px solid var(--auto-border, rgba(148,163,184,0.18))",
+            }}
+          >
+            <span style={{ fontSize: 14, fontWeight: 600, color: "var(--auto-text, #e2e8f0)" }}>
+              {contact?.name ? `Gestión · ${contact.name}` : "Gestión del lead"}
+            </span>
+            <button
+              type="button"
+              onClick={handleDrawerClose}
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                border: "1px solid var(--auto-border, rgba(148,163,184,0.18))",
+                background: "var(--auto-panel, #0f1623)",
+                color: "var(--auto-text, #e2e8f0)",
+                cursor: "pointer",
+                fontSize: 16,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+              title="Cerrar gestión"
+            >
+              ×
+            </button>
+          </div>
+          {/* Contenido scrollable */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+            <LeadPanelAutos ticketId={ticketId} />
+          </div>
+        </div>
+      ) : null}
 
       {!proView ? (
         <ContactDrawer
