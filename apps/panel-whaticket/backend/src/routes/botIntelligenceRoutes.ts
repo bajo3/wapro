@@ -156,4 +156,64 @@ botIntelligenceRoutes.post("/bot/tests/run", async (req, res) => {
   return res.status(r.status).json(r.data);
 });
 
+// ─── Sistema de Aprendizaje Incremental ──────────────────────────────────────
+
+// Estadísticas del sistema de aprendizaje
+botIntelligenceRoutes.get("/bot/learning/stats", async (req, res) => {
+  const r = await forward(req, "/admin/learning/stats");
+  return res.status(r.status).json(r.data);
+});
+
+// Listar capturas de conversación para revisión
+botIntelligenceRoutes.get("/bot/learning/captures", async (req, res) => {
+  const params = new URLSearchParams();
+  if (req.query.status) params.set("status", String(req.query.status));
+  if (req.query.limit)  params.set("limit",  String(req.query.limit));
+  if (req.query.offset) params.set("offset", String(req.query.offset));
+  if (req.query.intent) params.set("intent", String(req.query.intent));
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const r = await forward(req, `/admin/learning/captures${qs}`);
+  return res.status(r.status).json(r.data);
+});
+
+// Captura individual con feedback
+botIntelligenceRoutes.get("/bot/learning/captures/:id", async (req, res) => {
+  const r = await forward(req, `/admin/learning/captures/${encodeURIComponent(req.params.id)}`);
+  return res.status(r.status).json(r.data);
+});
+
+// Registrar feedback humano
+botIntelligenceRoutes.post("/bot/learning/feedback", async (req, res) => {
+  const r = await forward(req, "/admin/learning/feedback");
+  return res.status(r.status).json(r.data);
+});
+
+// Promover captura a bot_examples
+botIntelligenceRoutes.post("/bot/learning/promote/:id", async (req, res) => {
+  const r = await forward(req, `/admin/learning/promote/${encodeURIComponent(req.params.id)}`);
+  return res.status(r.status).json(r.data);
+});
+
+// Registrar señal de outcome comercial
+botIntelligenceRoutes.post("/bot/learning/outcome", async (req, res) => {
+  const r = await forward(req, "/admin/learning/outcome");
+  return res.status(r.status).json(r.data);
+});
+
+// Marcar error en captura
+botIntelligenceRoutes.post("/bot/learning/flag/:id", async (req, res) => {
+  const r = await forward(req, `/admin/learning/flag/${encodeURIComponent(req.params.id)}`);
+  return res.status(r.status).json(r.data);
+});
+
+// Previsualizar ejemplos few-shot dinámicos
+botIntelligenceRoutes.get("/bot/learning/examples/preview", async (req, res) => {
+  const params = new URLSearchParams();
+  if (req.query.intent) params.set("intent", String(req.query.intent));
+  if (req.query.max)    params.set("max",    String(req.query.max));
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const r = await forward(req, `/admin/learning/examples/preview${qs}`);
+  return res.status(r.status).json(r.data);
+});
+
 export default botIntelligenceRoutes;

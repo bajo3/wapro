@@ -48,6 +48,18 @@ import {
 import { runPlayground } from '../services/playground.js';
 import { listTestCases, createTestCase, deleteTestCase } from '../services/intelligence.js';
 import { runTestSuite } from '../services/tests.js';
+import {
+  listCaptures,
+  getCaptureById,
+  submitFeedback,
+  promoteToExample,
+  linkOutcomeSignal,
+  flagCaptureError,
+  getLearningStats,
+  listCaptureFeedback,
+  selectDynamicExamples,
+  formatExamplesForPrompt
+} from '../services/learning.js';
 
 import {
   createVehicleDemand,
@@ -1017,6 +1029,135 @@ adminRouter.post('/tests/run', async (req, res) => {
   try {
     const report = await runTestSuite(limit);
     return res.json({ ok: true, report });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SISTEMA DE APRENDIZAJE INCREMENTAL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// GET /admin/learning/stats — resumen del sistema de aprendizaje
+adminRouter.get('/learning/stats', async (_req, res) => {
+  try {
+    const stats = await getLearningStats();
+    return res.json({ ok: true, stats });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// GET /admin/learning/captures — listar capturas para revisión
+adminRouter.get('/learning/captures', async (req, res) => {
+  try {
+    const status = (req.query.status as any) || 'all';
+    const limit = Math.min(Number(req.query.limit ?? 50), 200);
+    const offset = Number(req.query.offset ?? 0);
+    const intent = typeof req.query.intent === 'string' ? req.query.intent : undefined;
+    const result = await listCaptures({ status, limit, offset, intent });
+    return res.json({ ok: true, ...result });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// GET /admin/learning/captures/:id — captura individual
+adminRouter.get('/learning/captures/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+    const capture = await getCaptureById(id);
+    if (!capture) return res.status(404).json({ ok: false, error: 'not_found' });
+    const feedback = await listCaptureFeedback(id);
+    return res.json({ ok: true, capture, feedback });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// POST /admin/learning/feedback — registrar feedback humano sobre una captura
+adminRouter.post('/learning/feedback', async (req, res) => {
+  try {
+    const { capture_id, reviewer, rating, corrected_response, error_type, notes } = req.body ?? {};
+    if (!capture_id || !reviewer || rating === undefined) {
+      return res.status(400).json({ ok: false, error: 'missing_required_fields' });
+    }
+    const ratingNum = Number(rating);
+    if (![-1, 0, 1, 2].includes(ratingNum)) {
+      return res.status(400).json({ ok: false, error: 'invalid_rating: must be -1, 0, 1 or 2' });
+    }
+    const result = await submitFeedback({
+      captureId: Number(capture_id),
+      reviewer: String(reviewer),
+      rating: ratingNum as any,
+      correctedResponse: corrected_response ? String(corrected_response) : undefined,
+      errorType: error_type ? String(error_type) : undefined,
+      notes: notes ? String(notes) : undefined
+    });
+    return res.status(result.ok ? 200 : 400).json(result);
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// POST /admin/learning/promote/:id — promover captura a bot_examples
+adminRouter.post('/learning/promote/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+    const { ideal_answer, promoted_by } = req.body ?? {};
+    const result = await promoteToExample(
+      id,
+      ideal_answer ? String(ideal_answer) : undefined,
+      promoted_by ? String(promoted_by) : undefined
+    );
+    return res.status(result.ok ? 200 : 400).json(result);
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// POST /admin/learning/outcome — señal de resultado comercial
+adminRouter.post('/learning/outcome', async (req, res) => {
+  try {
+    const { instance, remote_jid, signal } = req.body ?? {};
+    const validSignals = ['pipeline_advance', 'quotation', 'visit', 'closed_won', 'closed_lost'];
+    if (!instance || !remote_jid || !validSignals.includes(signal)) {
+      return res.status(400).json({ ok: false, error: 'missing or invalid params' });
+    }
+    await linkOutcomeSignal(String(instance), String(remote_jid), signal);
+    return res.json({ ok: true });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// POST /admin/learning/flag/:id — marcar error en una captura
+adminRouter.post('/learning/flag/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+    const { error_type } = req.body ?? {};
+    const validTypes = ['invented_price', 'wrong_currency', 'redundant_question', 'hallucination', 'generic_fallback'];
+    if (!error_type || !validTypes.includes(error_type)) {
+      return res.status(400).json({ ok: false, error: 'invalid error_type' });
+    }
+    await flagCaptureError(id, error_type);
+    return res.json({ ok: true });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// GET /admin/learning/examples/preview — previsualizar ejemplos few-shot dinámicos
+adminRouter.get('/learning/examples/preview', async (req, res) => {
+  try {
+    const intent = typeof req.query.intent === 'string' ? req.query.intent : undefined;
+    const max = Math.min(Number(req.query.max ?? 5), 10);
+    const examples = await selectDynamicExamples({ intent, maxExamples: max });
+    const block = formatExamplesForPrompt(examples);
+    return res.json({ ok: true, count: examples.length, examples, block });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
   }

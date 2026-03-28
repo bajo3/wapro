@@ -29,6 +29,12 @@ import { sendImageAndPersist, sendTextAndPersist } from '../services/panelPersis
 import { askGPT, buildCarDealershipSystemPrompt } from '../services/gpt.js';
 import { decideAgentAction } from '../services/agent.js';
 import { upsertLeadProfile } from '../services/leadProfile.js';
+import {
+  captureConversationTurn,
+  selectDynamicExamples,
+  formatExamplesForPrompt,
+  type SourceType
+} from '../services/learning.js';
 
 export const webhookRouter = Router();
 
@@ -830,6 +836,44 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             }
           } catch { /* ignore episode failures */ }
 
+          // ── Sistema de Aprendizaje: capturar turno ──────────────────────────
+          if (rawText && reply) {
+            const captureIntent = typeof nextState?.last_intent === 'string'
+              ? nextState.last_intent.trim()
+              : undefined;
+
+            // Inferir source_type desde last_intent
+            let captureSource: SourceType = 'agent';
+            if (!captureIntent || captureIntent === 'fallback') captureSource = 'fallback';
+            else if (captureIntent === 'gpt_fallback') captureSource = 'gpt';
+            else if (captureIntent.startsWith('faq') || captureIntent === 'knowledge') captureSource = 'faq';
+            else if (
+              captureIntent.startsWith('policy') ||
+              captureIntent.startsWith('playbook') ||
+              captureIntent === 'compra_directa' ||
+              captureIntent === 'indecision' ||
+              captureIntent === 'comparacion' ||
+              captureIntent === 'cierre_frio' ||
+              captureIntent === 'visita' ||
+              captureIntent === 'financiacion' ||
+              captureIntent === 'permuta'
+            ) captureSource = 'playbook';
+            else if (captureIntent.startsWith('agent_')) captureSource = 'agent';
+
+            void captureConversationTurn({
+              instance,
+              remoteJid,
+              turnIndex: Number((nextState as any)?.turn_count ?? 0),
+              userMessage: rawText,
+              botResponse: reply,
+              intent: captureIntent,
+              confidence: Number(nextState?.agent?.confidence ?? 0) || undefined,
+              sourceType: captureSource,
+              extractedContext: nextState?.extracted ?? nextState?.search_context ?? {},
+              leadScore: typeof nextState?.leadScore === 'number' ? nextState.leadScore : undefined
+            }).catch(() => {});
+          }
+
           void upsertLeadProfile({
             instance,
             remoteJid,
@@ -1302,6 +1346,18 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             // Merge search_context + extracted para que el agente tenga el contexto completo acumulado
             const mergedExtracted = { ...(state.search_context ?? {}), ...extracted };
 
+            // ── Few-shot dinámico: cargar ejemplos aprendidos relevantes ────────
+            let dynamicExamplesBlock: string | undefined;
+            try {
+              const dynamicExs = await selectDynamicExamples({
+                intent: (state as any).last_intent ?? undefined,
+                maxExamples: 5
+              });
+              if (dynamicExs.length > 0) {
+                dynamicExamplesBlock = formatExamplesForPrompt(dynamicExs);
+              }
+            } catch { /* no bloquear el flujo principal */ }
+
             const agentDecision = await decideAgentAction({
               dealershipName: process.env.DEALERSHIP_NAME ?? undefined,
               userMessage: rawText,
@@ -1309,7 +1365,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               catalog,
               faqSummary,
               extracted: mergedExtracted,
-              leadScore: state.leadScore
+              leadScore: state.leadScore,
+              dynamicExamples: dynamicExamplesBlock
             });
 
             if (agentDecision?.suggestedReply) {

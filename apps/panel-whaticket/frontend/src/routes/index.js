@@ -17,6 +17,7 @@ const Contacts = lazy(() => import("../pages/Contacts/"));
 const Demands = lazy(() => import("../pages/Contacts/Demands"));
 const QuickAnswers = lazy(() => import("../pages/QuickAnswers/"));
 const Bot = lazy(() => import("../pages/Bot/"));
+const BotLearning = lazy(() => import("../pages/BotLearning/"));
 const Queues = lazy(() => import("../pages/Queues/"));
 const Campaigns = lazy(() => import("../pages/Campaigns"));
 const Quotations = lazy(() => import("../pages/Quotations"));
@@ -47,6 +48,7 @@ const Routes = () => {
                 <Route exact path="/users" component={Users} isPrivate />
                 <Route exact path="/quickAnswers" component={QuickAnswers} isPrivate />
                 <Route exact path="/bot" component={Bot} isPrivate />
+                <Route exact path="/bot-learning" component={BotLearning} isPrivate />
                 <Route exact path="/campaigns" component={Campaigns} isPrivate />
                 {/* Backwards compatibility: /training now lives inside /bot as a tab */}
                 <Route exact path="/training" component={TrainingRedirect} isPrivate />

@@ -45,7 +45,8 @@ export interface AgentLoopData {
 export function buildAgentSystemPrompt(
   dealershipName?: string,
   extractedContext?: Record<string, any>,
-  loopData?: AgentLoopData
+  loopData?: AgentLoopData,
+  dynamicExamples?: string   // bloque few-shot dinámico (de learning.ts)
 ): string {
   const agency = dealershipName || 'la agencia';
   const ctx = extractedContext ?? {};
@@ -225,6 +226,9 @@ export function buildAgentSystemPrompt(
     '  ¿Qué usás más, ciudad o ruta?',
     'SALIDA INCORRECTA: "Ambos son muy buenas opciones."',
     '',
+    // ── Ejemplos dinámicos aprendidos de conversaciones reales ───────────────
+    dynamicExamples || '',
+    '',
     knownSection,
     intentSection,
     loopSection,
@@ -270,8 +274,8 @@ export function buildAgentSystemPrompt(
 /**
  * decideAgentAction — v5: selecciona prompt según etapa, pasa loopData y contexto extraído.
  */
-export async function decideAgentAction(params: any & { loopData?: AgentLoopData }): Promise<any | null> {
-  const { loopData, leadScore, dealershipName, extracted, userMessage, history, catalog } = params;
+export async function decideAgentAction(params: any & { loopData?: AgentLoopData; dynamicExamples?: string }): Promise<any | null> {
+  const { loopData, leadScore, dealershipName, extracted, userMessage, history, catalog, dynamicExamples } = params;
 
   const { askGPTJson } = await import('./gpt.js');
 
@@ -280,7 +284,7 @@ export async function decideAgentAction(params: any & { loopData?: AgentLoopData
 
   const systemPrompt = isClosingStage
     ? buildClosingSystemPrompt(dealershipName, extracted)
-    : buildAgentSystemPrompt(dealershipName, extracted, loopData);
+    : buildAgentSystemPrompt(dealershipName, extracted, loopData, dynamicExamples);
 
   // Serialize catalog items into a compact text block for the GPT context.
   // Limit to 80 items to avoid hitting token limits.
