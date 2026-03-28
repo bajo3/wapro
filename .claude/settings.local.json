@@ -5,7 +5,12 @@
       "Bash(./node_modules/.bin/tsc --noEmit)",
       "Bash(node_modules/.bin/tsc --noEmit)",
       "Bash(find /c/Users/Usuario/Desktop/Feli/Feli-web/wapro -name tsc -path */node_modules/.bin/*)",
-      "Bash(python -c \"import sys,json; data=json.loads\\(sys.stdin.read\\(\\)\\); msgs=data.get\\(''''message'''',{}\\).get\\(''''content'''',[]\\); [print\\(m[''''text''''][:2000]\\) for m in msgs if m.get\\(''''type''''\\)==''''text'''']\")"
+      "Bash(python -c \"import sys,json; data=json.loads\\(sys.stdin.read\\(\\)\\); msgs=data.get\\(''''message'''',{}\\).get\\(''''content'''',[]\\); [print\\(m[''''text''''][:2000]\\) for m in msgs if m.get\\(''''type''''\\)==''''text'''']\")",
+      "Bash(xargs grep:*)",
+      "Bash(grep -r \"vehicles_compat\\\\|compat.*vehicle\" 'C:\\\\Users\\\\felip\\\\OneDrive\\\\Escritorio\\\\Feli Web\\\\wapro' --include=*.ts --include=*.js --include=*.mjs)",
+      "Bash(cd /c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend/src)",
+      "Bash(xargs wc:*)",
+      "Bash(xargs ls:*)"
     ]
   }
 }

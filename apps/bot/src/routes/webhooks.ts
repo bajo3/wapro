@@ -877,6 +877,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       return;
     }
 
+    // Lazy-load catalog: only fetch when the message could need vehicle data
     const catalog = await getCatalog();
 
     // ── Handoff detection ───────────────────────────────────────────────────
@@ -1058,15 +1059,25 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           const item = matches.hits[0];
           const detailReply = buildVehicleReply(rawText, matches, state.search_context);
           const nextState: ConvState = { ...state, stage: 'idle', last_intent: 'product_results_single', last_query: rawText, last_hits: [item.id], last_hits_at: nowIso };
-          scheduleReply(detailReply, nextState, { imageUrl: (item as any).image ?? undefined });
-          return;
+          if (detailReply.trim()) {
+            scheduleReply(detailReply, nextState, { imageUrl: (item as any).image ?? undefined });
+            return;
+          }
+          // buildVehicleReply returned empty → fall through to intent detection
+        } else {
+          reply = buildVehicleReply(rawText, matches, state.search_context);
+          if (reply.trim()) {
+            newState.last_intent = 'product_results';
+            newState.last_query = rawText;
+            newState.last_hits = (matches.hits.length ? matches.hits : matches.nearby).map((it) => it.id).slice(0, 3);
+            newState.last_hits_at = nowIso;
+          } else {
+            // Empty result: fallback to next useful question
+            reply = '';
+          }
         }
-        reply = buildVehicleReply(rawText, matches, state.search_context);
-        newState.last_intent = 'product_results';
-        newState.last_query = rawText;
-        newState.last_hits = (matches.hits.length ? matches.hits : matches.nearby).map((it) => it.id).slice(0, 3);
-        newState.last_hits_at = nowIso;
-      } else {
+      }
+      if (!reply) {
         const nextQuestion = getNextUsefulSearchQuestion({ ...(state.search_context || {}), ...extracted });
         reply = lastMedia && !String(rawText || '').trim()
           ? 'Te vi la imagen. ¿Qué modelo o marca querés mirar?'
@@ -1232,16 +1243,24 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           if (matches.hits.length === 1 && !matches.usedBudgetFallback) {
             const item = matches.hits[0];
             const detailReply = buildVehicleReply(rawText, matches, state.search_context);
-            const nextState: ConvState = { ...state, stage: 'idle', last_intent: 'product_results_single', last_query: rawText, last_hits: [item.id], last_hits_at: nowIso };
-            scheduleReply(detailReply, nextState, { imageUrl: (item as any).image ?? undefined });
-            return;
+            if (detailReply.trim()) {
+              const nextState: ConvState = { ...state, stage: 'idle', last_intent: 'product_results_single', last_query: rawText, last_hits: [item.id], last_hits_at: nowIso };
+              scheduleReply(detailReply, nextState, { imageUrl: (item as any).image ?? undefined });
+              return;
+            }
+            // Empty detailReply → fall through to next question
+          } else {
+            const candidateReply = buildVehicleReply(rawText, matches, state.search_context);
+            if (candidateReply.trim()) {
+              reply = candidateReply;
+              newState.last_intent = 'product_results';
+              newState.last_query = rawText;
+              newState.last_hits = (matches.hits.length ? matches.hits : matches.nearby).map((it) => it.id).slice(0, 3);
+              newState.last_hits_at = nowIso;
+            }
           }
-          reply = buildVehicleReply(rawText, matches, state.search_context);
-          newState.last_intent = 'product_results';
-          newState.last_query = rawText;
-          newState.last_hits = (matches.hits.length ? matches.hits : matches.nearby).map((it) => it.id).slice(0, 3);
-          newState.last_hits_at = nowIso;
-        } else {
+        }
+        if (!reply) {
           const nextQuestion = getNextUsefulSearchQuestion({ ...(state.search_context || {}), ...extracted });
           reply = lastMedia && !String(rawText || '').trim()
             ? 'Te vi la imagen. ¿Qué modelo o marca querés mirar?'
@@ -1427,6 +1446,12 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     if (isFallback) {
       (newState as any).last_fallback_at = nowIso;
+    }
+
+    // Guard: never send an empty message to the user
+    if (!reply || !reply.trim()) {
+      cleanup();
+      return;
     }
 
     scheduleReply(reply, newState);

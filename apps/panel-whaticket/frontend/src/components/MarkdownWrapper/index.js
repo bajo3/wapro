@@ -141,7 +141,7 @@ const elements = [
 	"tspan",
 ];
 
-const allowedElements = ["a", "b", "strong", "em", "u", "code", "del"];
+const allowedElements = ["a", "b", "strong", "em", "u", "code", "del", "br"];
 
 const CustomLink = ({ children, ...props }) => (
 	<a {...props} target="_blank" rel="noopener noreferrer">
@@ -165,6 +165,12 @@ const MarkdownWrapper = ({ children }) => {
 	}
 	if (children && tildaRegex.test(children)) {
 		children = children.replace(tildaRegex, "~~$1~~");
+	}
+
+	// Preserve newlines: convert to Markdown hard line breaks (two trailing spaces + newline)
+	// so markdown-to-jsx emits <br /> which is preserved in allowedElements.
+	if (children) {
+		children = children.replace(/\n/g, "  \n");
 	}
 
 	const options = React.useMemo(() => {

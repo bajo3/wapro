@@ -58,21 +58,14 @@ type VehicleRow = {
   year: number | null;
   price: string | number | null;
   currency: string | null;
-  slug: string | null;
   pictures: string[] | null;
   permalink: string | null;
   status: string | null;
-  // legacy columns
-  Km: number | null;
-  Motor: string | null;
-  Caja: string | null;
-  Combustible: string | null;
-  // new-ish columns
   km: number | null;
   engine: string | null;
   transmission: string | null;
+  fuel: string | null;
   color: string | null;
-  bodywork: string | null;
 };
 
 function coerceNumber(v: any): number | undefined {
@@ -128,22 +121,17 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       year,
       price,
       currency,
-      slug,
       pictures,
       permalink,
       status,
-      "Km" as "Km",
-      "Motor" as "Motor",
-      "Caja" as "Caja",
-      "Combustible" as "Combustible",
       km,
       engine,
       transmission,
-      color,
-      bodywork
+      fuel,
+      color
     from public.vehicles
     where ${where.join(" and ")}
-    order by updated_at desc nulls last
+    order by id
     limit 500
   `;
 
@@ -165,15 +153,15 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       const structuredName = [brand, model, version].filter(Boolean).join(" ");
       const name = structuredName || title || row.id;
       const year = row.year ?? undefined;
-      const km = coerceNumber(row.km ?? row.Km);
+      const km = coerceNumber(row.km);
       // isNew: km === 0 explícito, o status contiene "0km" / "nuevo" / "new"
       const statusStr = (row.status ?? "").toLowerCase();
       const isNew: boolean = km === 0 || /\b(0\s*km|nuevo|new)\b/.test(statusStr);
-      const transmission = (row.transmission ?? row.Caja ?? undefined)?.toString().trim();
-      const engine = (row.engine ?? row.Motor ?? undefined)?.toString().trim();
-      const fuel = (row.Combustible ?? undefined)?.toString().trim();
+      const transmission = (row.transmission ?? undefined)?.toString().trim();
+      const engine = (row.engine ?? undefined)?.toString().trim();
+      const fuel = (row.fuel ?? undefined)?.toString().trim();
       const color = (row.color ?? undefined)?.toString().trim();
-      const bodywork = inferBodyworkFromRow(title, model, version, row.bodywork);
+      const bodywork = inferBodyworkFromRow(title, model, version, null);
 
       const priceNumber = coerceMoneyNumber(row.price);
       // Heurística de moneda:
@@ -191,11 +179,7 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
         return rawCurrency;
       })() as any;
 
-      const url = row.permalink
-        ? String(row.permalink)
-        : env.publicUrl && row.slug
-          ? `${env.publicUrl.replace(/\/$/, "")}/autos/${row.slug}`
-          : undefined;
+      const url = row.permalink ? String(row.permalink) : undefined;
 
       const pics = Array.isArray(row.pictures) ? row.pictures : [];
       const image = normalizeImageUrl(pics[0] ?? pics[1], url);
@@ -245,18 +229,18 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
 
 
 async function loadVehiclesFromSimpleDb(timeoutMs: number): Promise<CatalogItem[]> {
-  // Fallback ligero: usa los nombres canónicos de la tabla public.vehicles.
-  // Intenta columnas en español (marca/modelo/precio) con COALESCE para compatibilidad,
-  // pero las columnas principales son brand/model/price (schema actual).
+  // Fallback ligero: usa nombres canónicos (schema actual post-sync).
+  // Si falla, se maneja en getCatalog().
   const sql = `
     select
       id,
-      COALESCE(brand, marca)                     as brand,
-      COALESCE(model, modelo)                    as model,
+      brand,
+      model,
       version,
       year,
-      COALESCE(price::text, precio::text, NULL)  as price,
-      currency
+      price::text as price,
+      currency,
+      title
     from public.vehicles
     limit 500
   `;
@@ -274,10 +258,11 @@ async function loadVehiclesFromSimpleDb(timeoutMs: number): Promise<CatalogItem[
       const brand = String(row.brand ?? '').trim();
       const model = String(row.model ?? '').trim();
       const version = String(row.version ?? '').trim();
+      const title = String(row.title ?? '').trim();
       const year = coerceNumber(row.year);
       const priceNumber = coerceMoneyNumber(row.price);
       const currency = String(row.currency ?? (priceNumber !== undefined ? 'ARS' : '')).trim() || undefined;
-      const name = [brand, model, version].filter(Boolean).join(' ').trim() || String(row.id ?? '');
+      const name = [brand, model, version].filter(Boolean).join(' ').trim() || title || String(row.id ?? '');
       return {
         id: String(row.id ?? ''),
         name,

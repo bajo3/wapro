@@ -34,7 +34,8 @@ module.exports = {
     const defaultId = rows?.[0]?.id;
     if (defaultId) {
       await queryInterface.sequelize.query(
-        `UPDATE "Tickets" SET "pipelineStageId" = ${defaultId}, "stageChangedAt" = COALESCE("stageChangedAt", NOW()) WHERE "pipelineStageId" IS NULL;`
+        `UPDATE "Tickets" SET "pipelineStageId" = :defaultId, "stageChangedAt" = COALESCE("stageChangedAt", NOW()) WHERE "pipelineStageId" IS NULL;`,
+        { replacements: { defaultId } }
       );
     }
   },

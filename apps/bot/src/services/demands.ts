@@ -722,6 +722,8 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
     const demandText = [d.query, demandCtx.brand, demandCtx.model, demandCtx.transmission, demandCtx.fuel, demandCtx.bodywork].filter(Boolean).join(' ');
     const dSet = expandTokens(tokenSet(demandText));
     const candidates: { matchId: number; vehicle: any; score: number }[] = [];
+    // Collect matches to batch-insert after scoring all vehicles (avoids N+1 queries)
+    const pendingMatches: { vehicle: any; score: number; reasons: any }[] = [];
 
     for (const v of vehicles) {
       const reasons: any = {};
@@ -843,23 +845,38 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
 
       score = clamp01(score);
       if (score < threshold) continue;
+      pendingMatches.push({ vehicle: v, score, reasons });
+    }
 
-      const ins = await pool.query(
+    // Batch-insert all matches for this demand in a single query
+    if (pendingMatches.length > 0) {
+      const values: any[] = [];
+      const placeholders = pendingMatches.map((m, i) => {
+        const base = i * 4;
+        values.push(d.id, String(m.vehicle.id), m.score, m.reasons);
+        return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`;
+      });
+      const batchRes = await pool.query(
         `
           insert into vehicle_demand_matches (demand_id, vehicle_id, score, reasons)
-          values ($1, $2, $3, $4)
+          values ${placeholders.join(', ')}
           on conflict (demand_id, vehicle_id)
           do update set score = greatest(vehicle_demand_matches.score, excluded.score), reasons = excluded.reasons
-          returning id, notified_at
+          returning id, vehicle_id, notified_at
         `,
-        [d.id, String(v.id), score, reasons]
+        values
       );
-      matchesInserted += 1;
-      const matchRow = ins.rows[0];
-      const alreadyNotified = !!matchRow?.notified_at;
+      matchesInserted += batchRes.rows.length;
 
-      if (d.notifyOnMatch && d.remoteJid && d.instance && score >= clamp01(d.notifyMinScore) && !alreadyNotified) {
-        candidates.push({ matchId: Number(matchRow.id), vehicle: v, score });
+      // Build notification candidates from batch results
+      const notifyMinScore = clamp01(d.notifyMinScore);
+      for (const row of batchRes.rows) {
+        const match = pendingMatches.find((m) => String(m.vehicle.id) === String(row.vehicle_id));
+        if (!match) continue;
+        const alreadyNotified = !!row.notified_at;
+        if (d.notifyOnMatch && d.remoteJid && d.instance && match.score >= notifyMinScore && !alreadyNotified) {
+          candidates.push({ matchId: Number(row.id), vehicle: match.vehicle, score: match.score });
+        }
       }
     }
 
