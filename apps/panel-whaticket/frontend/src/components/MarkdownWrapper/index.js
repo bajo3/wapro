@@ -152,26 +152,23 @@ const CustomLink = ({ children, ...props }) => (
 const MarkdownWrapper = ({ children }) => {
 	const boldRegex = /\*(.*?)\*/g;
 	const tildaRegex = /~(.*?)~/g;
-	
-	if(children && children.includes('BEGIN:VCARD'))
-		//children = "Diga olá ao seu novo contato clicando em *conversar*!";
-		children = null;
-	
-	if(children && children.includes('data:image/'))
-		children = null;
-	
-	if (children && boldRegex.test(children)) {
-		children = children.replace(boldRegex, "**$1**");
+
+	// Guarantee we always work with a string
+	let text = (children !== null && children !== undefined) ? String(children) : "";
+
+	if (text.includes('BEGIN:VCARD')) text = "";
+	if (text.includes('data:image/')) text = "";
+
+	if (boldRegex.test(text)) {
+		text = text.replace(boldRegex, "**$1**");
 	}
-	if (children && tildaRegex.test(children)) {
-		children = children.replace(tildaRegex, "~~$1~~");
+	if (tildaRegex.test(text)) {
+		text = text.replace(tildaRegex, "~~$1~~");
 	}
 
 	// Preserve newlines: convert to Markdown hard line breaks (two trailing spaces + newline)
 	// so markdown-to-jsx emits <br /> which is preserved in allowedElements.
-	if (children) {
-		children = children.replace(/\n/g, "  \n");
-	}
+	text = text.replace(/\n/g, "  \n");
 
 	const options = React.useMemo(() => {
 		const markdownOptions = {
@@ -191,9 +188,14 @@ const MarkdownWrapper = ({ children }) => {
 		return markdownOptions;
 	}, []);
 
-	if (!children) return null;
-	
-	return <Markdown options={options}>{children}</Markdown>;
+	if (!text) return null;
+
+	try {
+		return <Markdown options={options}>{text}</Markdown>;
+	} catch (e) {
+		// Fallback: render as plain text if markdown-to-jsx throws
+		return <span style={{ whiteSpace: "pre-wrap" }}>{children}</span>;
+	}
 };
 
 export default MarkdownWrapper;

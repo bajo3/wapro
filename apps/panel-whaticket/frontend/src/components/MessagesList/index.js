@@ -215,7 +215,8 @@ const useStyles = makeStyles((theme) => ({
     padding: "10px 12px 28px 12px",
     fontSize: 14,
     lineHeight: 1.55,
-    color: "inherit",
+    color: "inherit",   // inherits from messageLeft/messageRight/messageBotLeft
+    minHeight: 20,      // garantiza altura mínima visible aunque el contenido sea vacío
     // Links dentro del mensaje: color visible sobre fondos oscuros
     "& a": { color: "#93c5fd", textDecoration: "underline" },
     // Code inline: fondo sutil, texto siempre legible
@@ -730,7 +731,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
                 ) && checkMessageMedia(message)}
                 <div className={classes.textContentItem}>
                   {message.quotedMsg && renderQuotedMessage(message)}
-                  <MarkdownWrapper>{message.body}</MarkdownWrapper>
+                  <MarkdownWrapper>{message.body || ""}</MarkdownWrapper>
                   <span className={classes.timestamp}>
                     {format(parseISO(message.createdAt), "HH:mm")}
                   </span>
@@ -775,7 +776,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
                     />
                   )}
                   {message.quotedMsg && renderQuotedMessage(message)}
-                  <MarkdownWrapper>{message.body}</MarkdownWrapper>
+                  <MarkdownWrapper>{message.body || ""}</MarkdownWrapper>
                   <span className={classes.timestamp}>
                     {format(parseISO(message.createdAt), "HH:mm")}
                     {renderMessageAck(message)}
