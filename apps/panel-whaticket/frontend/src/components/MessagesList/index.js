@@ -216,7 +216,6 @@ const useStyles = makeStyles((theme) => ({
     fontSize: 14,
     lineHeight: 1.55,
     color: "inherit",   // inherits from messageLeft/messageRight/messageBotLeft
-    minHeight: 20,      // garantiza altura mínima visible aunque el contenido sea vacío
     // Links dentro del mensaje: color visible sobre fondos oscuros
     "& a": { color: "#93c5fd", textDecoration: "underline" },
     // Code inline: fondo sutil, texto siempre legible
@@ -231,6 +230,12 @@ const useStyles = makeStyles((theme) => ({
     // Strong y em heredan color del bubble
     "& strong, & b": { color: "inherit", fontWeight: 700 },
     "& em, & i": { color: "inherit" },
+  },
+
+  // When a bubble has media but no text body, collapse the text area to just enough
+  // height for the absolute-positioned timestamp — avoids the empty colored bar below media.
+  textContentItemMediaOnly: {
+    padding: "0 12px 22px 12px",
   },
 
   textContentItemDeleted: {
@@ -705,6 +710,20 @@ const MessagesList = ({ ticketId, isGroup }) => {
             message.agent === true ||
             String(message.id || "").startsWith("bot-"));
 
+        // Si el mensaje tiene media pero sin texto legible en el body, el área de texto
+        // solo necesita espacio para el timestamp — evita la barra de color vacía debajo del media.
+        const hasReadableBody = Boolean(
+          message.body &&
+          !message.body.includes("BEGIN:VCARD") &&
+          !message.body.includes("data:image/")
+        );
+        const hasMedia = Boolean(
+          message.mediaUrl ||
+          message.mediaType === "location" ||
+          message.mediaType === "vcard"
+        );
+        const isMediaOnly = hasMedia && !hasReadableBody && !message.quotedMsg && !message.isDeleted;
+
         if (!message.fromMe) {
           return (
             <React.Fragment key={message.id}>
@@ -726,10 +745,8 @@ const MessagesList = ({ ticketId, isGroup }) => {
                     {message.contact?.name}
                   </span>
                 )}
-                {(message.mediaUrl || message.mediaType === "location" || message.mediaType === "vcard"
-                  //|| message.mediaType === "multi_vcard"
-                ) && checkMessageMedia(message)}
-                <div className={classes.textContentItem}>
+                {hasMedia && checkMessageMedia(message)}
+                <div className={clsx(classes.textContentItem, isMediaOnly && classes.textContentItemMediaOnly)}>
                   {message.quotedMsg && renderQuotedMessage(message)}
                   <MarkdownWrapper>{message.body || ""}</MarkdownWrapper>
                   <span className={classes.timestamp}>
@@ -757,12 +774,11 @@ const MessagesList = ({ ticketId, isGroup }) => {
                 >
                   <ExpandMore />
                 </IconButton>
-                {(message.mediaUrl || message.mediaType === "location" || message.mediaType === "vcard"
-                  //|| message.mediaType === "multi_vcard"
-                ) && checkMessageMedia(message)}
+                {hasMedia && checkMessageMedia(message)}
                 <div
                   className={clsx(classes.textContentItem, {
                     [classes.textContentItemDeleted]: message.isDeleted,
+                    [classes.textContentItemMediaOnly]: isMediaOnly && !isBotMessage,
                   })}
                 >
                   {isBotMessage && (

@@ -39,12 +39,9 @@ export type CatalogItem = {
   bodywork?: string;
 };
 
-const sample: CatalogItem[] = [
-  { id: "ps5", name: "PlayStation 5 Slim", priceNumber: 999999, currency: "ARS", inStock: true, category: "consolas" },
-  { id: "xbox", name: "Xbox Series X", priceNumber: 999999, currency: "ARS", inStock: true, category: "consolas" },
-  { id: "headset", name: "Auriculares Gamer HyperX Cloud Stinger", priceNumber: 99999, currency: "ARS", inStock: true, category: "auriculares" },
-  { id: "monitor", name: 'Monitor 24" 144Hz', priceNumber: 249999, currency: "ARS", inStock: true, category: "monitores" }
-];
+// No sample/demo fallback — returning empty catalog is safer than returning wrong products.
+// If the vehicles table is empty, the bot will indicate no stock rather than hallucinating items.
+const EMPTY_CATALOG: CatalogItem[] = [];
 
 let cached: CatalogItem[] | null = null;
 let cachedAt = 0;
@@ -290,14 +287,29 @@ function normalizeText(s: string): string {
 }
 
 /**
- * Lightweight synonym handling (no LLM, low-cost).
+ * Lightweight automotive synonym normalization (no LLM, low-cost).
+ * Expands common abbreviations and regional terms to canonical forms
+ * so catalog search matches correctly across user phrasing.
  */
 function applySynonyms(text: string): string {
   return text
-    .replace(/\b(play\s*station\s*5|play\s*5|ps\s*5)\b/g, "ps5")
-    .replace(/\b(play\s*station\s*4|play\s*4|ps\s*4)\b/g, "ps4")
-    .replace(/\b(auris|auri|auricular(?:es)?|headset)\b/g, "auriculares")
-    .replace(/\b(mando|control)\b/g, "joystick");
+    // Carrocería
+    .replace(/\b(cross\s*over|crossover|4x4|awd|todoterreno|campo)\b/gi, "suv")
+    .replace(/\b(pick\s*up|camioneta|doble\s*cabina)\b/gi, "pickup")
+    .replace(/\b(hatchback|hatch\s*back)\b/gi, "hatch")
+    .replace(/\b(familiar|estate|kombi|touring)\b/gi, "familiar")
+    .replace(/\b(minivan|monovolumen|mpv|van)\b/gi, "monovolumen")
+    .replace(/\b(utilitario|furgon|cargo)\b/gi, "furgon")
+    // Transmisión
+    .replace(/\b(automatico|automatica|auto)\b/gi, "automatico")
+    .replace(/\b(mecanico|mecanica|manual)\b/gi, "mecanico")
+    // Combustible
+    .replace(/\b(nafta|gasolina|naftero)\b/gi, "nafta")
+    .replace(/\b(diesel|gasoil|gasoilero)\b/gi, "diesel")
+    .replace(/\b(gnc|gas\s*natural)\b/gi, "gnc")
+    // Estado
+    .replace(/\b(cero\s*km|0\s*km|nuevo|nueva|0km)\b/gi, "0km")
+    .replace(/\b(usado|usada|segunda\s*mano)\b/gi, "usado");
 }
 
 async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<any> {
@@ -470,16 +482,26 @@ export async function getCatalog(): Promise<CatalogItem[]> {
       // fall back below
     }
 
-    // Dev fallback: if DB has no vehicles, try local JSON; otherwise sample.
+    // Fallback: try local JSON catalog file; if none found, return empty catalog.
+    // Returning empty is correct — the bot will say "no hay stock disponible" rather
+    // than returning gaming demo products unrelated to automotive.
     const local = await tryLoadLocalCatalog();
-    if (!local) return sample;
+    if (!local) {
+      console.warn("[CATALOG] No vehicles in DB and no local catalog.json found. Returning empty catalog.");
+      return EMPTY_CATALOG;
+    }
     try {
       const items = mapRawCatalog(local);
+      if (!items.length) {
+        console.warn("[CATALOG] Local catalog.json parsed but contained 0 valid items. Returning empty catalog.");
+        return EMPTY_CATALOG;
+      }
       cached = items;
       cachedAt = now;
       return items;
     } catch {
-      return sample;
+      console.warn("[CATALOG] Failed to parse local catalog.json. Returning empty catalog.");
+      return EMPTY_CATALOG;
     }
   }
 
@@ -494,7 +516,8 @@ export async function getCatalog(): Promise<CatalogItem[]> {
     return cached;
   } catch {
     if (cached) return cached;
-    return sample;
+    console.warn("[CATALOG] CATALOG_JSON_URL fetch failed and no cached catalog. Returning empty catalog.");
+    return EMPTY_CATALOG;
   }
 }
 
