@@ -2,6 +2,7 @@ import React, { useMemo, useState, useContext } from "react";
 import clsx from "clsx";
 import { toast } from "react-toastify";
 import {
+  Calculator,
   Calendar,
   ChevronLeft,
   FileText,
@@ -19,6 +20,7 @@ import toastError from "../errors/toastError";
 import { AuthContext } from "../context/Auth/AuthContext";
 import MessagesList from "./MessagesList";
 import ImprovedMessageInput from "./ImprovedMessageInput";
+import CreditCalculator from "./CreditCalculator";
 
 const statusLabelMap = {
   pending: "En cola",
@@ -42,6 +44,7 @@ export default function ImprovedTicketChat({
   const { user } = useContext(AuthContext);
 
   const [showQuickReplies, setShowQuickReplies] = useState(true);
+  const [showCreditCalc, setShowCreditCalc] = useState(false);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
 
   const displayName = contact?.name || "Contacto";
@@ -236,7 +239,28 @@ export default function ImprovedTicketChat({
 
             <button
               type="button"
-              onClick={() => setShowQuickReplies((value) => !value)}
+              onClick={() => {
+                setShowCreditCalc((v) => !v);
+                if (!showCreditCalc) setShowQuickReplies(false);
+              }}
+              className={clsx(
+                "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-auto-lg border px-3 text-xs font-medium transition-colors",
+                showCreditCalc
+                  ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-400"
+                  : "border-auto-border bg-auto-surface text-auto-text hover:bg-auto-panel2"
+              )}
+              title="Calcular crédito automotor"
+            >
+              <Calculator className="h-3.5 w-3.5" />
+              <span>Crédito</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowQuickReplies((value) => !value);
+                if (!showQuickReplies) setShowCreditCalc(false);
+              }}
               className={clsx(
                 "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-auto-lg border px-3 text-xs font-medium transition-colors",
                 showQuickReplies
@@ -310,7 +334,13 @@ export default function ImprovedTicketChat({
         </div>
       </div>
 
-      {showQuickReplies ? (
+      {showCreditCalc ? (
+        <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-3 md:px-4">
+          <CreditCalculator />
+        </div>
+      ) : null}
+
+      {showQuickReplies && !showCreditCalc ? (
         <div className="shrink-0 border-b border-auto-border bg-auto-panel px-3 py-1.5 md:px-4">
           <div className="overflow-x-auto">
             <div className="flex w-max items-center gap-1.5 py-0.5">

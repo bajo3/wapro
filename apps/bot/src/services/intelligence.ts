@@ -50,6 +50,12 @@ function triggerScore(text: string, triggers: string[]): number {
   }
 
   if (hits === 0) return 0;
+
+  // Minimum threshold: a single substring match without word-boundary confirmation
+  // is likely a false positive (e.g. trigger "auto" matching "automático").
+  // Require at least one exact word-boundary hit OR 2+ total hits.
+  if (hits === 1 && exactWordHits === 0) return 0;
+
   const base = hits / triggers.length;           // ratio of matched triggers
   const bonus = exactWordHits > 0 ? 0.1 : 0;    // word-boundary bonus
   return Math.min(1, base + bonus);

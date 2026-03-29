@@ -215,21 +215,10 @@ const useStyles = makeStyles((theme) => ({
     padding: "10px 12px 28px 12px",
     fontSize: 14,
     lineHeight: 1.55,
-    color: "inherit",   // inherits from messageLeft/messageRight/messageBotLeft
-    // Links dentro del mensaje: color visible sobre fondos oscuros
-    "& a": { color: "#93c5fd", textDecoration: "underline" },
-    // Code inline: fondo sutil, texto siempre legible
-    "& code": {
-      backgroundColor: "rgba(255,255,255,0.08)",
-      color: "inherit",
-      borderRadius: 4,
-      padding: "1px 5px",
-      fontSize: 13,
-      fontFamily: "monospace",
-    },
-    // Strong y em heredan color del bubble
-    "& strong, & b": { color: "inherit", fontWeight: 700 },
-    "& em, & i": { color: "inherit" },
+    // Explicit fallback color — visible on all dark bubble backgrounds.
+    // The bubble class (messageLeft/messageRight/messageBotLeft) sets the
+    // definitive color, but if inheritance fails this prevents invisible text.
+    color: "#e2e8f0",
   },
 
   // When a bubble has media but no text body, collapse the text area to just enough
