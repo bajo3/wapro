@@ -428,7 +428,7 @@ export const expireStale = async (req: Request, res: Response): Promise<Response
     {
       where: {
         status: { [Op.in]: ["sent", "viewed", "draft"] },
-        validUntil: { [Op.lt]: now, [Op.not]: null }
+        validUntil: { [Op.lt]: now }
       }
     }
   );
