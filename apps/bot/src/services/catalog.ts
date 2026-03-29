@@ -63,6 +63,11 @@ type VehicleRow = {
   transmission: string | null;
   fuel: string | null;
   color: string | null;
+  // Capitalized ML-imported columns (fallback when lowercase are null)
+  Km: number | null;
+  Motor: string | null;
+  Caja: string | null;
+  Combustible: string | null;
 };
 
 function coerceNumber(v: any): number | undefined {
@@ -121,10 +126,10 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       pictures,
       permalink,
       status,
-      km,
-      engine,
-      transmission,
-      fuel,
+      COALESCE(km, "Km") as km,
+      COALESCE(engine, "Motor") as engine,
+      COALESCE(transmission, "Caja") as transmission,
+      COALESCE(fuel, "Combustible") as fuel,
       color
     from public.vehicles
     where ${where.join(" and ")}
