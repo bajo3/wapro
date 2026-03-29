@@ -78,8 +78,10 @@ const useStyles = makeStyles((theme) => ({
     minWidth: 120,
     maxWidth: "min(72%, 680px)",
     height: "auto",
+    minHeight: 48,
     display: "block",
     position: "relative",
+    flexShrink: 0, // ← prevents flex algorithm from collapsing bubbles
     border: "1px solid rgba(255, 255, 255, 0.08)",
     "&:hover #messageActionsButton": {
       display: "flex",
@@ -133,8 +135,10 @@ const useStyles = makeStyles((theme) => ({
     minWidth: 120,
     maxWidth: "min(72%, 680px)",
     height: "auto",
+    minHeight: 48,
     display: "block",
     position: "relative",
+    flexShrink: 0,
     border: "1px solid rgba(52, 211, 153, 0.18)",
     "&:hover #messageActionsButton": {
       display: "flex",
@@ -319,8 +323,10 @@ const useStyles = makeStyles((theme) => ({
     minWidth: 120,
     maxWidth: "min(72%, 680px)",
     height: "auto",
+    minHeight: 48,
     display: "block",
     position: "relative",
+    flexShrink: 0,
     border: "1px solid rgba(139, 92, 246, 0.22)",
     "&:hover #messageActionsButton": {
       display: "flex",
@@ -340,6 +346,35 @@ const useStyles = makeStyles((theme) => ({
     overflow: "hidden",
   },
 }));
+
+// Safe date helpers — prevent parseISO/format from throwing on null/invalid dates
+function safeFormatTime(dateStr) {
+  try {
+    const d = parseISO(String(dateStr || ""));
+    if (isNaN(d.getTime())) return "--:--";
+    return format(d, "HH:mm");
+  } catch {
+    return "--:--";
+  }
+}
+
+function safeFormatDate(dateStr) {
+  try {
+    const d = parseISO(String(dateStr || ""));
+    if (isNaN(d.getTime())) return "";
+    return format(d, "dd/MM/yyyy");
+  } catch {
+    return "";
+  }
+}
+
+function safeIsSameDay(a, b) {
+  try {
+    return isSameDay(parseISO(String(a || "")), parseISO(String(b || "")));
+  } catch {
+    return true; // treat as same day so we don't crash on dividers
+  }
+}
 
 function sortByCreatedAtAsc(messages) {
   return (messages || []).slice().sort((a, b) => {
@@ -613,32 +648,30 @@ const MessagesList = ({ ticketId, isGroup }) => {
 
   const renderDailyTimestamps = (message, index) => {
     if (index === 0) {
+      const dateStr = safeFormatDate(messagesList[index].createdAt);
+      if (!dateStr) return null;
       return (
         <span
           className={classes.dailyTimestamp}
           key={`timestamp-${message.id}`}
         >
-          <div className={classes.dailyTimestampText}>
-            {format(parseISO(messagesList[index].createdAt), "dd/MM/yyyy")}
-          </div>
+          <div className={classes.dailyTimestampText}>{dateStr}</div>
         </span>
       );
     }
     if (index < messagesList.length - 1) {
-      let messageDay = parseISO(messagesList[index].createdAt);
-      let previousMessageDay = parseISO(messagesList[index - 1].createdAt);
-
-      if (!isSameDay(messageDay, previousMessageDay)) {
-        return (
-          <span
-            className={classes.dailyTimestamp}
-            key={`timestamp-${message.id}`}
-          >
-            <div className={classes.dailyTimestampText}>
-              {format(parseISO(messagesList[index].createdAt), "dd/MM/yyyy")}
-            </div>
-          </span>
-        );
+      if (!safeIsSameDay(messagesList[index].createdAt, messagesList[index - 1].createdAt)) {
+        const dateStr = safeFormatDate(messagesList[index].createdAt);
+        if (dateStr) {
+          return (
+            <span
+              className={classes.dailyTimestamp}
+              key={`timestamp-${message.id}`}
+            >
+              <div className={classes.dailyTimestampText}>{dateStr}</div>
+            </span>
+          );
+        }
       }
     }
     if (index === messagesList.length - 1) {
@@ -713,6 +746,9 @@ const MessagesList = ({ ticketId, isGroup }) => {
         );
         const isMediaOnly = hasMedia && !hasReadableBody && !message.quotedMsg && !message.isDeleted;
 
+        // Inline padding guarantees content area regardless of CSS injection order
+        const textPadding = isMediaOnly ? "0 12px 22px 12px" : "10px 12px 28px 12px";
+
         if (!message.fromMe) {
           return (
             <React.Fragment key={message.id}>
@@ -735,11 +771,14 @@ const MessagesList = ({ ticketId, isGroup }) => {
                   </span>
                 )}
                 {hasMedia && checkMessageMedia(message)}
-                <div className={clsx(classes.textContentItem, isMediaOnly && classes.textContentItemMediaOnly)}>
+                <div
+                  className={clsx(classes.textContentItem, isMediaOnly && classes.textContentItemMediaOnly)}
+                  style={{ padding: textPadding }}
+                >
                   {message.quotedMsg && renderQuotedMessage(message)}
                   <MarkdownWrapper>{message.body || ""}</MarkdownWrapper>
                   <span className={classes.timestamp}>
-                    {format(parseISO(message.createdAt), "HH:mm")}
+                    {safeFormatTime(message.createdAt)}
                   </span>
                 </div>
               </div>
@@ -769,6 +808,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
                     [classes.textContentItemDeleted]: message.isDeleted,
                     [classes.textContentItemMediaOnly]: isMediaOnly && !isBotMessage,
                   })}
+                  style={{ padding: textPadding }}
                 >
                   {isBotMessage && (
                     <span className={classes.senderBadge}>Bot</span>
@@ -783,7 +823,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
                   {message.quotedMsg && renderQuotedMessage(message)}
                   <MarkdownWrapper>{message.body || ""}</MarkdownWrapper>
                   <span className={classes.timestamp}>
-                    {format(parseISO(message.createdAt), "HH:mm")}
+                    {safeFormatTime(message.createdAt)}
                     {renderMessageAck(message)}
                   </span>
                 </div>
