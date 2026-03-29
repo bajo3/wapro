@@ -74,10 +74,28 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
   newContact.number = newContact.number.replace("-", "").replace(" ", "");
 
   const schema = Yup.object().shape({
-    name: Yup.string().required(),
+    name: Yup.string()
+      .required("El nombre es obligatorio.")
+      .min(2, "El nombre debe tener al menos 2 caracteres.")
+      .max(120, "El nombre no puede superar los 120 caracteres."),
     number: Yup.string()
-      .required()
-      .matches(/^\d+$/, "Invalid number format. Only numbers is allowed.")
+      .required("El número de teléfono es obligatorio.")
+      .matches(/^\d+$/, "El número solo debe contener dígitos.")
+      .min(7, "El número debe tener al menos 7 dígitos.")
+      .max(20, "El número no puede superar los 20 dígitos."),
+    email: Yup.string()
+      .optional()
+      .nullable()
+      .email("El email no tiene un formato válido.")
+      .max(200, "El email no puede superar los 200 caracteres."),
+    extraInfo: Yup.array()
+      .optional()
+      .of(
+        Yup.object().shape({
+          name: Yup.string().required("Cada campo extra requiere nombre.").max(60),
+          value: Yup.string().max(500)
+        })
+      )
   });
 
   try {
@@ -128,11 +146,20 @@ export const update = async (
   const contactData: ContactData = req.body;
 
   const schema = Yup.object().shape({
-    name: Yup.string(),
-    number: Yup.string().matches(
-      /^\d+$/,
-      "Invalid number format. Only numbers is allowed."
-    )
+    name: Yup.string()
+      .optional()
+      .min(2, "El nombre debe tener al menos 2 caracteres.")
+      .max(120, "El nombre no puede superar los 120 caracteres."),
+    number: Yup.string()
+      .optional()
+      .matches(/^\d+$/, "El número solo debe contener dígitos.")
+      .min(7, "El número debe tener al menos 7 dígitos.")
+      .max(20, "El número no puede superar los 20 dígitos."),
+    email: Yup.string()
+      .optional()
+      .nullable()
+      .email("El email no tiene un formato válido.")
+      .max(200, "El email no puede superar los 200 caracteres.")
   });
 
   try {

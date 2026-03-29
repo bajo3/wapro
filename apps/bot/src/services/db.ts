@@ -30,9 +30,9 @@ const ssl = shouldRelaxTls(connectionString) ? { rejectUnauthorized: false } : u
 export const pool = new Pool({
   connectionString,
   ssl,
-  max: 5,
-  idleTimeoutMillis: 10_000,
-  connectionTimeoutMillis: 10_000
+  max: 20,                          // was 5 — supports concurrent CRM + bot usage
+  idleTimeoutMillis: 30_000,        // was 10s — reduces reconnect churn
+  connectionTimeoutMillis: 15_000   // was 10s — more tolerant of network latency
 });
 
 export async function migrate() {

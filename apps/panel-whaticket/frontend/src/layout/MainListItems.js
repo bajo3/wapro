@@ -17,6 +17,7 @@ import PlaylistAddCheckOutlinedIcon from "@material-ui/icons/PlaylistAddCheckOut
 import AccountTreeOutlinedIcon from "@material-ui/icons/AccountTreeOutlined";
 import QuestionAnswerOutlinedIcon from "@material-ui/icons/QuestionAnswerOutlined";
 import DescriptionOutlinedIcon from "@material-ui/icons/DescriptionOutlined";
+import EqualizerIcon from "@material-ui/icons/Equalizer";
 // NOTE: SmartToyOutlined is not available in some @material-ui/icons v4 releases,
 // which breaks Vite/Rollup builds with "failed to resolve import".
 // Use a stable icon that exists across MUI v4.
@@ -109,6 +110,12 @@ const MainListItems = (props) => {
         to="/quotations"
         primary="Cotizaciones"
         icon={<DescriptionOutlinedIcon />}
+      />
+
+      <ListItemLink
+        to="/metrics"
+        primary="Métricas"
+        icon={<EqualizerIcon />}
       />
 
       <ListItemLink

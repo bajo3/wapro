@@ -22,6 +22,7 @@ const Queues = lazy(() => import("../pages/Queues/"));
 const Campaigns = lazy(() => import("../pages/Campaigns"));
 const Quotations = lazy(() => import("../pages/Quotations"));
 const Pipeline = lazy(() => import("../pages/Pipeline"));
+const MetricsDashboard = lazy(() => import("../pages/MetricsDashboard"));
 import { AuthProvider } from "../context/Auth/AuthContext";
 import { WhatsAppsProvider } from "../context/WhatsApp/WhatsAppsContext";
 import { ThemeProvider } from "../context/DarkMode";
@@ -53,6 +54,7 @@ const Routes = () => {
                 {/* Backwards compatibility: /training now lives inside /bot as a tab */}
                 <Route exact path="/training" component={TrainingRedirect} isPrivate />
                 <Route exact path="/quotations" component={Quotations} isPrivate />
+                <Route exact path="/metrics" component={MetricsDashboard} isPrivate />
                 <Route exact path="/Settings" component={Settings} isPrivate />
                 <Route exact path="/Queues" component={Queues} isPrivate />
               </LoggedInLayout>

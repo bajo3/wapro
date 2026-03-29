@@ -415,3 +415,54 @@ export const send = async (req: Request, res: Response): Promise<Response> => {
 
   return res.json({ ok: true, quotation, ticketId: ticket.id });
 };
+
+/**
+ * expireStale — Marca como "expired" todas las cotizaciones cuyo validUntil
+ * ya pasó y siguen en estado "sent" o "viewed".
+ * Puede llamarse manualmente desde el panel o en un cron job.
+ */
+export const expireStale = async (req: Request, res: Response): Promise<Response> => {
+  const now = new Date();
+  const [count] = await Quotation.update(
+    { status: "expired" } as any,
+    {
+      where: {
+        status: { [Op.in]: ["sent", "viewed", "draft"] },
+        validUntil: { [Op.lt]: now, [Op.ne]: null }
+      }
+    }
+  );
+  return res.json({ ok: true, expired: count, checkedAt: now.toISOString() });
+};
+
+/**
+ * stats — Resumen de cotizaciones por estado + conversión.
+ */
+export const stats = async (req: Request, res: Response): Promise<Response> => {
+  const Sequelize = (Quotation as any).sequelize;
+  if (!Sequelize) throw new AppError("ERR_DB_NOT_INITIALIZED", 500);
+
+  const rows = await Quotation.findAll({
+    attributes: [
+      "status",
+      [Sequelize.fn("COUNT", Sequelize.col("id")), "total"],
+      [Sequelize.fn("SUM", Sequelize.col("totalPrice")), "totalAmount"]
+    ],
+    group: ["status"],
+    raw: true
+  });
+
+  const byStatus: Record<string, { total: number; totalAmount: number }> = {};
+  for (const row of rows as any[]) {
+    byStatus[row.status] = {
+      total: Number(row.total),
+      totalAmount: Number(row.totalAmount ?? 0)
+    };
+  }
+
+  const total = Object.values(byStatus).reduce((s, r) => s + r.total, 0);
+  const accepted = byStatus.accepted?.total ?? 0;
+  const conversionRate = total > 0 ? Math.round((accepted / total) * 100) : 0;
+
+  return res.json({ ok: true, byStatus, total, conversionRate });
+};

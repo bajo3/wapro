@@ -3,6 +3,39 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
+
+// ─── In-memory rate limiter (no external deps) ────────────────────────────────
+// Tracks request counts per IP in a sliding window.
+type RateBucket = { count: number; windowStart: number };
+function createRateLimiter(windowMs: number, maxRequests: number, message = 'Too many requests') {
+  const buckets = new Map<string, RateBucket>();
+  // Prune stale entries every windowMs to prevent memory leaks
+  setInterval(() => {
+    const threshold = Date.now() - windowMs * 2;
+    for (const [key, bucket] of buckets) {
+      if (bucket.windowStart < threshold) buckets.delete(key);
+    }
+  }, windowMs).unref();
+
+  return (req: any, res: any, next: any) => {
+    const ip = String(req.ip ?? req.connection?.remoteAddress ?? 'unknown');
+    const now = Date.now();
+    let bucket = buckets.get(ip);
+    if (!bucket || now - bucket.windowStart > windowMs) {
+      bucket = { count: 0, windowStart: now };
+      buckets.set(ip, bucket);
+    }
+    bucket.count++;
+    if (bucket.count > maxRequests) {
+      return res.status(429).json({ ok: false, error: message });
+    }
+    return next();
+  };
+}
+
+// Limits per route type:
+const webhookLimiter = createRateLimiter(60_000, 300, 'Webhook rate limit exceeded');  // 300/min per IP
+const adminLimiter   = createRateLimiter(60_000, 60,  'Admin rate limit exceeded');     // 60/min per IP
 import http from "http";
 import { Server } from "socket.io";
 import { setSocket } from "./services/socket.js";
@@ -54,8 +87,8 @@ async function main() {
 
   // health + routes
   app.get("/health", (_req, res) => res.json({ ok: true }));
-  app.use("/webhooks", webhookRouter);
-  app.use("/admin", adminRouter);
+  app.use("/webhooks", webhookLimiter, webhookRouter);
+  app.use("/admin", adminLimiter, adminRouter);
 
   // ❌ DO NOT use app.listen here (it bypasses Socket.IO server)
   httpServer.listen(env.port, () => {

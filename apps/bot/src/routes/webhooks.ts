@@ -1511,6 +1511,92 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       return;
     }
 
+    // ── Auto-tagging de leads por intención ───────────────────────────────────
+    // Clasifica el lead con una etiqueta primaria basada en el intent detectado
+    // y persiste en bot_conversations (columnas añadidas en migración 014).
+    try {
+      const detectedIntent: string = (newState as any).last_intent ?? '';
+      const INTENT_TO_TAG: Record<string, string> = {
+        'stock_search':            'exploracion',
+        'price_request':           'interes_precio',
+        'product_results':         'vio_catalogo',
+        'product_results_single':  'vio_catalogo',
+        'financing_query':         'financiacion',
+        'trade_in':                'permuta',
+        'closing':                 'compra_inmediata',
+        'visit_schedule':          'compra_inmediata',
+        'agent_closing':           'compra_inmediata',
+        'agent_financing_query':   'financiacion',
+        'agent_trade_in':          'permuta',
+        'agent_stock_search':      'exploracion',
+        'gpt_fallback':            'consulta_general',
+        'fallback':                'consulta_general',
+      };
+
+      // Mapear intent → tag semántico
+      const rawIntentKey = detectedIntent.replace(/^agent_/, 'agent_');
+      const tag = INTENT_TO_TAG[detectedIntent]
+        ?? INTENT_TO_TAG[rawIntentKey]
+        ?? (detectedIntent.startsWith('agent_') ? INTENT_TO_TAG[detectedIntent.replace(/^agent_/, '')] : null)
+        ?? null;
+
+      if (tag) {
+        // Actualizar lead_tags (array JSONB) y lead_intent_primary en DB
+        await pool.query(`
+          UPDATE bot_conversations
+          SET
+            lead_intent_primary  = CASE WHEN lead_intent_primary IS NULL OR $3::text IN ('compra_inmediata','financiacion','permuta')
+                                     THEN $3::text ELSE lead_intent_primary END,
+            lead_tags            = (
+              SELECT jsonb_agg(DISTINCT v)
+              FROM jsonb_array_elements_text(
+                COALESCE(lead_tags, '[]'::jsonb) || $4::jsonb
+              ) AS v
+            ),
+            last_classified_at   = now()
+          WHERE instance = $1 AND remote_jid = $2
+        `, [instance, remoteJid, tag, JSON.stringify([tag])]).catch(() => {});
+      }
+    } catch { /* no bloquear flujo principal */ }
+
+    // ── Comparador de vehículos ───────────────────────────────────────────────
+    // Si el agente detectó intent=comparacion y vehicleIds con 2+ opciones,
+    // construye un mensaje comparativo estructurado.
+    try {
+      const agentData = (newState as any).agent;
+      if (
+        agentData?.intent === 'comparacion' &&
+        Array.isArray(agentData?.vehicleIds) &&
+        agentData.vehicleIds.length >= 2 &&
+        catalog
+      ) {
+        const ids = agentData.vehicleIds.slice(0, 3).map(String);
+        const items = (catalog as any[]).filter(v => ids.includes(String(v.id)));
+        if (items.length >= 2) {
+          const lines = ['🔍 *Comparativa rápida:*\n'];
+          for (const v of items) {
+            const price = v.priceText ?? (v.priceNumber ? `${v.currency ?? 'USD'} ${Number(v.priceNumber).toLocaleString('es-AR')}` : 'a consultar');
+            const specs = [
+              v.year ? `${v.year}` : null,
+              typeof v.km === 'number' ? `${Math.round(v.km).toLocaleString('es-AR')} km` : null,
+              v.transmission ?? null,
+              v.fuel ?? null,
+              v.engine ?? null,
+            ].filter(Boolean).join(' · ');
+            lines.push(`*${v.name}*`);
+            lines.push(`💰 ${price}`);
+            if (specs) lines.push(`📋 ${specs}`);
+            lines.push('');
+          }
+          // Reemplazar suggestedReply con la comparativa si el bot no la generó bien
+          if (reply && reply.length < 200) {
+            reply = lines.join('\n') + '\n' + reply;
+            (newState as any).last_comparison = ids;
+          }
+        }
+      }
+    } catch { /* no bloquear flujo principal */ }
+
     scheduleReply(reply, newState);
   } catch (err) {
     console.error(err);

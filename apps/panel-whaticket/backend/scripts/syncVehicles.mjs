@@ -87,10 +87,14 @@ function parseVehicleTitle(title, brand) {
   const tokens = rest.split(/\s+/);
   let modelEnd = tokens.length; // default: entire rest = model
 
+  // Known numeric model names that should NOT be treated as version starters
+  const NUMERIC_MODELS = /^(1500|2500|3500|4runner|500|500x|208|308|408|508|2008|3008|5008|x1|x2|x3|x4|x5|x6|x7|q2|q3|q5|q7|q8|a1|a3|a4|a5|a6|a7|a8)$/i;
+
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     // Version section usually starts with an engine-size pattern: "1.6", "2.0T", "1.5"
-    if (/^\d+[.,]\d*/.test(t)) {
+    // But skip known numeric model names (e.g. "1500" in "Ram 1500")
+    if (/^\d+[.,]\d*/.test(t) && !NUMERIC_MODELS.test(t)) {
       modelEnd = i;
       break;
     }
@@ -208,10 +212,22 @@ function parseVehicleTitle(title, brand) {
   const yearCol        = firstExisting(colMap, ["year", "ano", "anio"]);
   const priceCol       = firstExisting(colMap, ["price", "precio", "amount"]);
   const currencyCol    = firstExisting(colMap, ["currency", "moneda", "curr"]);
-  const kmCol          = firstExisting(colMap, ["km", "Km", "kms", "kilometers", "kilometraje", "mileage"]);
-  const engineCol      = firstExisting(colMap, ["engine", "motor", "Motor", "cilindrada"]);
-  const transmissionCol = firstExisting(colMap, ["transmission", "caja", "Caja", "gearbox"]);
-  const fuelCol        = firstExisting(colMap, ["fuel", "combustible", "Combustible"]);
+  // For km/engine/transmission/fuel we need COALESCE because Supabase may have BOTH
+  // lowercase (null) and capitalized ML-imported (filled) columns simultaneously.
+  const kmColLower     = colMap.get("km")          ?? null;
+  const kmColUpper     = colMap.get("Km")           ? colMap.get("Km")           : (colMap.get("kms") ?? colMap.get("kilometers") ?? colMap.get("kilometraje") ?? colMap.get("mileage") ?? null);
+  const engineColLower = colMap.get("engine")       ?? null;
+  const engineColUpper = colMap.get("Motor")        ? colMap.get("Motor")        : (colMap.get("motor") ?? colMap.get("cilindrada") ?? null);
+  const transColLower  = colMap.get("transmission") ?? null;
+  const transColUpper  = colMap.get("Caja")         ? colMap.get("Caja")         : (colMap.get("caja") ?? colMap.get("gearbox") ?? null);
+  const fuelColLower   = colMap.get("fuel")         ?? null;
+  const fuelColUpper   = colMap.get("Combustible")  ? colMap.get("Combustible")  : (colMap.get("combustible") ?? null);
+
+  // Legacy single-column fallback (if only one variant exists)
+  const kmCol          = kmColLower     || kmColUpper     || firstExisting(colMap, ["km", "Km", "kms", "kilometers", "kilometraje", "mileage"]);
+  const engineCol      = engineColLower || engineColUpper || firstExisting(colMap, ["engine", "motor", "Motor", "cilindrada"]);
+  const transmissionCol = transColLower || transColUpper  || firstExisting(colMap, ["transmission", "caja", "Caja", "gearbox"]);
+  const fuelCol        = fuelColLower   || fuelColUpper   || firstExisting(colMap, ["fuel", "combustible", "Combustible"]);
   const colorCol       = firstExisting(colMap, ["color", "Color"]);
   const statusCol      = firstExisting(colMap, ["status", "estado"]);
   const imageCol       = firstExisting(colMap, ["image_url", "image", "cover", "cover_image", "thumbnail", "picture_url"]);
@@ -234,10 +250,19 @@ function parseVehicleTitle(title, brand) {
     yearCol        ? `"${yearCol}" AS year`          : `NULL::int     AS year`,
     priceCol       ? `"${priceCol}" AS price`        : `NULL::numeric AS price`,
     currencyCol    ? `"${currencyCol}" AS currency`  : `NULL::text    AS currency`,
-    kmCol          ? `"${kmCol}" AS km`              : `NULL::numeric AS km`,
-    engineCol      ? `"${engineCol}" AS engine`      : `NULL::text    AS engine`,
-    transmissionCol ? `"${transmissionCol}" AS transmission` : `NULL::text AS transmission`,
-    fuelCol        ? `"${fuelCol}" AS fuel`          : `NULL::text    AS fuel`,
+    // COALESCE both column variants: prefer lowercase (standard) but fall back to capitalized (ML-imported)
+    (kmColLower && kmColUpper)
+      ? `COALESCE("${kmColLower}", "${kmColUpper}") AS km`
+      : (kmCol ? `"${kmCol}" AS km` : `NULL::numeric AS km`),
+    (engineColLower && engineColUpper)
+      ? `COALESCE("${engineColLower}", "${engineColUpper}") AS engine`
+      : (engineCol ? `"${engineCol}" AS engine` : `NULL::text AS engine`),
+    (transColLower && transColUpper)
+      ? `COALESCE("${transColLower}", "${transColUpper}") AS transmission`
+      : (transmissionCol ? `"${transmissionCol}" AS transmission` : `NULL::text AS transmission`),
+    (fuelColLower && fuelColUpper)
+      ? `COALESCE("${fuelColLower}", "${fuelColUpper}") AS fuel`
+      : (fuelCol ? `"${fuelCol}" AS fuel` : `NULL::text AS fuel`),
     colorCol       ? `"${colorCol}" AS color`        : `NULL::text    AS color`,
     statusCol      ? `"${statusCol}" AS status`      : `'active'::text AS status`,
     imageCol       ? `"${imageCol}" AS image_url`    : `NULL::text    AS image_url`,
@@ -281,9 +306,22 @@ function parseVehicleTitle(title, brand) {
     if (!r.id) continue;
 
     const price = r.price !== null && r.price !== undefined ? Number(r.price) : null;
-    const currency =
-      str(r.currency || "").toUpperCase() ||
-      (price !== null && price < 1_000_000 ? "USD" : "ARS");
+    // Currency heuristic:
+    // - If source says "USD" → trust it
+    // - If source says "ARS" but price < 500,000 → likely USD (used cars from ML often mistagged)
+    // - If no currency → infer from price threshold
+    const rawCurrency = str(r.currency || "").toUpperCase();
+    let currency;
+    if (rawCurrency === "USD") {
+      currency = "USD";
+    } else if (price !== null && price > 0 && price < 500_000) {
+      // Sub-500k almost certainly USD in Argentina auto market (even cheapest cars are > 500k ARS)
+      currency = "USD";
+    } else if (rawCurrency) {
+      currency = rawCurrency;
+    } else {
+      currency = price !== null && price < 1_000_000 ? "USD" : "ARS";
+    }
 
     let brand = r.brand ?? null;
     let model = r.model ?? null;
@@ -318,6 +356,15 @@ function parseVehicleTitle(title, brand) {
       r.permalink ?? null,
       r.source ?? null,
     ]);
+
+    // Registrar en historial de precios si hubo cambio (función definida en migración 014)
+    if (price !== null && Number.isFinite(price)) {
+      await dst.query(
+        `SELECT record_vehicle_price_change($1, $2, $3, $4, $5, $6, $7, 'sync')`,
+        [str(r.id), title, brand, model, r.year ? Number(r.year) : null, price, currency]
+      ).catch(() => { /* no bloquear si función no existe aún */ });
+    }
+
     ok++;
   }
 

@@ -46,7 +46,9 @@ export function formatPrice(price: any, currency?: string | null): string {
 
 export async function getVehicleById(vehicleId: string): Promise<VehicleRow | null> {
   const q = `
-    select id, title, brand, model, year, km, price, currency, slug, permalink
+    select id, title, brand, model, year,
+      COALESCE(km, "Km") as km,
+      price, currency, slug, permalink
     from public.vehicles
     where id = $1
     ${env.catalogDealershipId ? 'and dealership_id = $2' : ''}
@@ -60,7 +62,9 @@ export async function getVehicleById(vehicleId: string): Promise<VehicleRow | nu
 
 export async function getVehicleBySlug(slug: string): Promise<VehicleRow | null> {
   const q = `
-    select id, title, brand, model, year, km, price, currency, slug, permalink
+    select id, title, brand, model, year,
+      COALESCE(km, "Km") as km,
+      price, currency, slug, permalink
     from public.vehicles
     where slug = $1
     ${env.catalogDealershipId ? 'and dealership_id = $2' : ''}

@@ -117,6 +117,54 @@ adminRouter.get('/qr', async (req, res) => {
  * Lightweight "training" helpers (v1): expose recent conversation state
  * so you can build a UI without touching the bot code every time.
  */
+/**
+ * Lead intents summary — agrupa leads por lead_intent_primary para el dashboard.
+ */
+adminRouter.get('/lead-intents', async (req, res) => {
+  const instance = String(req.query.instance ?? env.instanceName);
+  try {
+    const r = await pool.query(`
+      SELECT
+        lead_intent_primary AS intent,
+        COUNT(*) AS count
+      FROM bot_conversations
+      WHERE instance = $1
+        AND lead_intent_primary IS NOT NULL
+      GROUP BY lead_intent_primary
+      ORDER BY count DESC
+    `, [instance]);
+    return res.json({ ok: true, instance, intents: r.rows.map(row => ({
+      intent: row.intent,
+      count: Number(row.count)
+    })) });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+/**
+ * Price history for a vehicle.
+ */
+adminRouter.get('/vehicle-price-history', async (req, res) => {
+  const vehicleId = String(req.query.vehicleId ?? '');
+  if (!vehicleId) return res.status(400).json({ ok: false, message: 'vehicleId required' });
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 50)));
+  try {
+    const r = await pool.query(`
+      SELECT vehicle_id, title, brand, model, year,
+             price_before, price_after, currency,
+             delta_abs, delta_pct, change_reason, recorded_at
+      FROM vehicle_price_history
+      WHERE vehicle_id = $1
+      ORDER BY recorded_at DESC
+      LIMIT $2
+    `, [vehicleId, limit]);
+    return res.json({ ok: true, history: r.rows });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
 adminRouter.get('/conversations', async (req, res) => {
   const instance = String(req.query.instance ?? env.instanceName);
   const limitRaw = Number(req.query.limit ?? 50);
