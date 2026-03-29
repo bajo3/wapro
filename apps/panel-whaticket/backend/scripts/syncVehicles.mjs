@@ -300,6 +300,9 @@ function parseVehicleTitle(title, brand) {
       source       = EXCLUDED.source
   `;
 
+  // Collect all IDs from Supabase — used later to delete stale rows from Railway
+  const supabaseIds = res.rows.map((r) => str(r.id)).filter(Boolean);
+
   let ok = 0;
   let titleParsed = 0;
   for (const r of res.rows) {
@@ -368,7 +371,26 @@ function parseVehicleTitle(title, brand) {
     ok++;
   }
 
-  console.log(`Synced vehicles: ${ok} (${titleParsed} model/version inferred from title)`);
+  console.log(`Synced vehicles: ${ok} upserted (${titleParsed} model/version inferred from title)`);
+
+  // ── Borrar de Railway los autos que ya no existen en Supabase ────────────────
+  // Si Supabase tiene 0 vehículos (algo salió mal en la consulta), NO borramos
+  // nada para evitar borrar todo por error de conexión.
+  if (supabaseIds.length > 0) {
+    const delRes = await dst.query(
+      `DELETE FROM public.vehicles WHERE id != ALL($1::text[]) RETURNING id`,
+      [supabaseIds]
+    );
+    const deleted = delRes.rowCount ?? 0;
+    if (deleted > 0) {
+      const deletedIds = delRes.rows.map((r) => r.id).join(", ");
+      console.log(`Deleted ${deleted} stale vehicle(s) from Railway: ${deletedIds}`);
+    } else {
+      console.log("No stale vehicles to delete.");
+    }
+  } else {
+    console.warn("Supabase returned 0 vehicles — skipping delete step to avoid wiping Railway.");
+  }
 
   await src.end();
   await dst.end();
