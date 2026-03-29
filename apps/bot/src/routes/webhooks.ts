@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { env } from '../lib/env.js';
+import { pool } from '../services/db.js';
 import { evolutionSendPresence } from '../services/evolution.js';
 import { getCatalog, searchCatalog, formatItemLine } from '../services/catalog.js';
 import { getState, setState, seenDedupe, markDedupe } from '../services/state.js';

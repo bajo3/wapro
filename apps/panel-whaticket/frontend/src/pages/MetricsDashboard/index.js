@@ -12,10 +12,14 @@ import DirectionsCarIcon from "@material-ui/icons/DirectionsCar";
 import MonetizationOnIcon from "@material-ui/icons/MonetizationOn";
 import AssignmentIcon from "@material-ui/icons/Assignment";
 import api from "../../services/api";
-import { getBotApiUrl } from "../../config";
 import axios from "axios";
 
-const BOT_BASE = getBotApiUrl ? getBotApiUrl() : (process.env.REACT_APP_BOT_API_URL || "");
+// Bot API URL — configurable via env, no hard dependency on config.js export
+const BOT_BASE = (
+  (typeof window !== "undefined" && window.ENV?.VITE_BOT_API_URL) ||
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_BOT_API_URL) ||
+  ""
+);
 
 const useStyles = makeStyles((theme) => ({
   root: {
