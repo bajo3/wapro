@@ -148,7 +148,10 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       const version = (row.version ?? "").trim() || undefined;
 
       const structuredName = [brand, model, version].filter(Boolean).join(" ");
-      const name = structuredName || title || row.id;
+      // If model is empty, structured name is just the brand — unhelpful for matching.
+      // Prefer the full title in that case (e.g. "BAIC 2026 X35" beats "BAIC").
+      const hasModel = model.length > 0;
+      const name = (hasModel && structuredName) ? structuredName : (title || structuredName || String(row.id));
       const year = row.year ?? undefined;
       const km = coerceNumber(row.km);
       // isNew: km === 0 explícito, o status contiene "0km" / "nuevo" / "new"

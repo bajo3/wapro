@@ -234,6 +234,7 @@ function TabStock({ vehicles, loadingVehicles }) {
   });
 
   const disponibles = vehicles.filter(v => v.status !== "sold").length;
+  const incompletos = vehicles.filter(v => !String(v.model || v.modelo || "").trim()).length;
 
   return (
     <div>
@@ -258,6 +259,11 @@ function TabStock({ vehicles, loadingVehicles }) {
       <SectionTitle>
         Vehículos que el bot conoce ·{" "}
         <span className="text-green-400">{disponibles} disponibles</span>
+        {incompletos > 0 && (
+          <span className="ml-2 text-red-400" title="Vehículos con modelo faltante: el bot los conoce pero no los puede buscar bien por marca/modelo">
+            · ⚠️ {incompletos} con datos incompletos
+          </span>
+        )}
       </SectionTitle>
 
       {loadingVehicles ? (
@@ -286,6 +292,9 @@ function TabStock({ vehicles, loadingVehicles }) {
             const year = v.year || "—";
             const trans = v.caja || v.transmission || v.Caja || "—";
             const fuel = v.combustible || v.fuel || v.Combustible || "—";
+            // Detect incomplete data: no model field means the bot can't match this vehicle well
+            const hasModel = String(v.model || v.modelo || "").trim().length > 0;
+            const incompleto = !hasModel;
             const imageUrl = v.imageUrl || v.image || (Array.isArray(v.pictures) ? v.pictures[0] : null);
             const precioDisplay = precioRaw
               ? (Number.isFinite(precioNum) && precioNum > 0
@@ -297,9 +306,12 @@ function TabStock({ vehicles, loadingVehicles }) {
               <div
                 key={v.id || i}
                 className={`border rounded-xl overflow-hidden transition-colors
-                  ${es0km
-                    ? "bg-amber-500/[0.04] border-amber-500/20"
-                    : "bg-white/[0.03] border-white/[0.06]"}`}
+                  ${incompleto
+                    ? "bg-red-500/[0.04] border-red-500/20"
+                    : es0km
+                      ? "bg-amber-500/[0.04] border-amber-500/20"
+                      : "bg-white/[0.03] border-white/[0.06]"}`}
+                title={incompleto ? "⚠️ Datos incompletos: falta modelo. El bot no puede matchear bien este vehículo." : undefined}
               >
                 {imageUrl ? (
                   <div className="h-28 bg-white/[0.03] border-b border-white/[0.06] overflow-hidden">
@@ -325,6 +337,11 @@ function TabStock({ vehicles, loadingVehicles }) {
                       {v.status === "sold" ? "Vendido" : v.status === "reserved" ? "Reservado" : "Disponible"}
                     </span>
                   </div>
+                  {incompleto && (
+                    <div className="mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
+                      ⚠️ Modelo faltante
+                    </div>
+                  )}
                   <div className="text-[11px] text-white/40 mt-1">{year} · {trans} · {fuel}</div>
                   {precioDisplay && (
                     <div className="text-sm font-bold text-amber-400 mt-2">
