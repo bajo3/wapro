@@ -980,12 +980,130 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     }
 
     // ── Financing flow continuation ───────────────────────────────────────
+    // When the bot is collecting financing data, intercept ALL replies and
+    // route them directly — do not fall through to the intelligence layer.
     if (state.finance?.stage === 'collecting') {
-      // Re-enter the financing simulator even if the message is just a number.
-      const financeMsg = /(\bcuotas?\b|\bmeses?\b|\bentrada\b|\banticipo\b|\bse[ñn]a\b|\b\d{7,12}\b)/i.test(rawText);
-      if (financeMsg) {
-        // Force the asksFinancing branch by injecting a marker.
-        // (We keep logic in one place.)
+      const finance = { ...(state.finance || {}) } as any;
+
+      // Build the list of fields still needed (from stored missing_fields or re-derive).
+      const prevMissing: string[] = Array.isArray((state as any).missing_fields) && (state as any).missing_fields.length > 0
+        ? [...(state as any).missing_fields]
+        : (['precio', 'entrada', 'cuotas'] as const).filter(f => {
+            if (f === 'precio') return !finance.price;
+            if (f === 'entrada') return finance.downPayment === undefined || finance.downPayment === null;
+            if (f === 'cuotas') return !finance.months;
+            return false;
+          });
+
+      if (prevMissing.length > 0) {
+        // Parse numeric-only replies (e.g. "24", "3000000", "0")
+        const numericOnly = /^\s*\d+([.,]\d+)?\s*$/.test(rawText.trim());
+        const numVal = numericOnly ? parseFloat(rawText.trim().replace(',', '.')) : NaN;
+        const firstMissing = prevMissing[0];
+
+        if (firstMissing === 'precio') {
+          if (extracted?.amount && Number(extracted.amount) > 0) {
+            finance.price = Number(extracted.amount);
+          } else if (!Number.isNaN(numVal) && numVal > 100) {
+            finance.price = numVal;
+          }
+        } else if (firstMissing === 'entrada') {
+          if (/\b(sin\s*anticipo|sin\s*entrada|no\s*tengo|sin\s*se[ñn]a)\b/i.test(rawText) || rawText.trim() === '0') {
+            finance.downPayment = 0;
+          } else if (/\b(entrada|anticipo|se[ñn]a)\b/i.test(rawText) && extracted?.amount !== undefined) {
+            finance.downPayment = Number(extracted.amount);
+          } else if (!Number.isNaN(numVal)) {
+            finance.downPayment = numVal; // includes 0
+          } else if (extracted?.amount !== undefined) {
+            finance.downPayment = Number(extracted.amount);
+          }
+        } else if (firstMissing === 'cuotas') {
+          if (extracted?.cuotas) {
+            finance.months = Number(extracted.cuotas);
+          } else if (!Number.isNaN(numVal) && numVal >= 1 && numVal <= 120) {
+            finance.months = Math.round(numVal);
+          }
+        }
+
+        // Re-derive still-missing after attempting to fill
+        const stillMissing: string[] = [];
+        if (!finance.price) stillMissing.push('precio');
+        if (finance.downPayment === undefined || finance.downPayment === null) stillMissing.push('entrada');
+        if (!finance.months) stillMissing.push('cuotas');
+
+        const { _forceFinancing: _ffi, ...scFin } = state as any;
+
+        if (stillMissing.length < prevMissing.length) {
+          // Made progress — either ask next question or run simulation
+          if (stillMissing.length > 0) {
+            scheduleReply(getNextFinanceQuestion(stillMissing), {
+              ...scFin,
+              stage: 'idle' as const,
+              lastBotAt: nowIso,
+              finance: { ...finance, stage: 'collecting' },
+              missing_fields: stillMissing,
+              last_intent: 'financing',
+              extracted,
+            } as any);
+            return;
+          }
+
+          // All fields collected — run the simulation
+          const apr = await getFinanceApr();
+          const sim = simulateFinancing({
+            price:       Number(finance.price),
+            downPayment: Number(finance.downPayment || 0),
+            months:      Number(finance.months),
+            apr,
+          });
+          finance.apr       = apr;
+          finance.monthly   = sim.monthly;
+          finance.createdAt = nowIso;
+          finance.stage     = 'idle';
+
+          const simReply = [
+            `✅ Simulación estimada:`,
+            `• Precio: ARS ${formatArs(sim.price)}`,
+            `• Entrada: ARS ${formatArs(sim.downPayment)}`,
+            `• Plazo: ${sim.months} meses`,
+            `• Tasa: ~${Math.round(apr * 100)}% anual`,
+            `\n💳 Cuota estimada: **ARS ${formatArs(sim.monthly)} / mes**`,
+            `\n¿Querés que te arme una cotización formal? Si me decís el vehículo que te interesa, lo armo ahora.`,
+          ].join('\n');
+
+          try {
+            await addConversationNote(instance, remoteJid,
+              `Simulación financiación: precio=${sim.price} entrada=${sim.downPayment} meses=${sim.months} apr=${apr} cuota=${Math.round(sim.monthly)}`
+            );
+          } catch { /* ignore */ }
+
+          scheduleReply(simReply, {
+            ...scFin,
+            stage: 'idle' as const,
+            lastBotAt: nowIso,
+            finance,
+            last_intent: 'financing',
+            missing_fields: [],
+            extracted,
+          } as any);
+          return;
+        }
+
+        // Couldn't extract a value from the reply — re-ask the same question
+        if (numericOnly || /^\s*\d/.test(rawText)) {
+          scheduleReply(getNextFinanceQuestion(prevMissing), {
+            ...scFin,
+            stage: 'idle' as const,
+            lastBotAt: nowIso,
+            finance: { ...finance, stage: 'collecting' },
+            missing_fields: prevMissing,
+            last_intent: 'financing',
+            extracted,
+          } as any);
+          return;
+        }
+
+        // Non-numeric, unclear reply → fall through to normal handling but keep finance alive
         (state as any)._forceFinancing = true;
       }
     }
@@ -1116,6 +1234,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             newState.last_query = rawText;
             newState.last_hits = (matches.hits.length ? matches.hits : matches.nearby).map((it) => it.id).slice(0, 3);
             newState.last_hits_at = nowIso;
+            // Attach the first result's photo so the user sees a preview image
+            (newState as any)._firstVehicleImage = (matches.hits[0] as any)?.image ?? undefined;
           } else {
             // Empty result: fallback to next useful question
             reply = '';
@@ -1302,6 +1422,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               newState.last_query = rawText;
               newState.last_hits = (matches.hits.length ? matches.hits : matches.nearby).map((it) => it.id).slice(0, 3);
               newState.last_hits_at = nowIso;
+              // Attach the first result's photo so the user sees a preview image
+              (newState as any)._firstVehicleImage = (matches.hits[0] as any)?.image ?? undefined;
             }
           }
         }
@@ -1598,7 +1720,9 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       }
     } catch { /* no bloquear flujo principal */ }
 
-    scheduleReply(reply, newState);
+    scheduleReply(reply, newState, {
+      imageUrl: (newState as any)._firstVehicleImage ?? undefined,
+    });
   } catch (err) {
     console.error(err);
   }

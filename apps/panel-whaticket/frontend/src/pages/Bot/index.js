@@ -1093,13 +1093,537 @@ function TabReglas({ policies, faqs, loadingPolicies, onReloadPolicies, onReload
   );
 }
 
+// ─── Tab: Playbooks ───────────────────────────────────────────────────────────
+
+function TabPlaybooks({ playbooks, loadingPlaybooks, onReload }) {
+  const [form, setForm] = useState({ intent: "", description: "", template: "" });
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!form.intent.trim() || !form.template.trim()) return;
+    setSaving(true);
+    try {
+      await api.post("/bot/intelligence/playbooks", form);
+      toast.success("Playbook guardado");
+      setForm({ intent: "", description: "", template: "" });
+      setShowForm(false);
+      onReload();
+    } catch {
+      toast.error("Error al guardar el playbook");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const del = async (id) => {
+    if (!window.confirm("¿Eliminar este playbook?")) return;
+    try {
+      await api.delete(`/bot/intelligence/playbooks/${id}`);
+      toast.success("Playbook eliminado");
+      onReload();
+    } catch {
+      toast.error("Error al eliminar");
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="text-[14px] font-semibold text-white">Playbooks</div>
+          <div className="text-[12px] text-white/40 mt-0.5">
+            Plantillas de respuesta activadas por intención del cliente.
+            Usá {"{{nombre}}"}, {"{{marca}}"}, {"{{modelo}}"} como variables.
+          </div>
+        </div>
+        <button
+          onClick={() => setShowForm(v => !v)}
+          className="px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[12px] font-semibold rounded-lg hover:bg-amber-500/20 transition-colors"
+        >
+          + Nuevo playbook
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="bg-white/[0.03] border border-white/[0.07] rounded-xl p-4 mb-5 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[11px] text-white/40 mb-1 block">Intent (clave interna)</label>
+              <input
+                className="w-full bg-white/[0.05] border border-white/[0.08] rounded-lg px-3 py-2 text-[13px] text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40"
+                placeholder="ej: permuta, financiacion, visita"
+                value={form.intent}
+                onChange={e => setForm(f => ({ ...f, intent: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-[11px] text-white/40 mb-1 block">Descripción</label>
+              <input
+                className="w-full bg-white/[0.05] border border-white/[0.08] rounded-lg px-3 py-2 text-[13px] text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40"
+                placeholder="Para qué sirve este playbook"
+                value={form.description}
+                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-[11px] text-white/40 mb-1 block">Template de respuesta</label>
+            <textarea
+              rows={4}
+              className="w-full bg-white/[0.05] border border-white/[0.08] rounded-lg px-3 py-2 text-[13px] text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40 resize-none"
+              placeholder="Escribí la respuesta. Usá {{nombre}}, {{marca}}, {{modelo}}, {{precio}} como variables dinámicas."
+              value={form.template}
+              onChange={e => setForm(f => ({ ...f, template: e.target.value }))}
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={save}
+              disabled={saving || !form.intent.trim() || !form.template.trim()}
+              className="px-4 py-1.5 bg-amber-500 text-black text-[12px] font-bold rounded-lg hover:bg-amber-400 disabled:opacity-40 transition-colors"
+            >
+              {saving ? "Guardando..." : "Guardar playbook"}
+            </button>
+            <button
+              onClick={() => setShowForm(false)}
+              className="px-4 py-1.5 bg-white/[0.05] text-white/50 text-[12px] rounded-lg hover:bg-white/[0.08] transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loadingPlaybooks ? (
+        <div className="text-center py-8 text-white/30 text-[13px]">Cargando playbooks...</div>
+      ) : playbooks.length === 0 ? (
+        <div className="text-center py-10 text-white/20 text-[13px]">
+          No hay playbooks configurados.
+          <br />
+          <span className="text-white/30">Agregá uno para que el bot use respuestas estructuradas.</span>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {playbooks.map((pb) => (
+            <div key={pb.id} className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[11px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded font-mono font-bold">
+                      {pb.intent}
+                    </span>
+                    {pb.description && (
+                      <span className="text-[12px] text-white/50">{pb.description}</span>
+                    )}
+                  </div>
+                  <div className="text-[12px] text-white/60 bg-white/[0.03] rounded-lg p-3 mt-2 whitespace-pre-wrap font-mono leading-relaxed border border-white/[0.04]">
+                    {pb.template}
+                  </div>
+                </div>
+                <button
+                  onClick={() => del(pb.id)}
+                  className="text-white/20 hover:text-red-400 transition-colors text-[18px] leading-none mt-0.5"
+                  title="Eliminar"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tab: Aprendizaje ─────────────────────────────────────────────────────────
+
+function TabAprendizaje() {
+  const [stats, setStats] = useState(null);
+  const [captures, setCaptures] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [filterStatus, setFilterStatus] = useState("pending");
+  const [selected, setSelected] = useState(null);
+  const [feedbackNote, setFeedbackNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [statsRes, capturesRes] = await Promise.allSettled([
+        api.get("/bot/learning/stats"),
+        api.get("/bot/learning/captures", { params: { status: filterStatus, limit: 30 } }),
+      ]);
+      if (statsRes.status === "fulfilled") setStats(statsRes.value.data);
+      if (capturesRes.status === "fulfilled") {
+        const d = capturesRes.value.data;
+        setCaptures(Array.isArray(d) ? d : d?.rows || []);
+      }
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, [filterStatus]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const approve = async (id) => {
+    setSubmitting(true);
+    try {
+      await api.post("/bot/learning/feedback", { captureId: id, reviewer: "panel", rating: 2, notes: feedbackNote || undefined });
+      toast.success("Captura aprobada ✓");
+      setSelected(null);
+      setFeedbackNote("");
+      loadData();
+    } catch { toast.error("Error"); }
+    finally { setSubmitting(false); }
+  };
+
+  const reject = async (id) => {
+    setSubmitting(true);
+    try {
+      await api.post("/bot/learning/feedback", { captureId: id, reviewer: "panel", rating: -1, notes: feedbackNote || undefined });
+      toast.success("Captura rechazada");
+      setSelected(null);
+      setFeedbackNote("");
+      loadData();
+    } catch { toast.error("Error"); }
+    finally { setSubmitting(false); }
+  };
+
+  const promote = async (id) => {
+    setSubmitting(true);
+    try {
+      await api.post(`/bot/learning/promote/${id}`);
+      toast.success("¡Promovido a ejemplos del bot! 🚀");
+      setSelected(null);
+      loadData();
+    } catch { toast.error("Error al promover"); }
+    finally { setSubmitting(false); }
+  };
+
+  const STATUS_LABELS = { pending: "Pendientes", approved: "Aprobadas", rejected: "Rechazadas", flagged: "Flaggeadas", all: "Todas" };
+  const STATUS_COLORS = { pending: "#f59e0b", approved: "#22c55e", rejected: "#ef4444", flagged: "#a855f7" };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="text-[14px] font-semibold text-white">Sistema de Aprendizaje Incremental</div>
+          <div className="text-[12px] text-white/40 mt-0.5">
+            Revisá respuestas del bot y aprobá las mejores para que aprenda.
+          </div>
+        </div>
+        <button onClick={loadData} className="text-[12px] text-white/30 hover:text-white/60 transition-colors">
+          ↻ Actualizar
+        </button>
+      </div>
+
+      {/* Stats row */}
+      {stats && (
+        <div className="grid grid-cols-4 gap-3 mb-5">
+          {[
+            { label: "Total capturas", value: stats.total_captures, color: "#3b82f6" },
+            { label: "Pendientes", value: stats.pending, color: "#f59e0b" },
+            { label: "Aprobadas", value: stats.approved, color: "#22c55e" },
+            { label: "Score promedio", value: stats.avg_auto_score ? (Number(stats.avg_auto_score) * 100).toFixed(0) + "%" : "—", color: "#a855f7" },
+          ].map(s => (
+            <div key={s.label} className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-3 text-center">
+              <div className="text-[20px] font-bold" style={{ color: s.color }}>{s.value ?? "—"}</div>
+              <div className="text-[11px] text-white/30 mt-0.5">{s.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Filter */}
+      <div className="flex gap-2 mb-4">
+        {Object.keys(STATUS_LABELS).map(s => (
+          <button
+            key={s}
+            onClick={() => setFilterStatus(s)}
+            className={`px-3 py-1.5 text-[12px] font-medium rounded-lg border transition-colors ${
+              filterStatus === s
+                ? "bg-white/[0.08] border-white/[0.15] text-white"
+                : "bg-transparent border-white/[0.06] text-white/30 hover:text-white/50"
+            }`}
+          >
+            {STATUS_LABELS[s]}
+          </button>
+        ))}
+      </div>
+
+      {/* List */}
+      {loading ? (
+        <div className="text-center py-8 text-white/30 text-[13px]">Cargando capturas...</div>
+      ) : captures.length === 0 ? (
+        <div className="text-center py-10 text-white/20 text-[13px]">Sin capturas para este filtro.</div>
+      ) : (
+        <div className="space-y-2">
+          {captures.map((c) => (
+            <div
+              key={c.id}
+              className={`bg-white/[0.02] border rounded-xl p-4 cursor-pointer hover:bg-white/[0.04] transition-colors ${
+                selected?.id === c.id ? "border-amber-500/30 bg-amber-500/[0.04]" : "border-white/[0.06]"
+              }`}
+              onClick={() => setSelected(selected?.id === c.id ? null : c)}
+            >
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                    {c.intent && (
+                      <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded font-mono">
+                        {c.intent}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-white/25">{c.source_type}</span>
+                    <span className="text-[10px]" style={{ color: STATUS_COLORS[c.status] || "#6b7280" }}>
+                      ● {c.status}
+                    </span>
+                    <span className="text-[10px] text-white/25 ml-auto">
+                      Score: {c.auto_score ? (Number(c.auto_score) * 100).toFixed(0) + "%" : "—"}
+                    </span>
+                  </div>
+                  <div className="text-[12px] text-white/70 mb-1">
+                    <span className="text-white/30">Cliente: </span>
+                    {c.user_message?.slice(0, 120)}
+                    {c.user_message?.length > 120 ? "…" : ""}
+                  </div>
+                  <div className="text-[12px] text-white/50">
+                    <span className="text-white/20">Bot: </span>
+                    {c.bot_response?.slice(0, 120)}
+                    {c.bot_response?.length > 120 ? "…" : ""}
+                  </div>
+                </div>
+              </div>
+
+              {/* Expanded review panel */}
+              {selected?.id === c.id && (
+                <div className="mt-4 pt-4 border-t border-white/[0.06]" onClick={e => e.stopPropagation()}>
+                  <div className="text-[11px] text-white/30 mb-2">Respuesta completa del bot:</div>
+                  <div className="bg-white/[0.03] rounded-lg p-3 text-[12px] text-white/70 whitespace-pre-wrap mb-3 max-h-40 overflow-y-auto">
+                    {c.bot_response}
+                  </div>
+                  <div className="mb-3">
+                    <label className="text-[11px] text-white/30 mb-1 block">Nota (opcional)</label>
+                    <input
+                      className="w-full bg-white/[0.05] border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40"
+                      placeholder="¿Por qué la aprobás o rechazás?"
+                      value={feedbackNote}
+                      onChange={e => setFeedbackNote(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex gap-2 flex-wrap">
+                    <button
+                      onClick={() => approve(c.id)}
+                      disabled={submitting}
+                      className="px-3 py-1.5 bg-green-500/10 border border-green-500/20 text-green-400 text-[12px] font-semibold rounded-lg hover:bg-green-500/20 disabled:opacity-40 transition-colors"
+                    >
+                      ✓ Aprobar
+                    </button>
+                    <button
+                      onClick={() => promote(c.id)}
+                      disabled={submitting}
+                      className="px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[12px] font-semibold rounded-lg hover:bg-amber-500/20 disabled:opacity-40 transition-colors"
+                    >
+                      🚀 Promover a ejemplos
+                    </button>
+                    <button
+                      onClick={() => reject(c.id)}
+                      disabled={submitting}
+                      className="px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 text-[12px] font-semibold rounded-lg hover:bg-red-500/20 disabled:opacity-40 transition-colors"
+                    >
+                      ✗ Rechazar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tab: Configuración ───────────────────────────────────────────────────────
+
+function TabConfig() {
+  const [settings, setSettings] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    agencyName: "",
+    financeApr: "0.75",
+    botEnabled: true,
+    maxReplyDelayMs: "2500",
+    handoffPhoneNumber: "",
+    handoffMessage: "",
+  });
+
+  useEffect(() => {
+    api.get("/bot/intelligence/settings")
+      .then(({ data }) => {
+        const s = data?.settings || data || {};
+        setSettings(s);
+        setForm({
+          agencyName:         String(s.agencyName || s.dealershipName || ""),
+          financeApr:         String(s.financeApr ?? "0.75"),
+          botEnabled:         Boolean(s.botEnabled !== false),
+          maxReplyDelayMs:    String(s.maxReplyDelayMs ?? "2500"),
+          handoffPhoneNumber: String(s.handoffPhoneNumber || ""),
+          handoffMessage:     String(s.handoffMessage || ""),
+        });
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const patch = {
+        ...settings,
+        agencyName:         form.agencyName,
+        dealershipName:     form.agencyName,
+        financeApr:         parseFloat(form.financeApr) || 0.75,
+        botEnabled:         form.botEnabled,
+        maxReplyDelayMs:    parseInt(form.maxReplyDelayMs, 10) || 2500,
+        handoffPhoneNumber: form.handoffPhoneNumber,
+        handoffMessage:     form.handoffMessage,
+      };
+      await api.put("/bot/intelligence/settings", { settings: patch });
+      setSettings(patch);
+      toast.success("Configuración guardada ✓");
+    } catch {
+      toast.error("Error al guardar la configuración");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="text-center py-8 text-white/30 text-[13px]">Cargando configuración...</div>;
+  }
+
+  const Field = ({ label, hint, children }) => (
+    <div>
+      <label className="text-[12px] font-medium text-white/60 block mb-1">{label}</label>
+      {hint && <div className="text-[11px] text-white/25 mb-1.5">{hint}</div>}
+      {children}
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="mb-5">
+        <div className="text-[14px] font-semibold text-white">Configuración del bot</div>
+        <div className="text-[12px] text-white/40 mt-0.5">
+          Parámetros globales del motor de respuestas.
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
+        <Field label="Nombre de la agencia" hint="Aparece en las respuestas del bot">
+          <input
+            className="w-full bg-white/[0.05] border border-white/[0.08] rounded-lg px-3 py-2 text-[13px] text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40"
+            placeholder="Ej: AutoRed Tandil"
+            value={form.agencyName}
+            onChange={e => setForm(f => ({ ...f, agencyName: e.target.value }))}
+          />
+        </Field>
+
+        <Field label="Tasa de financiación anual (APR)" hint="Decimal. 0.75 = 75% anual. Se usa en el simulador de cuotas.">
+          <input
+            type="number"
+            step="0.01"
+            min="0.01"
+            max="5"
+            className="w-full bg-white/[0.05] border border-white/[0.08] rounded-lg px-3 py-2 text-[13px] text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40"
+            value={form.financeApr}
+            onChange={e => setForm(f => ({ ...f, financeApr: e.target.value }))}
+          />
+          <div className="text-[11px] text-white/25 mt-1">
+            Cuota estimada actual: ARS {
+              (() => {
+                const apr = parseFloat(form.financeApr) || 0.75;
+                const price = 20_000_000;
+                const r = apr / 12;
+                const n = 24;
+                const pow = Math.pow(1 + r, n);
+                const m = (price * r * pow) / (pow - 1);
+                return Number.isFinite(m) ? Math.round(m).toLocaleString("es-AR") : "—";
+              })()
+            } / mes (ARS 20M, 24 cuotas, sin entrada)
+          </div>
+        </Field>
+
+        <Field label="Delay máximo de respuesta (ms)" hint="Tiempo que simula que el bot 'está escribiendo'. Default: 2500 ms.">
+          <input
+            type="number"
+            step="100"
+            min="500"
+            max="8000"
+            className="w-full bg-white/[0.05] border border-white/[0.08] rounded-lg px-3 py-2 text-[13px] text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40"
+            value={form.maxReplyDelayMs}
+            onChange={e => setForm(f => ({ ...f, maxReplyDelayMs: e.target.value }))}
+          />
+        </Field>
+
+        <Field label="Teléfono de derivación a humano" hint="Número WhatsApp del asesor al que se deriva cuando el bot escala.">
+          <input
+            className="w-full bg-white/[0.05] border border-white/[0.08] rounded-lg px-3 py-2 text-[13px] text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40"
+            placeholder="ej: 5492494000000"
+            value={form.handoffPhoneNumber}
+            onChange={e => setForm(f => ({ ...f, handoffPhoneNumber: e.target.value }))}
+          />
+        </Field>
+
+        <Field label="Mensaje de derivación" hint="Lo que el bot dice cuando pasa el lead a un humano.">
+          <textarea
+            rows={3}
+            className="w-full bg-white/[0.05] border border-white/[0.08] rounded-lg px-3 py-2 text-[13px] text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40 resize-none"
+            placeholder="Ej: Te paso con un asesor que te puede ayudar mejor 🙌"
+            value={form.handoffMessage}
+            onChange={e => setForm(f => ({ ...f, handoffMessage: e.target.value }))}
+          />
+        </Field>
+
+        <Field label="Estado del bot">
+          <div className="flex items-center gap-3 mt-1">
+            <button
+              onClick={() => setForm(f => ({ ...f, botEnabled: !f.botEnabled }))}
+              className={`relative w-11 h-6 rounded-full transition-colors ${form.botEnabled ? "bg-amber-500" : "bg-white/[0.12]"}`}
+            >
+              <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.botEnabled ? "translate-x-6" : "translate-x-1"}`} />
+            </button>
+            <span className={`text-[13px] font-medium ${form.botEnabled ? "text-green-400" : "text-white/30"}`}>
+              {form.botEnabled ? "Bot activo" : "Bot pausado"}
+            </span>
+          </div>
+        </Field>
+      </div>
+
+      <button
+        onClick={save}
+        disabled={saving}
+        className="px-5 py-2 bg-amber-500 text-black text-[13px] font-bold rounded-lg hover:bg-amber-400 disabled:opacity-40 transition-colors"
+      >
+        {saving ? "Guardando..." : "Guardar configuración"}
+      </button>
+    </div>
+  );
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 const TABS = [
-  { id: "estado",     label: "Estado" },
-  { id: "stock",      label: "Stock del bot" },
-  { id: "playground", label: "Playground" },
-  { id: "reglas",     label: "Reglas y FAQs" },
+  { id: "estado",      label: "Estado" },
+  { id: "stock",       label: "Stock del bot" },
+  { id: "playground",  label: "Playground" },
+  { id: "reglas",      label: "Reglas y FAQs" },
+  { id: "playbooks",   label: "Playbooks" },
+  { id: "aprendizaje", label: "Aprendizaje" },
+  { id: "config",      label: "Configuración" },
 ];
 
 export default function BotPanel() {
@@ -1121,11 +1645,13 @@ export default function BotPanel() {
   const [vehicles, setVehicles]           = useState([]);
   const [policies, setPolicies]           = useState([]);
   const [faqs, setFaqs]                   = useState([]);
+  const [playbooks, setPlaybooks]         = useState([]);
 
   // Loading states
   const [loadingDecisions, setLoadingDecisions]   = useState(false);
   const [loadingVehicles, setLoadingVehicles]     = useState(false);
   const [loadingPolicies, setLoadingPolicies]     = useState(false);
+  const [loadingPlaybooks, setLoadingPlaybooks]   = useState(false);
 
   // Cargar estado del bot
   useEffect(() => {
@@ -1187,13 +1713,27 @@ export default function BotPanel() {
     }
   }, []);
 
+  // Cargar Playbooks
+  const loadPlaybooks = useCallback(async () => {
+    setLoadingPlaybooks(true);
+    try {
+      const { data } = await api.get("/bot/intelligence/playbooks");
+      setPlaybooks(Array.isArray(data) ? data : data?.playbooks || []);
+    } catch {
+      setPlaybooks([]);
+    } finally {
+      setLoadingPlaybooks(false);
+    }
+  }, []);
+
   // Cargar todo al montar
   useEffect(() => {
     loadDecisions();
     loadVehicles();
     loadPolicies();
     loadFaqs();
-  }, [loadDecisions, loadVehicles, loadPolicies, loadFaqs]);
+    loadPlaybooks();
+  }, [loadDecisions, loadVehicles, loadPolicies, loadFaqs, loadPlaybooks]);
 
   const handleToggleBot = async (next) => {
     setTogglingBot(true);
@@ -1286,6 +1826,19 @@ export default function BotPanel() {
               onReloadPolicies={loadPolicies}
               onReloadFaqs={loadFaqs}
             />
+          )}
+          {tab === "playbooks" && (
+            <TabPlaybooks
+              playbooks={playbooks}
+              loadingPlaybooks={loadingPlaybooks}
+              onReload={loadPlaybooks}
+            />
+          )}
+          {tab === "aprendizaje" && (
+            <TabAprendizaje />
+          )}
+          {tab === "config" && (
+            <TabConfig />
           )}
         </div>
 

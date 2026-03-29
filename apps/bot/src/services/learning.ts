@@ -19,6 +19,30 @@
 
 import { pool } from './db.js';
 
+// ─── Cache de ejemplos few-shot ───────────────────────────────────────────────
+// Evita 2-3 DB queries por mensaje. TTL: 7 minutos.
+
+interface ExamplesCacheEntry {
+  examples: DynamicExample[];
+  expiresAt: number;
+}
+
+const EXAMPLES_CACHE_TTL_MS = 7 * 60 * 1000; // 7 minutes
+const _examplesCache = new Map<string, ExamplesCacheEntry>();
+
+/** Invalidate stale entries lazily on every access (no setInterval needed). */
+function _pruneExamplesCache(): void {
+  const now = Date.now();
+  for (const [k, v] of _examplesCache.entries()) {
+    if (v.expiresAt <= now) _examplesCache.delete(k);
+  }
+}
+
+/** Manually invalidate the examples cache (call after operator approves a capture or adds an example). */
+export function invalidateExamplesCache(): void {
+  _examplesCache.clear();
+}
+
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
 export type SourceType = 'faq' | 'playbook' | 'agent' | 'gpt' | 'fallback';
@@ -295,6 +319,9 @@ export async function submitFeedback(input: FeedbackInput): Promise<{ ok: boolea
       );
     }
 
+    // Invalidate examples cache so new approved examples are picked up soon
+    invalidateExamplesCache();
+
     return { ok: true, id: result.rows[0]?.id };
   } catch (err: any) {
     console.error('[learning] submitFeedback error:', err);
@@ -350,6 +377,9 @@ export async function promoteToExample(
       [captureId, exampleId]
     );
 
+    // New example available — flush cache
+    invalidateExamplesCache();
+
     return { ok: true, exampleId };
   } catch (err: any) {
     console.error('[learning] promoteToExample error:', err);
@@ -375,6 +405,15 @@ export async function selectDynamicExamples(opts: {
   maxExamples?: number;
 }): Promise<DynamicExample[]> {
   const max = Math.min(opts.maxExamples ?? 5, 10);
+  const cacheKey = `${opts.intent ?? '_any'}:${max}`;
+
+  // ── Cache hit ──────────────────────────────────────────────────────────────
+  _pruneExamplesCache();
+  const cached = _examplesCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.examples;
+  }
+
   const examples: DynamicExample[] = [];
   const seenTexts = new Set<string>();
 
@@ -478,6 +517,12 @@ export async function selectDynamicExamples(opts: {
 
     // Registrar uso en bot_examples (analytics, async)
     void incrementExamplesUsageCount(examples);
+
+    // ── Cache store ──────────────────────────────────────────────────────────
+    _examplesCache.set(cacheKey, {
+      examples,
+      expiresAt: Date.now() + EXAMPLES_CACHE_TTL_MS,
+    });
 
   } catch (err) {
     console.error('[learning] selectDynamicExamples error:', err);

@@ -375,6 +375,24 @@ export function buildClosingSystemPrompt(dealershipName?: string, extracted?: an
   }
   if (ctx.wantsFinancing) knownFields.push('quiere financiación');
   if (ctx.hasTradeIn) knownFields.push('tiene permuta');
+  // Implicit / enriched fields — propagate all collected intent data
+  if (ctx.transmission) knownFields.push(`caja: ${ctx.transmission}`);
+  if (ctx.fuel) knownFields.push(`combustible: ${ctx.fuel}`);
+  if (ctx.implicitFuelHint) knownFields.push(`preferencia implícita combustible: ${ctx.implicitFuelHint}`);
+  if (ctx.bodywork) knownFields.push(`carrocería: ${ctx.bodywork}`);
+  if (ctx.useCase) knownFields.push(`uso: ${ctx.useCase}`);
+  if (ctx.city) knownFields.push(`ciudad: ${ctx.city}`);
+  if (ctx.gnc !== undefined) knownFields.push(`GNC: ${ctx.gnc ? 'sí' : 'no'}`);
+  if (ctx.condition) knownFields.push(`condición: ${ctx.condition === 'nuevo' ? '0km' : 'usado'}`);
+  if (ctx.year || ctx.minYear || ctx.maxYear) {
+    const yr = ctx.year ? String(ctx.year) : `${ctx.minYear ?? '?'}-${ctx.maxYear ?? '?'}`;
+    knownFields.push(`año: ${yr}`);
+  }
+  if (ctx.tradeInModel) {
+    const tKm = ctx.tradeInKm ? ` ${Number(ctx.tradeInKm).toLocaleString('es-AR')} km` : '';
+    const tYr = ctx.tradeInYear ? ` ${ctx.tradeInYear}` : '';
+    knownFields.push(`permuta: ${ctx.tradeInModel}${tYr}${tKm}`);
+  }
 
   const known = knownFields.length
     ? `\nDATA CONOCIDA:\n${knownFields.map((f) => `  • ${f}`).join('\n')}`

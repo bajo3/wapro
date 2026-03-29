@@ -28,6 +28,6 @@
     "@types/node": "^20.11.30",
     "@types/pg": "^8.10.11",
     "tsx": "^4.16.2",
-    "typescript": "^5.5.4"
+    "typescript": "^5.9.3"
   }
 }
