@@ -1855,7 +1855,9 @@ webhookRouter.post('/evolution', async (req: Request, res: Response) => {
       // We keep the entry in the map until the reply is actually sent, so a new
       // incoming message can cancel the pending reply.
       entry.timer = null;
-      const aggregatedText = entry.texts.join('\n');
+      let aggregatedText = entry.texts.join('\n');
+      // Guard: limit length to avoid overloading GPT context (multi-paste attacks, long messages)
+      if (aggregatedText.length > 2000) aggregatedText = aggregatedText.slice(0, 2000);
       const lastMsgId = entry.msgIds[entry.msgIds.length - 1] || msgId;
       handleAggregatedMessage(entry.key, entry.instance, entry.remoteJid, aggregatedText, lastMsgId);
     }, waitMs);

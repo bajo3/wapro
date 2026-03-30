@@ -316,7 +316,10 @@ export async function decideAgentAction(params: any & { loopData?: AgentLoopData
   // Serialize catalog items into a compact text block for the GPT context.
   // Limit to 80 items to avoid hitting token limits.
   let catalogContext: string | undefined;
-  if (Array.isArray(catalog) && catalog.length > 0) {
+  if (!Array.isArray(catalog) || catalog.length === 0) {
+    // Explicitly tell the model there is no available stock so it doesn't invent vehicles
+    catalogContext = '[SIN STOCK DISPONIBLE — no inventes vehículos. Indicá que consultará con el equipo.]';
+  } else if (Array.isArray(catalog) && catalog.length > 0) {
     const items = catalog.slice(0, 80);
     catalogContext = items
       .map((item: any, i: number) => {

@@ -525,4 +525,41 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
     const msg = err instanceof Error ? err.message : String(err);
     return res.json({ vehicles: [], _catalogError: msg || "lookup_failed" });
   }
+};
+
+/**
+ * DELETE /vehicles/:id
+ * Deletes a vehicle by id from the Railway vehicles table.
+ * Uses the same table-discovery logic to find the right table.
+ */
+export const remove = async (req: Request, res: Response): Promise<Response> => {
+  const id = String(req.params.id || "").trim();
+  if (!id) {
+    return res.status(400).json({ ok: false, error: "Missing vehicle id" });
+  }
+
+  try {
+    const source = await detectCatalogSource();
+    if (!source) {
+      return res.status(404).json({ ok: false, error: "vehicles_table_not_found" });
+    }
+
+    const idCol = source.map.id;
+    const result: any = await sequelize.query(
+      `DELETE FROM "${source.schema}"."${source.table}" WHERE "${idCol}" = :id`,
+      { replacements: { id }, type: "RAW" as any }
+    );
+
+    // pg driver returns [rows, rowCount] — rowCount is the number of deleted rows.
+    const deleted = Array.isArray(result) ? (result[1] ?? 0) : 0;
+    if (!deleted) {
+      return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+    }
+
+    return res.json({ ok: true, deleted: id });
+  } catch (err) {
+    console.error("[vehicles#remove] error", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ ok: false, error: msg });
+  }
 };    

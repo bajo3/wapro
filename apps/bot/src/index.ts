@@ -196,9 +196,15 @@ async function main() {
         const intent = state.last_intent || '';
         const interestedIntents = ['product_results', 'price_request', 'product_results_single', 'option_selected'];
         if (!interestedIntents.includes(intent)) continue;
-        // Compose follow-up message
+        // Compose follow-up message — personalize with specific vehicle if available
         const query = state.last_query || 'tu consulta';
-        const followupText = `Hola 👋 ¿seguís interesado/a en ${query}? ¡Me queda stock hoy!`;
+        const firstHit = Array.isArray(state.last_hits) && state.last_hits.length > 0 ? state.last_hits[0] : null;
+        const vehicleRef = firstHit
+          ? (firstHit.name || `${firstHit.brand ?? ''} ${firstHit.model ?? ''}`.trim() || query)
+          : query;
+        const followupText = firstHit
+          ? `Hola 👋 ¿seguís interesado/a en el ${vehicleRef}? Todavía lo tenemos disponible. ¿Querés que te pase más info o coordinar una visita?`
+          : `Hola 👋 ¿seguís buscando ${query}? Por cualquier consulta estamos acá.`;
         try {
           // Send follow-up
           await sendTextAndPersist(instance, remoteJid, followupText);

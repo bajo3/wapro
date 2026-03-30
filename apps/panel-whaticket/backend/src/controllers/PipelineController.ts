@@ -123,9 +123,18 @@ export const board = async (req: Request, res: Response) => {
   // group
   const byStage: Record<string, any[]> = {};
   for (const st of stages) byStage[String(st.id)] = [];
+
+  // Fallback bucket: tickets with no stage go to the first stage (by order)
+  const firstStageId = stages.length > 0 ? String(stages[0].id) : null;
+
   for (const t of tickets) {
     const sid = String((t as any).pipelineStageId || "");
-    if (sid && byStage[sid]) byStage[sid].push(t);
+    if (sid && byStage[sid]) {
+      byStage[sid].push(t);
+    } else if (firstStageId) {
+      // Ticket has null/unknown stage — show in first column so it's not invisible
+      byStage[firstStageId].push(t);
+    }
   }
 
   return res.json({

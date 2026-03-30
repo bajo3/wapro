@@ -453,6 +453,34 @@ export default function ImprovedTicketChat({
                 ) : null}
               </div>
             ) : null}
+
+            {/* Contexto extraído del lead — lo que aprendió el bot */}
+            {agentData?.extracted && Object.keys(agentData.extracted).length > 0 ? (
+              <div className="mt-3 rounded-auto-lg border border-auto-border bg-auto-panel p-3">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-auto-muted mb-2">Contexto del lead</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    agentData.extracted.brand && `Marca: ${agentData.extracted.brand}`,
+                    agentData.extracted.model && `Modelo: ${agentData.extracted.model}`,
+                    (agentData.extracted.maxPrice || agentData.extracted.amount) &&
+                      `Presupuesto: ${agentData.extracted.currency ?? "ARS"} ${Number(agentData.extracted.maxPrice || agentData.extracted.amount || 0).toLocaleString("es-AR")}`,
+                    agentData.extracted.condition && `Condición: ${agentData.extracted.condition === "nuevo" ? "0km" : "Usado"}`,
+                    agentData.extracted.transmission && `Caja: ${agentData.extracted.transmission}`,
+                    agentData.extracted.fuel && `Combustible: ${agentData.extracted.fuel}`,
+                    agentData.extracted.year && `Año: ${agentData.extracted.year}`,
+                    agentData.extracted.hasTradeIn && "Tiene permuta",
+                    agentData.extracted.wantsFinancing && "Quiere financiación",
+                    agentData.extracted.gnc !== undefined && `GNC: ${agentData.extracted.gnc ? "Sí" : "No"}`,
+                    agentData.extracted.city && `Ciudad: ${agentData.extracted.city}`,
+                    agentData.extracted.useCase && `Uso: ${agentData.extracted.useCase}`,
+                  ].filter(Boolean).map((tag, i) => (
+                    <span key={i} className="rounded-full border border-auto-border bg-auto-surface px-2.5 py-1 text-[11px] text-auto-text">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

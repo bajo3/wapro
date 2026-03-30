@@ -219,9 +219,25 @@ function TabEstado({ decisions, loadingDecisions }) {
 
 // ─── Tab: Stock ───────────────────────────────────────────────────────────────
 
-function TabStock({ vehicles, loadingVehicles }) {
+function TabStock({ vehicles, loadingVehicles, onDelete }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("");
+  const [deletingId, setDeletingId] = useState(null);
+  const [confirmId, setConfirmId] = useState(null);
+
+  const handleDelete = async (id) => {
+    setConfirmId(null);
+    setDeletingId(id);
+    try {
+      await api.delete(`/vehicles/${id}`);
+      toast.success("Vehículo eliminado del stock del bot");
+      if (onDelete) onDelete();
+    } catch {
+      toast.error("No se pudo eliminar el vehículo");
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const filtered = vehicles.filter(v => {
     const text = [v.label, v.title, v.marca || v.brand, v.modelo || v.model, v.version, v.year, v.combustible || v.fuel]
@@ -305,7 +321,7 @@ function TabStock({ vehicles, loadingVehicles }) {
             return (
               <div
                 key={v.id || i}
-                className={`border rounded-xl overflow-hidden transition-colors
+                className={`relative border rounded-xl overflow-hidden transition-colors
                   ${incompleto
                     ? "bg-red-500/[0.04] border-red-500/20"
                     : es0km
@@ -313,6 +329,35 @@ function TabStock({ vehicles, loadingVehicles }) {
                       : "bg-white/[0.03] border-white/[0.06]"}`}
                 title={incompleto ? "⚠️ Datos incompletos: falta modelo. El bot no puede matchear bien este vehículo." : undefined}
               >
+                {/* Confirm delete overlay */}
+                {confirmId === (v.id || i) && (
+                  <div className="absolute inset-0 z-10 bg-black/80 flex flex-col items-center justify-center gap-3 p-4">
+                    <p className="text-sm text-white text-center font-medium">¿Eliminar este vehículo del bot?</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleDelete(v.id || i)}
+                        disabled={deletingId === (v.id || i)}
+                        className="px-3 py-1.5 rounded-lg bg-red-500 hover:bg-red-600 text-white text-xs font-semibold transition-colors"
+                      >
+                        {deletingId === (v.id || i) ? "Eliminando..." : "Sí, eliminar"}
+                      </button>
+                      <button
+                        onClick={() => setConfirmId(null)}
+                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {/* Delete button */}
+                <button
+                  onClick={() => setConfirmId(v.id || i)}
+                  className="absolute top-2 right-2 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-black/50 hover:bg-red-500/80 text-white/50 hover:text-white text-xs transition-colors"
+                  title="Eliminar vehículo"
+                >
+                  ×
+                </button>
                 {imageUrl ? (
                   <div className="h-28 bg-white/[0.03] border-b border-white/[0.06] overflow-hidden">
                     <img src={imageUrl} alt={heading} className="w-full h-full object-cover" />
@@ -1813,7 +1858,7 @@ export default function BotPanel() {
             <TabEstado decisions={decisions} loadingDecisions={loadingDecisions} />
           )}
           {tab === "stock" && (
-            <TabStock vehicles={vehicles} loadingVehicles={loadingVehicles} />
+            <TabStock vehicles={vehicles} loadingVehicles={loadingVehicles} onDelete={loadVehicles} />
           )}
           {tab === "playground" && (
             <TabPlayground />

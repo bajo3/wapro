@@ -5,5 +5,6 @@ import * as VehiclesController from "../controllers/VehiclesController";
 const vehicleRoutes = Router();
 
 vehicleRoutes.get("/vehicles", isAuth, VehiclesController.index);
+vehicleRoutes.delete("/vehicles/:id", isAuth, VehiclesController.remove);
 
 export default vehicleRoutes;

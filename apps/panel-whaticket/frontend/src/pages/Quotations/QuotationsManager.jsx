@@ -750,16 +750,14 @@ export default function QuotationsManager() {
                               Editar
                             </button>
 
-                            {/* Eliminar — solo en draft o rejected */}
-                            {(status === "draft" || status === "rejected") && (
-                              <button
-                                type="button"
-                                onClick={() => remove(q)}
-                                className="inline-flex h-8 items-center rounded-lg border border-red-500/20 bg-red-500/[0.06] px-3 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10"
-                              >
-                                Eliminar
-                              </button>
-                            )}
+                            {/* Eliminar — disponible para todos los estados */}
+                            <button
+                              type="button"
+                              onClick={() => remove(q)}
+                              className="inline-flex h-8 items-center rounded-lg border border-red-500/20 bg-red-500/[0.06] px-3 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10"
+                            >
+                              Eliminar
+                            </button>
                           </div>
                         </td>
                       </tr>
