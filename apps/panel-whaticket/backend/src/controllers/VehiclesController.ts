@@ -539,7 +539,7 @@ export const remove = async (req: Request, res: Response): Promise<Response> => 
   }
 
   try {
-    const source = await detectCatalogSource();
+    const source = await detectSource();
     if (!source) {
       return res.status(404).json({ ok: false, error: "vehicles_table_not_found" });
     }
