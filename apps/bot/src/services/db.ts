@@ -42,7 +42,7 @@ export const pool = new Pool({
 //   postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres
 //
 // Falls back gracefully to the main Railway pool if the variable is not set.
-export const supabasePool: Pool | null = (() => {
+export const supabasePool: InstanceType<typeof Pool> | null = (() => {
   const rawUrl = env.supabaseDatabaseUrl;
   if (!rawUrl) return null;
   try {
