@@ -5,6 +5,26 @@ import { env } from '../lib/env.js';
 
 const { Pool } = pg;
 
+/**
+ * Encode special characters in the password portion of a postgres URL.
+ * Characters like *, +, !, etc. must be percent-encoded to survive PgBouncer
+ * auth on Supabase pooler (port 6543).
+ */
+function encodePasswordInUrl(url: string): string {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    if (u.password) {
+      // URL class auto-encodes some chars but not all that PgBouncer needs
+      const decoded = decodeURIComponent(u.password);
+      u.password = encodeURIComponent(decoded);
+    }
+    return u.toString();
+  } catch {
+    return url; // not a valid URL — return as-is
+  }
+}
+
 function withLibpqCompat(url: string): string {
   // pg-connection-string treats sslmode=require as an alias for verify-full unless
   // you explicitly opt into libpq compatibility. Supabase pooler connections are
@@ -46,7 +66,7 @@ export const supabasePool: InstanceType<typeof Pool> | null = (() => {
   const rawUrl = env.supabaseDatabaseUrl;
   if (!rawUrl) return null;
   try {
-    const connStr = withLibpqCompat(rawUrl);
+    const connStr = withLibpqCompat(encodePasswordInUrl(rawUrl));
     const sslOpts = shouldRelaxTls(connStr) ? { rejectUnauthorized: false } : undefined;
     const p = new Pool({
       connectionString: connStr,

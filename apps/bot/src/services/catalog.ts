@@ -9,6 +9,21 @@ import { pool, supabasePool } from "./db.js";
 // Falls back to the main Railway pool transparently.
 const catalogPool = supabasePool ?? pool;
 
+/**
+ * Resilient query: tries supabasePool first, falls back to main pool on error.
+ * Prevents a single Supabase auth/connection failure from crashing the bot.
+ */
+async function resilientCatalogQuery(sql: string, params?: any[]): Promise<{ rows: any[] }> {
+  if (supabasePool) {
+    try {
+      return await supabasePool.query(sql, params);
+    } catch (err: any) {
+      console.warn(`[catalog] supabasePool query failed (${err?.code ?? 'UNKNOWN'}: ${err?.message ?? err}), falling back to main pool`);
+    }
+  }
+  return pool.query(sql, params);
+}
+
 export type CatalogItem = {
   id: string;
   name: string;
@@ -141,7 +156,7 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
     limit 500
   `;
 
-  const q = catalogPool.query<VehicleRow>(sql, params);
+  const q = resilientCatalogQuery(sql, params);
   const r = await Promise.race([
     q,
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("vehicles query timeout")), timeoutMs))
@@ -254,7 +269,7 @@ async function loadVehiclesFromSimpleDb(timeoutMs: number): Promise<CatalogItem[
     limit 500
   `;
 
-  const q = catalogPool.query(sql);
+  const q = resilientCatalogQuery(sql);
   const r = await Promise.race([
     q,
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("vehicles simple query timeout")), timeoutMs))

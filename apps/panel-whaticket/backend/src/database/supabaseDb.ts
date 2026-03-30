@@ -14,6 +14,20 @@ import pg from "pg";
 
 const { Pool } = pg;
 
+function encodePasswordInUrl(url: string): string {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    if (u.password) {
+      const decoded = decodeURIComponent(u.password);
+      u.password = encodeURIComponent(decoded);
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 function withLibpqCompat(url: string): string {
   if (!url) return url;
   if (!/sslmode=/i.test(url)) return url;
@@ -35,7 +49,7 @@ export function getSupabasePool(): pg.Pool | null {
   if (!rawUrl) return null;
 
   try {
-    const connStr = withLibpqCompat(rawUrl);
+    const connStr = withLibpqCompat(encodePasswordInUrl(rawUrl));
     const ssl = shouldRelaxTls(connStr) ? { rejectUnauthorized: false } : undefined;
     _supabasePool = new Pool({
       connectionString: connStr,

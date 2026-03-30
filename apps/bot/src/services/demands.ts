@@ -1,7 +1,19 @@
-import { pool } from './db.js';
+import { pool, supabasePool } from './db.js';
 import { env } from '../lib/env.js';
 import { extractLeadFields } from './extract.js';
 import { sendTextAndPersist } from './panelPersistence.js';
+
+/** Resilient vehicle query: tries supabasePool first, falls back to main pool. */
+async function vehicleQuery(sql: string, params?: any[]): Promise<{ rows: any[] }> {
+  if (supabasePool) {
+    try {
+      return await supabasePool.query(sql, params);
+    } catch (err: any) {
+      console.warn(`[demands] supabasePool query failed (${err?.code ?? '?'}: ${err?.message ?? err}), falling back to main pool`);
+    }
+  }
+  return pool.query(sql, params);
+}
 
 export type DemandStatus = 'open' | 'closed';
 
@@ -148,7 +160,7 @@ async function getVehicleSource(): Promise<VehicleSource | null> {
   }
 
   try {
-    const tablesR = await pool.query(
+    const tablesR = await vehicleQuery(
       `
       select table_schema, table_name
       from information_schema.tables
@@ -171,7 +183,7 @@ async function getVehicleSource(): Promise<VehicleSource | null> {
     const preferred = [{ schema: 'public', table: 'vehicles' }, ...tables];
 
     for (const t of preferred) {
-      const colsR = await pool.query(
+      const colsR = await vehicleQuery(
         `
         select column_name
         from information_schema.columns
@@ -282,7 +294,7 @@ async function listVehiclesForScan(since?: Date) {
     order by ${map.updatedAt ? `${qi(map.updatedAt)} desc nulls last,` : ''} ${qi(map.id)} desc
     limit 2000
   `;
-  const r = await pool.query(sql, params);
+  const r = await vehicleQuery(sql, params);
   const rows = (r.rows ?? []).map((row: any) => ({
     id: String(row.id),
     title: buildVehicleTitle(row),
@@ -335,7 +347,7 @@ async function getVehiclesByIds(vehicleIds: string[]) {
     from ${qi(schema)}.${qi(table)}
     where ${qi(map.id)}::text = any($1::text[])
   `;
-  const r = await pool.query(sql, [ids]);
+  const r = await vehicleQuery(sql, [ids]);
   return new Map(
     (r.rows ?? []).map((row: any) => [String(row.id), {
       id: String(row.id),
@@ -921,6 +933,7 @@ export async function runRecontactJob() {
     [limit]
   );
 
+  console.log(`[recontact] ${r.rows.length} demands due for recontact`);
   let sent = 0;
   for (const row of r.rows) {
     const d = mapDemandRow(row);
@@ -961,6 +974,7 @@ export async function runRecontactJob() {
 
       if (matchBlock && !tpl.includes('{match}')) msg = `${msg}${matchBlock}`;
 
+      console.log(`[recontact] sending to ${number} demand=${d.id} matches=${newMatches.length}`);
       await sendTextAndPersist(d.instance!, d.remoteJid!, msg);
       sent += 1;
 
@@ -979,5 +993,6 @@ export async function runRecontactJob() {
       console.error('Recontact failed', e);
     }
   }
+  console.log(`[recontact] done: due=${r.rows.length} sent=${sent}`);
   return { due: r.rows.length, sent };
 }
