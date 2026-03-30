@@ -1,10 +1,9 @@
-name: Sync vehicles (Supabase -> Railway)
+name: Sync vehicles (Supabase -> Railway) [DESACTIVADO]
 
+# El sistema ahora lee vehicles directo de Supabase via SUPABASE_DATABASE_URL.
+# El sync ya no es necesario. Workflow desactivado — solo disponible manualmente
+# por si se necesita una migración puntual de emergencia.
 on:
-  schedule:
-    # GitHub Actions uses UTC. Argentina is UTC-3.
-    # 06:10 UTC ~= 03:10 America/Argentina/Buenos_Aires
-    - cron: "10 6 * * *"
   workflow_dispatch:
 
 jobs:

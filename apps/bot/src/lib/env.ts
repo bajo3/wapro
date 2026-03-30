@@ -21,7 +21,10 @@ export const env = (() => {
     CATALOG_JSON_URL: z.string().optional(),
     // Optional filter: only show vehicles for a given dealership (uuid)
     CATALOG_DEALERSHIP_ID: z.string().uuid().optional(),
-    DATABASE_URL: z.string().min(1)
+    DATABASE_URL: z.string().min(1),
+    // Optional: direct Supabase connection for the vehicles catalog.
+    // When set, catalog reads go to Supabase instead of Railway — eliminates the sync script.
+    SUPABASE_DATABASE_URL: z.string().optional()
   });
 
   const parsed = schema.parse(process.env);
@@ -39,6 +42,7 @@ export const env = (() => {
     catalogJsonUrl: parsed.CATALOG_JSON_URL || undefined,
     catalogDealershipId: parsed.CATALOG_DEALERSHIP_ID || undefined,
     databaseUrl: parsed.DATABASE_URL,
+    supabaseDatabaseUrl: parsed.SUPABASE_DATABASE_URL || undefined,
     /**
      * Humanizer settings. These values control how long the bot waits before
      * aggregating multiple incoming messages into a single reply and how it

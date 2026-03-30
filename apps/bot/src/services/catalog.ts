@@ -3,7 +3,11 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "../lib/env.js";
-import { pool } from "./db.js";
+import { pool, supabasePool } from "./db.js";
+
+// Use supabasePool when available (direct Supabase connection, no sync needed).
+// Falls back to the main Railway pool transparently.
+const catalogPool = supabasePool ?? pool;
 
 export type CatalogItem = {
   id: string;
@@ -137,7 +141,7 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
     limit 500
   `;
 
-  const q = pool.query<VehicleRow>(sql, params);
+  const q = catalogPool.query<VehicleRow>(sql, params);
   const r = await Promise.race([
     q,
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("vehicles query timeout")), timeoutMs))
@@ -250,7 +254,7 @@ async function loadVehiclesFromSimpleDb(timeoutMs: number): Promise<CatalogItem[
     limit 500
   `;
 
-  const q = pool.query(sql);
+  const q = catalogPool.query(sql);
   const r = await Promise.race([
     q,
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("vehicles simple query timeout")), timeoutMs))

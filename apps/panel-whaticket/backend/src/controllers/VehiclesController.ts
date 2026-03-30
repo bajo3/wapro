@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import sequelize from "../database";
+import { getSupabasePool } from "../database/supabaseDb";
 
 // Robust best-effort catalog endpoint.
 // Goal: keep the frontend contract stable:
@@ -88,6 +89,80 @@ function pickFirstPresent(columns: string[], synonyms: string[]): string | undef
   return undefined;
 }
 
+// ── Supabase-aware query helpers ─────────────────────────────────────────────
+//
+// These replace direct sequelize.query() calls so that vehicle reads/writes
+// go to Supabase when SUPABASE_DATABASE_URL is configured.
+//
+// Sequelize uses named params (:name). pg uses positional params ($1, $2).
+// namedParamsToPg() translates between the two, including array IN() clauses.
+
+function namedParamsToPg(
+  sql: string,
+  replacements: Record<string, any> = {}
+): { text: string; values: any[] } {
+  const values: any[] = [];
+  let counter = 0;
+
+  // Pass 1: convert IN (:name) → = ANY($N::text[]) for array values
+  let text = sql.replace(/\bIN\s*\(\s*:([a-zA-Z_]+)\s*\)/gi, (_whole, name) => {
+    if (name in replacements && Array.isArray(replacements[name])) {
+      values.push(replacements[name]);
+      return `= ANY($${++counter}::text[])`;
+    }
+    return _whole;
+  });
+
+  // Pass 2: convert remaining :name → $N
+  text = text.replace(/:([a-zA-Z_]+)/g, (_whole, name) => {
+    if (name in replacements) {
+      values.push(replacements[name]);
+      return `$${++counter}`;
+    }
+    return _whole;
+  });
+
+  return { text, values };
+}
+
+/** Run a SELECT via Supabase pool when available, falls back to Sequelize. */
+async function catalogQuery(
+  sql: string,
+  replacements: Record<string, any> = {}
+): Promise<any[]> {
+  const sbPool = getSupabasePool();
+  if (sbPool) {
+    const { text, values } = namedParamsToPg(sql, replacements);
+    const result = await sbPool.query(text, values.length ? values : undefined);
+    return result.rows;
+  }
+  const [rows] = await sequelize.query(
+    sql,
+    Object.keys(replacements).length ? { replacements } : undefined
+  );
+  return rows as any[];
+}
+
+/** Run a mutating statement (DELETE/UPDATE) and return affected row count. */
+async function catalogMutate(
+  sql: string,
+  replacements: Record<string, any> = {}
+): Promise<number> {
+  const sbPool = getSupabasePool();
+  if (sbPool) {
+    const { text, values } = namedParamsToPg(sql, replacements);
+    const result = await sbPool.query(text, values.length ? values : undefined);
+    return result.rowCount ?? 0;
+  }
+  const result: any = await sequelize.query(sql, {
+    replacements,
+    type: "RAW" as any
+  });
+  return Array.isArray(result) ? (result[1] ?? 0) : 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function detectSource(): Promise<CatalogSource | null> {
   const now = Date.now();
   if (cache.source && now - cache.at < CACHE_TTL_MS) return cache.source;
@@ -95,7 +170,7 @@ async function detectSource(): Promise<CatalogSource | null> {
   try {
     // List candidate tables across *any* non-system schema.
     // Some installs use custom schemas (e.g. "public", "app", "crm").
-    const [rows] = await sequelize.query(
+    const rows = await catalogQuery(
       `
       SELECT table_schema, table_name
       FROM information_schema.tables
@@ -107,7 +182,7 @@ async function detectSource(): Promise<CatalogSource | null> {
         table_schema ASC,
         table_name ASC
     `,
-      { replacements: { names: CANDIDATE_TABLES } }
+      { names: CANDIDATE_TABLES }
     );
 
     const tables = (Array.isArray(rows) ? rows : []) as Array<{ table_schema: string; table_name: string }>;
@@ -120,13 +195,13 @@ async function detectSource(): Promise<CatalogSource | null> {
       const table = String(t.table_name || "");
       if (!table) continue;
 
-      const [cRows] = await sequelize.query(
+      const cRows = await catalogQuery(
         `
         SELECT column_name
         FROM information_schema.columns
         WHERE table_schema = :schema AND table_name = :table
       `,
-        { replacements: { schema, table } }
+        { schema, table }
       );
 
       const cols = (Array.isArray(cRows) ? cRows : [])
@@ -169,7 +244,7 @@ async function detectSource(): Promise<CatalogSource | null> {
     // Fallback: scan for any table that looks like a vehicles catalog.
     // We only do this if candidates were not found.
     if (!tables.length) {
-      const [maybe] = await sequelize.query(
+      const maybe = await catalogQuery(
         `
         SELECT c.table_schema, c.table_name,
                array_agg(c.column_name) as columns
@@ -481,12 +556,10 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
       LIMIT :lim
     `;
 
-    const [rows] = await sequelize.query(sql, {
-      replacements: {
-        term: `%${term}%`,
-        exactId,
-        lim,
-      },
+    const rows = await catalogQuery(sql, {
+      term: `%${term}%`,
+      exactId,
+      lim,
     });
 
     const vehicles = (Array.isArray(rows) ? rows : []).map((v: any) => {
@@ -545,13 +618,10 @@ export const remove = async (req: Request, res: Response): Promise<Response> => 
     }
 
     const idCol = source.map.id;
-    const result: any = await sequelize.query(
+    const deleted = await catalogMutate(
       `DELETE FROM "${source.schema}"."${source.table}" WHERE "${idCol}" = :id`,
-      { replacements: { id }, type: "RAW" as any }
+      { id }
     );
-
-    // pg driver returns [rows, rowCount] — rowCount is the number of deleted rows.
-    const deleted = Array.isArray(result) ? (result[1] ?? 0) : 0;
     if (!deleted) {
       return res.status(404).json({ ok: false, error: "vehicle_not_found" });
     }

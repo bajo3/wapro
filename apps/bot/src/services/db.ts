@@ -35,6 +35,39 @@ export const pool = new Pool({
   connectionTimeoutMillis: 15_000   // was 10s — more tolerant of network latency
 });
 
+// ── Supabase pool (optional) ────────────────────────────────────────────────
+// When SUPABASE_DATABASE_URL is set, this pool connects directly to Supabase
+// for vehicle catalog reads — eliminating the Railway sync script entirely.
+// Use the Supabase Pooler URL (port 6543, transaction mode) for best results:
+//   postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres
+//
+// Falls back gracefully to the main Railway pool if the variable is not set.
+export const supabasePool: Pool | null = (() => {
+  const rawUrl = env.supabaseDatabaseUrl;
+  if (!rawUrl) return null;
+  try {
+    const connStr = withLibpqCompat(rawUrl);
+    const sslOpts = shouldRelaxTls(connStr) ? { rejectUnauthorized: false } : undefined;
+    const p = new Pool({
+      connectionString: connStr,
+      ssl: sslOpts,
+      // Keep pool small — Supabase free tier has a connection limit of ~15
+      max: 5,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 15_000
+    });
+    // Log on connect errors to make misconfiguration obvious, but don't crash
+    p.on('error', (err) => {
+      console.error('[supabasePool] idle client error:', err.message);
+    });
+    console.log('[db] supabasePool initialized — vehicles will be read from Supabase');
+    return p;
+  } catch (e) {
+    console.error('[db] Failed to initialize supabasePool, falling back to main pool:', e);
+    return null;
+  }
+})();
+
 export async function migrate() {
   const client = await pool.connect();
   try {
