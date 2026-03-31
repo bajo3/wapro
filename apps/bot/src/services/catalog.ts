@@ -1,4 +1,3 @@
-// status fallback fix
 import fetch from "node-fetch";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -90,6 +89,161 @@ type VehicleRow = {
   Combustible: string | null;
 };
 
+type CatalogVehicleSource = {
+  schema: string;
+  table: string;
+  columns: string[];
+  hasDealershipId: boolean;
+  fields: {
+    id: string;
+    title?: string;
+    brand?: string;
+    model?: string;
+    version?: string;
+    year?: string;
+    price?: string;
+    currency?: string;
+    pictures?: string;
+    permalink?: string;
+    status?: string;
+    km?: string;
+    engine?: string;
+    transmission?: string;
+    fuel?: string;
+    color?: string;
+  };
+};
+
+const CATALOG_CANDIDATE_TABLES = [
+  "vehicles",
+  "Vehicles",
+  "vehicle",
+  "vehiculos",
+  "autos",
+  "cars",
+  "stock_vehicles",
+  "car_stock",
+  "catalog"
+];
+
+const CATALOG_FIELD_SYNONYMS = {
+  id: ["id", "vehicle_id", "uuid", "uid"],
+  title: ["title", "nombre", "name", "descripcion", "description"],
+  brand: ["brand", "marca", "make"],
+  model: ["model", "modelo"],
+  version: ["version", "trim", "variant", "versión", "version_name"],
+  year: ["year", "anio", "año", "model_year"],
+  price: ["price", "precio", "valor", "amount"],
+  currency: ["currency", "moneda", "currency_code"],
+  pictures: ["pictures", "images", "fotos", "photos"],
+  permalink: ["permalink", "url", "link"],
+  status: ["status", "estado", "publication_status"],
+  km: ["km", "Km", "kilometers", "kilometres"],
+  engine: ["engine", "Motor", "motor"],
+  transmission: ["transmission", "Caja", "caja", "gearbox"],
+  fuel: ["fuel", "Combustible", "combustible"],
+  color: ["color", "Color"]
+} as const;
+
+let catalogVehicleSourceCache: { at: number; source: CatalogVehicleSource | null } = { at: 0, source: null };
+const CATALOG_SOURCE_CACHE_MS = 60_000;
+
+function quoteIdent(ident: string): string {
+  return `"${String(ident).replace(/"/g, '""')}"`;
+}
+
+function pickColumn(columns: string[], synonyms: readonly string[]): string | undefined {
+  const lower = new Map(columns.map((c) => [c.toLowerCase(), c]));
+  for (const s of synonyms) {
+    const hit = lower.get(String(s).toLowerCase());
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+async function detectCatalogVehicleSource(): Promise<CatalogVehicleSource | null> {
+  const now = Date.now();
+  if (now - catalogVehicleSourceCache.at < CATALOG_SOURCE_CACHE_MS) {
+    return catalogVehicleSourceCache.source;
+  }
+
+  try {
+    const tablesR = await resilientCatalogQuery(
+      `
+      select table_schema, table_name
+      from information_schema.tables
+      where table_type = 'BASE TABLE'
+        and table_schema not in ('pg_catalog', 'information_schema')
+        and table_name = any($1::text[])
+      order by case when table_schema = 'public' then 0 else 1 end, table_schema, table_name
+      `,
+      [CATALOG_CANDIDATE_TABLES]
+    );
+
+    const candidates = [{ table_schema: 'public', table_name: 'vehicles' }, ...(tablesR.rows ?? [])];
+
+    for (const t of candidates) {
+      const schema = String((t as any).table_schema || 'public');
+      const table = String((t as any).table_name || '');
+      if (!table) continue;
+
+      const colsR = await resilientCatalogQuery(
+        `
+        select column_name
+        from information_schema.columns
+        where table_schema = $1 and table_name = $2
+        `,
+        [schema, table]
+      );
+
+      const columns = (colsR.rows ?? []).map((r: any) => String(r.column_name)).filter(Boolean);
+      if (!columns.length) continue;
+
+      const id = pickColumn(columns, CATALOG_FIELD_SYNONYMS.id);
+      if (!id) continue;
+
+      const fields = {
+        id,
+        title: pickColumn(columns, CATALOG_FIELD_SYNONYMS.title),
+        brand: pickColumn(columns, CATALOG_FIELD_SYNONYMS.brand),
+        model: pickColumn(columns, CATALOG_FIELD_SYNONYMS.model),
+        version: pickColumn(columns, CATALOG_FIELD_SYNONYMS.version),
+        year: pickColumn(columns, CATALOG_FIELD_SYNONYMS.year),
+        price: pickColumn(columns, CATALOG_FIELD_SYNONYMS.price),
+        currency: pickColumn(columns, CATALOG_FIELD_SYNONYMS.currency),
+        pictures: pickColumn(columns, CATALOG_FIELD_SYNONYMS.pictures),
+        permalink: pickColumn(columns, CATALOG_FIELD_SYNONYMS.permalink),
+        status: pickColumn(columns, CATALOG_FIELD_SYNONYMS.status),
+        km: pickColumn(columns, CATALOG_FIELD_SYNONYMS.km),
+        engine: pickColumn(columns, CATALOG_FIELD_SYNONYMS.engine),
+        transmission: pickColumn(columns, CATALOG_FIELD_SYNONYMS.transmission),
+        fuel: pickColumn(columns, CATALOG_FIELD_SYNONYMS.fuel),
+        color: pickColumn(columns, CATALOG_FIELD_SYNONYMS.color)
+      };
+
+      const looksLikeVehicles = !!(fields.title || fields.version || (fields.brand && fields.model));
+      const hasCommercialData = !!(fields.price || fields.year);
+      if (!looksLikeVehicles || !hasCommercialData) continue;
+
+      const source: CatalogVehicleSource = {
+        schema,
+        table,
+        columns,
+        hasDealershipId: columns.some((c) => c.toLowerCase() === 'dealership_id'),
+        fields
+      };
+      console.log(`[catalog] using source ${schema}.${table}`);
+      catalogVehicleSourceCache = { at: now, source };
+      return source;
+    }
+  } catch (err: any) {
+    console.warn(`[catalog] source autodetect failed: ${err?.message ?? err}`);
+  }
+
+  catalogVehicleSourceCache = { at: now, source: null };
+  return null;
+}
+
 function coerceNumber(v: any): number | undefined {
   if (v === undefined || v === null) return undefined;
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -125,35 +279,48 @@ function inferBodyworkFromRow(
 }
 
 async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
-  const where: string[] = ["1=1"];
+  const source = await detectCatalogVehicleSource();
+  if (!source) {
+    console.warn("[catalog] no compatible vehicle source detected");
+    return [];
+  }
+
+  const { schema, table, fields, hasDealershipId } = source;
+  const selectExpr = (col?: string, fallback = "NULL::text") => (col ? `${quoteIdent(col)}::text` : fallback);
+  const selectNumberExpr = (col?: string, fallback = "NULL::numeric") => (col ? `${quoteIdent(col)}::numeric` : fallback);
+
+  const where: string[] = [];
   const params: any[] = [];
 
-  if (env.catalogDealershipId) {
+  if (fields.status) {
+    where.push(`coalesce(nullif(lower(${quoteIdent(fields.status)}::text), ''), 'active') not in ('inactive','deleted','archived','draft','paused','sold')`);
+  }
+  if (env.catalogDealershipId && hasDealershipId) {
     params.push(env.catalogDealershipId);
-    where.push(`dealership_id = $${params.length}`);
+    where.push(`${quoteIdent('dealership_id')} = $${params.length}`);
   }
 
   const sql = `
     select
-      id,
-      title,
-      brand,
-      model,
-      version,
-      year,
-      price,
-      currency,
-      pictures,
-      permalink,
-      status,
-      COALESCE(km, "Km") as km,
-      COALESCE(engine, "Motor") as engine,
-      COALESCE(transmission, "Caja") as transmission,
-      COALESCE(fuel, "Combustible") as fuel,
-      color
-    from public.vehicles
-    where ${where.join(" and ")}
-    order by id
+      ${quoteIdent(fields.id)}::text as id,
+      ${selectExpr(fields.title)} as title,
+      ${selectExpr(fields.brand)} as brand,
+      ${selectExpr(fields.model)} as model,
+      ${selectExpr(fields.version)} as version,
+      ${selectNumberExpr(fields.year)} as year,
+      ${selectExpr(fields.price)} as price,
+      ${selectExpr(fields.currency)} as currency,
+      ${fields.pictures ? `${quoteIdent(fields.pictures)} as pictures` : `NULL as pictures`},
+      ${selectExpr(fields.permalink)} as permalink,
+      ${selectExpr(fields.status)} as status,
+      ${selectNumberExpr(fields.km)} as km,
+      ${selectExpr(fields.engine)} as engine,
+      ${selectExpr(fields.transmission)} as transmission,
+      ${selectExpr(fields.fuel)} as fuel,
+      ${selectExpr(fields.color)} as color
+    from ${quoteIdent(schema)}.${quoteIdent(table)}
+    ${where.length ? `where ${where.join(" and ")}` : ''}
+    order by 1
     limit 500
   `;
 
@@ -164,6 +331,7 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
   ]);
 
   const rows = (r as any).rows as VehicleRow[];
+  console.log(`[catalog] loaded ${rows.length} vehicles from ${schema}.${table}`);
 
   return rows
     .map((row) => {
@@ -173,15 +341,12 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       const version = (row.version ?? "").trim() || undefined;
 
       const structuredName = [brand, model, version].filter(Boolean).join(" ");
-      // If model is empty, structured name is just the brand — unhelpful for matching.
-      // Prefer the full title in that case (e.g. "BAIC 2026 X35" beats "BAIC").
       const hasModel = model.length > 0;
       const name = (hasModel && structuredName) ? structuredName : (title || structuredName || String(row.id));
       const year = row.year ?? undefined;
       const km = coerceNumber(row.km);
-      // isNew: km === 0 explícito, o status contiene "0km" / "nuevo" / "new"
       const statusStr = (row.status ?? "").toLowerCase();
-      const isNew: boolean = km === 0 || /\b(0\s*km|nuevo|new)\b/.test(statusStr);
+      const isNew: boolean = km === 0 || /\b(0\s*km|nuevo|new)\b/.test(statusStr) || /\b0\s*km\b/.test(title.toLowerCase());
       const transmission = (row.transmission ?? undefined)?.toString().trim();
       const engine = (row.engine ?? undefined)?.toString().trim();
       const fuel = (row.fuel ?? undefined)?.toString().trim();
@@ -189,35 +354,35 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       const bodywork = inferBodyworkFromRow(title, model, version, null);
 
       const priceNumber = coerceMoneyNumber(row.price);
-      // Heurística de moneda:
-      // - Si currency ya dice USD → USD
-      // - Si currency dice ARS pero el precio es < 1.000.000 Y no es 0km → sospecha USD
-      //   (un 0km en ARS puede valer menos de 1M en versiones baratas, no confundir)
-      // - Si currency dice ARS y el precio es < 50.000 → casi seguro USD (nunca ARS tan bajo)
       const rawCurrency = (row.currency ?? 'ARS') as string;
       const currency = ((): string => {
         if (rawCurrency.toUpperCase() === 'USD') return 'USD';
         if (priceNumber !== undefined) {
-          if (priceNumber < 10_000) return 'USD'; // por debajo de 10k ARS es claramente USD
-          if (!isNew && priceNumber < 500_000) return 'USD'; // usado < 500k ARS → sospecha USD
+          if (priceNumber < 10_000) return 'USD';
+          if (!isNew && priceNumber < 500_000) return 'USD';
         }
         return rawCurrency;
       })() as any;
 
       const url = row.permalink ? String(row.permalink) : undefined;
-
-      const pics = Array.isArray(row.pictures) ? row.pictures : [];
-      const image = normalizeImageUrl(pics[0] ?? pics[1], url);
+      const pics = Array.isArray(row.pictures)
+        ? row.pictures
+        : (() => {
+            if (typeof row.pictures !== 'string') return [] as any[];
+            try {
+              const parsed = JSON.parse(row.pictures);
+              return Array.isArray(parsed) ? parsed : [];
+            } catch {
+              return [] as any[];
+            }
+          })();
+      const image = normalizeImageUrl((pics as any[])[0] ?? (pics as any[])[1], url);
 
       const parts: string[] = [];
       if (year) parts.push(String(year));
-      if (isNew) {
-        parts.push("0 km");
-      } else if (km !== undefined) {
-        parts.push(`${Math.round(km).toLocaleString("es-AR")} km`);
-      } else {
-        parts.push("km sin datos");
-      }
+      if (isNew) parts.push("0 km");
+      else if (km !== undefined) parts.push(`${Math.round(km).toLocaleString("es-AR")} km`);
+      else parts.push("km sin datos");
       if (transmission) parts.push(transmission);
       if (fuel) parts.push(fuel);
       if (engine) parts.push(engine);

@@ -320,3 +320,9 @@ Mejorar el oficio comercial del agente: respuestas más naturales, una sola preg
 - no derivar automáticamente por cualquier mención de financiación
 - evitar listas largas porque empeoran percepción y conversión
 - pedir una sola cosa útil por vez mejora mucho la sensación de conversación humana
+
+
+## 2026-03-31
+- Bot catalog now auto-detects the vehicle table/columns in Supabase instead of assuming a rigid `public.vehicles` schema.
+- Removed the implicit requirement that `status = active`; null/empty statuses remain visible and only explicit inactive states are excluded.
+- Added debug logs for the detected source and loaded vehicle count.
