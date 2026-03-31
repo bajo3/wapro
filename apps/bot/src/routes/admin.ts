@@ -46,6 +46,7 @@ import {
 } from '../services/intelligence.js';
 
 import { runPlayground } from '../services/playground.js';
+import { getCatalogDebug } from '../services/catalog.js';
 import { listTestCases, createTestCase, deleteTestCase } from '../services/intelligence.js';
 import { runTestSuite } from '../services/tests.js';
 import {
@@ -69,7 +70,8 @@ import {
   listDemandMatches,
   listDemandRecontacts,
   scanRecentVehiclesForDemandMatches,
-  runRecontactJob
+  runRecontactJob,
+  getDemandVehicleScanDebug
 } from '../services/demands.js';
 
 export const adminRouter = Router();
@@ -160,6 +162,14 @@ adminRouter.get('/vehicle-price-history', async (req, res) => {
       LIMIT $2
     `, [vehicleId, limit]);
     return res.json({ ok: true, history: r.rows });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+adminRouter.get('/catalog-debug', async (_req, res) => {
+  try {
+    return res.json({ ok: true, catalog: getCatalogDebug(), demands: getDemandVehicleScanDebug() });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
   }

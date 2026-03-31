@@ -3,8 +3,16 @@ import { env } from '../lib/env.js';
 import { extractLeadFields } from './extract.js';
 import { sendTextAndPersist } from './panelPersistence.js';
 
-/** Resilient vehicle query: tries supabasePool first, falls back to main pool. */
+const preferSupabaseVehicles = Boolean(env.supabaseDatabaseUrl && supabasePool);
+
+/**
+ * Vehicle reads for demand matching must remain on the same source of truth.
+ * Falling back to Railway after a Supabase hiccup can make stock oscillate between 29 and 0.
+ */
 async function vehicleQuery(sql: string, params?: any[]): Promise<{ rows: any[] }> {
+  if (preferSupabaseVehicles && supabasePool) {
+    return supabasePool.query(sql, params);
+  }
   if (supabasePool) {
     try {
       return await supabasePool.query(sql, params);
@@ -127,6 +135,8 @@ const ID_SYNONYMS = ['id', 'vehicle_id', 'uuid', 'uid'];
 
 let vehicleSourceCache: { at: number; source: VehicleSource | null } = { at: 0, source: null };
 const VEHICLE_SOURCE_CACHE_MS = 60_000;
+let lastGoodVehicleScan: { at: number; rows: any[] } = { at: 0, rows: [] };
+const LAST_GOOD_SCAN_TTL_MS = 30 * 60_000;
 
 function norm(s: any) {
   return String(s ?? '')
@@ -280,17 +290,11 @@ async function listVehiclesForScan(since?: Date) {
     map.fuel ? `${qi(map.fuel)} as fuel` : `NULL::text as fuel`
   ];
 
-  const where: string[] = [];
   const params: any[] = [];
-  if (since && map.updatedAt) {
-    params.push(since);
-    where.push(`${qi(map.updatedAt)} >= $${params.length}`);
-  }
 
   const sql = `
     select ${fields.join(', ')}
     from ${qi(schema)}.${qi(table)}
-    ${where.length ? `where ${where.join(' and ')}` : ''}
     order by ${map.updatedAt ? `${qi(map.updatedAt)} desc nulls last,` : ''} ${qi(map.id)} desc
     limit 2000
   `;
@@ -309,7 +313,14 @@ async function listVehiclesForScan(since?: Date) {
     transmission: row.transmission,
     fuel: row.fuel
   }));
-  console.log(`[demands] scan source=${schema}.${table} vehicles=${rows.length} since=${since ? since.toISOString() : 'all'}`);
+  if (rows.length > 0) {
+    lastGoodVehicleScan = { at: Date.now(), rows };
+  } else if (lastGoodVehicleScan.rows.length && Date.now() - lastGoodVehicleScan.at < LAST_GOOD_SCAN_TTL_MS) {
+    console.warn(`[demands] scan returned 0 vehicles from ${schema}.${table}; reusing last good scan (${lastGoodVehicleScan.rows.length})`);
+    console.log(`[demands] scan source=${schema}.${table} vehicles=${lastGoodVehicleScan.rows.length} since=${since ? since.toISOString() : 'all'} strategy=last-good-cache`);
+    return lastGoodVehicleScan.rows;
+  }
+  console.log(`[demands] scan source=${schema}.${table} vehicles=${rows.length} since=${since ? since.toISOString() : 'all'} strategy=full-inventory`);
   return rows;
 }
 
@@ -508,6 +519,15 @@ function mapRecontactRow(row: any): DemandRecontact {
     message: String(row.message ?? ''),
     matchVehicleIds: ids,
     sentAt: row.sent_at?.toISOString?.() ?? String(row.sent_at)
+  };
+}
+
+export function getDemandVehicleScanDebug() {
+  return {
+    directSupabase: preferSupabaseVehicles,
+    hasSupabasePool: Boolean(supabasePool),
+    lastGoodVehicleScanCount: lastGoodVehicleScan.rows.length,
+    lastGoodVehicleScanAt: lastGoodVehicleScan.at ? new Date(lastGoodVehicleScan.at).toISOString() : null
   };
 }
 
