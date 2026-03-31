@@ -1,3 +1,4 @@
+// status fallback fix
 import fetch from "node-fetch";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -124,7 +125,7 @@ function inferBodyworkFromRow(
 }
 
 async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
-  const where: string[] = ["status = 'active'"];
+  const where: string[] = ["1=1"];
   const params: any[] = [];
 
   if (env.catalogDealershipId) {
