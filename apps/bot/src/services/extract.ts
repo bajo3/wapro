@@ -575,36 +575,124 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
   return out;
 }
 
+const REQUIRED_FIELD_QUESTIONS: Record<string, string> = {
+  tradein_model: '¿Qué auto tenés para entregar? Pasame marca y modelo.',
+  tradein_year: '¿De qué año es?',
+  tradein_km: '¿Cuántos kilómetros tiene?',
+  tradein_gnc: '¿Tiene GNC?',
+  gnc: '¿Tiene GNC?',
+  down_payment: '¿Cuánto podrías poner de anticipo?',
+  installments: '¿En cuántas cuotas te gustaría?',
+  amount: '¿Qué presupuesto tenés en mente?',
+  max_price: '¿Hasta qué presupuesto querés mirar?',
+  vehicle_query: '¿Qué marca o modelo te interesa?',
+  from_zone: '¿Desde qué zona venís?',
+  payment_type: '¿Vas a pagar en efectivo o querés financiar parte?',
+  use_case: '¿Para qué lo vas a usar más: ciudad, ruta, familia o trabajo?',
+  budget: '¿Cuál es tu presupuesto máximo?',
+  priority: '¿Qué priorizás más: ciudad, ruta, espacio o presupuesto?',
+  vehicle_id: '¿Cuál de las opciones te interesa ver?',
+  city: '¿En qué zona estás?'
+};
+
+function normalizeRequiredFieldKey(value: string): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const snake = raw
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[\s-]+/g, '_')
+    .toLowerCase();
+  const aliases: Record<string, string> = {
+    trade_in_model: 'tradein_model',
+    trade_in_year: 'tradein_year',
+    trade_in_km: 'tradein_km',
+    tradeinkm: 'tradein_km',
+    tradeinyear: 'tradein_year',
+    tradeinmodel: 'tradein_model',
+    entrada: 'down_payment',
+    anticipo: 'down_payment',
+    cuotas: 'installments',
+    months: 'installments',
+    vehicle: 'vehicle_query',
+    query: 'vehicle_query',
+    zona: 'from_zone',
+    payment: 'payment_type',
+    usecase: 'use_case',
+    priority_type: 'priority'
+  };
+  return aliases[snake] || snake;
+}
+
+function getExtractedValueByRequiredKey(extracted: Extracted, key: string): any {
+  const k = normalizeRequiredFieldKey(key);
+  const aliases: Record<string, string[]> = {
+    tradein_model: ['tradeInModel', 'model'],
+    tradein_year: ['tradeInYear', 'year'],
+    tradein_km: ['tradeInKm', 'km'],
+    tradein_gnc: ['gnc'],
+    down_payment: ['downPayment', 'amount'],
+    installments: ['cuotas', 'installments'],
+    amount: ['amount', 'maxPrice'],
+    max_price: ['maxPrice', 'amount'],
+    vehicle_query: ['brand', 'model', 'bodywork', 'useCase'],
+    from_zone: ['city'],
+    payment_type: ['paymentType'],
+    use_case: ['useCase'],
+    budget: ['maxPrice', 'amount'],
+    priority: ['priority'],
+    vehicle_id: ['vehicleId', 'selectedVehicleId'],
+    city: ['city'],
+    gnc: ['gnc']
+  };
+  const candidates = [k, ...(aliases[k] || [])];
+  for (const candidate of candidates) {
+    const value = (extracted as any)?.[candidate];
+    if (value === undefined || value === null) continue;
+    if (typeof value === 'string' && !value.trim()) continue;
+    return value;
+  }
+  return undefined;
+}
+
 export function requiredFieldsForIntent(intent: string, playbookConfig?: any): Array<{ key: string; question: string }> {
   const cfg = playbookConfig && typeof playbookConfig === 'object' ? playbookConfig : {};
   if (Array.isArray(cfg.required_fields) && cfg.required_fields.length) {
     return cfg.required_fields
-      .map((x: any) => ({ key: String(x?.key ?? ''), question: String(x?.question ?? '') }))
-      .filter((x: any) => x.key);
+      .map((item: any) => {
+        if (typeof item === 'string') {
+          const key = normalizeRequiredFieldKey(item);
+          return key ? { key, question: REQUIRED_FIELD_QUESTIONS[key] || '¿Me pasás un dato más para seguir?' } : null;
+        }
+        const key = normalizeRequiredFieldKey(String(item?.key ?? item?.field ?? ''));
+        if (!key) return null;
+        const question = String(item?.question ?? REQUIRED_FIELD_QUESTIONS[key] ?? '¿Me pasás un dato más para seguir?');
+        return { key, question };
+      })
+      .filter(Boolean) as Array<{ key: string; question: string }>;
   }
 
   const i = norm(intent);
   if (i.includes('usado') || i.includes('permuta') || i.includes('tradein') || i.includes('canje')) {
     return [
-      { key: 'tradeInModel', question: '¿Qué vehículo tenés para entregar (marca/modelo)?' },
-      { key: 'tradeInYear', question: '¿De qué año es?' },
-      { key: 'tradeInKm', question: '¿Cuántos km tiene?' },
-      { key: 'gnc', question: '¿Tiene GNC? (sí/no)' }
+      { key: 'tradein_model', question: REQUIRED_FIELD_QUESTIONS.tradein_model },
+      { key: 'tradein_year', question: REQUIRED_FIELD_QUESTIONS.tradein_year },
+      { key: 'tradein_km', question: REQUIRED_FIELD_QUESTIONS.tradein_km },
+      { key: 'gnc', question: REQUIRED_FIELD_QUESTIONS.gnc }
     ];
   }
   if (i.includes('finan') || i.includes('cuota')) {
     return [
-      { key: 'percent', question: '¿Qué % del precio querés financiar?' },
-      { key: 'cuotas', question: '¿En cuántas cuotas?' }
+      { key: 'down_payment', question: REQUIRED_FIELD_QUESTIONS.down_payment },
+      { key: 'installments', question: REQUIRED_FIELD_QUESTIONS.installments }
     ];
   }
-  if (i.includes('ubic') || i.includes('horario')) {
-    return [{ key: 'city', question: '¿En qué ciudad/zona estás?' }];
+  if (i.includes('ubic') || i.includes('horario') || i.includes('visita')) {
+    return [{ key: 'from_zone', question: REQUIRED_FIELD_QUESTIONS.from_zone }];
   }
   if (i.includes('stock') || i.includes('dispon') || i.includes('busco')) {
     return [
-      { key: 'brand', question: '¿Qué marca/modelo buscás?' },
-      { key: 'amount', question: '¿Tenés un presupuesto?' }
+      { key: 'vehicle_query', question: REQUIRED_FIELD_QUESTIONS.vehicle_query },
+      { key: 'budget', question: REQUIRED_FIELD_QUESTIONS.budget }
     ];
   }
   return [];
@@ -615,11 +703,11 @@ export function computeMissingFields(
   extracted: Extracted
 ): string[] {
   return (required || [])
+    .map(({ key, question }) => ({ key: normalizeRequiredFieldKey(key), question }))
     .filter(({ key }) => {
-      const k = key.trim();
-      if (!k) return false;
-      const v = extracted?.[k];
-      return v === undefined || v === null || String(v).trim() === '' || v === false;
+      if (!key) return false;
+      const value = getExtractedValueByRequiredKey(extracted, key);
+      return value === undefined || value === null || String(value).trim() === '' || value === false;
     })
     .map(({ key }) => key);
 }
@@ -628,12 +716,12 @@ export function buildMissingQuestions(
   required: Array<{ key: string; question: string }>,
   missing: string[]
 ): string {
-  const lines = missing
-    .map((m) => required.find((r) => r.key === m)?.question)
-    .filter(Boolean)
-    .map((q) => `• ${q}`);
-  if (!lines.length) return '';
-  return ['Para ayudarte mejor necesito algunos datos 👇', ...lines].join('\n');
+  const firstMissing = (missing || [])[0];
+  if (!firstMissing) return '';
+  const key = normalizeRequiredFieldKey(firstMissing);
+  const question = required.find((r) => normalizeRequiredFieldKey(r.key) === key)?.question || REQUIRED_FIELD_QUESTIONS[key];
+  if (!question) return '';
+  return question;
 }
 
 /**

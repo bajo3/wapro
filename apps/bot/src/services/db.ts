@@ -63,7 +63,11 @@ export const pool = new Pool({
 //
 // Falls back gracefully to the main Railway pool if the variable is not set.
 export const supabasePool: InstanceType<typeof Pool> | null = (() => {
-  const rawUrl = env.supabaseDatabaseUrl;
+  let rawUrl = env.supabaseDatabaseUrl;
+  if (!rawUrl && /\.supabase\.com/i.test(env.databaseUrl)) {
+    rawUrl = env.databaseUrl;
+    console.log('[db] SUPABASE_DATABASE_URL not set — using DATABASE_URL because it already points to Supabase');
+  }
   if (!rawUrl) return null;
   try {
     const connStr = withLibpqCompat(encodePasswordInUrl(rawUrl));

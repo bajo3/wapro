@@ -8,7 +8,8 @@ import { pool, supabasePool } from "./db.js";
 // Use supabasePool when available (direct Supabase connection, no sync needed).
 // Falls back to the main Railway pool transparently.
 const catalogPool = supabasePool ?? pool;
-const preferSupabaseForCatalog = Boolean(env.supabaseDatabaseUrl && supabasePool);
+const preferSupabaseForCatalog = Boolean((env.supabaseDatabaseUrl || /\.supabase\.com/i.test(env.databaseUrl)) && (supabasePool || /\.supabase\.com/i.test(env.databaseUrl)));
+const preferDbCatalog = process.env.CATALOG_PREFER_DB !== 'false';
 
 /**
  * Catalog queries must stay pinned to the direct Supabase source when configured.
@@ -619,8 +620,9 @@ export async function getCatalog(): Promise<CatalogItem[]> {
 
   const now = Date.now();
 
-  // If no JSON URL is configured, use the vehicles table from the connected Postgres DB.
-  if (!env.catalogJsonUrl) {
+  // Prefer DB whenever possible. This avoids stale CATALOG_JSON_URL snapshots
+  // masking real Supabase/Railway stock.
+  if (!env.catalogJsonUrl || preferDbCatalog) {
     if (cached && now - cachedAt < ttlMs) return cached;
     try {
       const items = await loadVehiclesFromDb(timeoutMs);
@@ -650,6 +652,21 @@ export async function getCatalog(): Promise<CatalogItem[]> {
       }
     } catch {
       // fall back below
+    }
+
+    // Fallback: if a JSON URL exists and DB-first failed, try the JSON source.
+    if (env.catalogJsonUrl) {
+      try {
+        const json = (await fetchJsonWithTimeout(env.catalogJsonUrl, timeoutMs)) as any;
+        if (Array.isArray(json)) {
+          cached = mapRawCatalog(json);
+          cachedAt = now;
+          cachedMeta = { source: 'catalog_json_url', count: cached.length, at: new Date().toISOString(), directSupabase: preferSupabaseForCatalog };
+          return cached;
+        }
+      } catch (err) {
+        console.warn('[CATALOG] DB-first mode: JSON fallback failed:', err);
+      }
     }
 
     // Fallback: try local JSON catalog file; if none found, return empty catalog.
