@@ -126,3 +126,10 @@ referencia para desarrolladores y agentes que trabajen con el proyecto en el fut
 ## Panel Bot — acceso visual al catálogo debug
 
 Se agregó un bloque visual en la pestaña **Stock del bot** (`apps/panel-whaticket/frontend/src/pages/Bot/index.js`) que consulta `GET /admin/catalog-debug` y muestra en pantalla el estado, origen, tabla y cantidad de vehículos del catálogo. Esto evita depender de Postman para validar si el panel está leyendo Supabase correctamente.
+
+
+## Bot Test Lab + forced catalog replies
+
+Se convirtió la pestaña `Playground` del panel en un **Test Lab** más útil: ahora muestra extracción estructurada, cantidad de matches del catálogo, query usada, respuesta final y una mini vista de la suite de pruebas (`/bot/tests/run`).
+
+En el bot real también se agregó una regla determinística en `agent.ts` / `webhooks.ts`: cuando hay **matches fuertes** entre el mensaje del cliente y el catálogo (marca/modelo/filtros/presupuesto), la respuesta se fuerza a mostrar 2-3 vehículos reales del stock en lugar de dejar que GPT responda algo genérico. Esto mejora mucho los casos donde el stock existe pero el bot no lo ofrece.

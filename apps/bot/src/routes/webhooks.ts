@@ -28,7 +28,7 @@ import { computeLeadScore, computeLeadScoreBreakdown, leadLabel } from '../servi
 import { getFinanceApr, simulateFinancing, formatArs } from '../services/finance.js';
 import { sendImageAndPersist, sendTextAndPersist } from '../services/panelPersistence.js';
 import { askGPT, buildCarDealershipSystemPrompt } from '../services/gpt.js';
-import { decideAgentAction } from '../services/agent.js';
+import { buildForcedCatalogReply, decideAgentAction } from '../services/agent.js';
 import { upsertLeadProfile } from '../services/leadProfile.js';
 import {
   captureConversationTurn,
@@ -1481,7 +1481,51 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               }
             } catch { /* no bloquear el flujo principal */ }
 
-            const agentDecision = await decideAgentAction({
+            const forcedCatalog = buildForcedCatalogReply({
+              userMessage: rawText,
+              extracted: mergedExtracted,
+              catalog,
+              maxItems: 3
+            });
+
+            if (forcedCatalog?.suggestedReply) {
+              reply = forcedCatalog.suggestedReply;
+              newState.last_intent = 'agent_stock_search';
+              (newState as any).agent = {
+                intent: 'stock_search',
+                confidence: 0.93,
+                action: 'SHOW_RESULTS',
+                urgency: 'medium',
+                handoffRecommended: false,
+                suggestedReply: forcedCatalog.suggestedReply,
+                missingFields: [],
+                internalReason: `Forced catalog response (${forcedCatalog.reason}) using query: ${forcedCatalog.query}`,
+                updatedAt: nowIso
+              };
+              (newState as any).missing_fields = [];
+              const existingHistory = (state as any).gpt_history ?? [];
+              (newState as any).gpt_history = [
+                ...existingHistory,
+                { role: 'user', content: rawText },
+                { role: 'assistant', content: forcedCatalog.suggestedReply }
+              ].slice(-12);
+              void logDecision({
+                instance,
+                remoteJid,
+                intent: newState.last_intent,
+                confidence: 0.93,
+                data: {
+                  type: 'agent',
+                  action: 'SHOW_RESULTS',
+                  urgency: 'medium',
+                  handoffRecommended: false,
+                  missingFields: [],
+                  reason: `forced_catalog:${forcedCatalog.reason}`,
+                  vehicleIds: forcedCatalog.matches.map((m: any) => m.id)
+                }
+              }).catch(() => {});
+            } else {
+              const agentDecision = await decideAgentAction({
               dealershipName: process.env.DEALERSHIP_NAME ?? undefined,
               userMessage: rawText,
               history,
@@ -1492,7 +1536,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               dynamicExamples: dynamicExamplesBlock
             });
 
-            if (agentDecision?.suggestedReply) {
+              if (agentDecision?.suggestedReply) {
               reply = agentDecision.suggestedReply;
               newState.last_intent = `agent_${agentDecision.intent || 'fallback'}`;
               (newState as any).agent = {
@@ -1531,7 +1575,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                   reason: agentDecision.internalReason || null
                 }
               }).catch(() => {});
-            } else {
+              } else {
               const systemPrompt = buildCarDealershipSystemPrompt({
                 dealershipName: process.env.DEALERSHIP_NAME ?? undefined,
                 catalogSummary: catalogSummary || undefined,
@@ -1558,6 +1602,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 newState.stage = 'awaiting_query';
                 newState.last_intent = 'fallback';
                 isFallback = true;
+              }
               }
             }
           } catch (gptErr) {
