@@ -420,7 +420,7 @@ function TabStock({ vehicles, loadingVehicles, onDelete }) {
 
 // ─── Tab: Playground ──────────────────────────────────────────────────────────
 
-function TabPlayground() {
+function TabPlayground({ externalInput = "", externalNonce = 0 }) {
   const [messages, setMessages] = useState([
     {
       role: "bot",
@@ -432,6 +432,10 @@ function TabPlayground() {
   const [loading, setLoading] = useState(false);
   const [decision, setDecision] = useState(null);
   const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    if (externalInput) setInput(externalInput);
+  }, [externalInput, externalNonce]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1490,6 +1494,296 @@ function TabAprendizaje() {
   );
 }
 
+
+// ─── Tab: Pruebas ─────────────────────────────────────────────────────────────
+
+function TabPruebas({ onUseCaseInPlayground }) {
+  const [cases, setCases] = useState([]);
+  const [report, setReport] = useState(null);
+  const [loadingCases, setLoadingCases] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    user_text: "",
+    expected_intent: "",
+    expected_source_type: "",
+    expected_contains: "",
+    expected_not_contains: "",
+    expected_must_ask_fields: "",
+  });
+
+  const loadCases = useCallback(async () => {
+    setLoadingCases(true);
+    try {
+      const { data } = await api.get("/bot/tests/cases");
+      setCases(Array.isArray(data) ? data : data?.cases || []);
+    } catch {
+      setCases([]);
+      toast.error("No se pudieron cargar los casos de prueba");
+    } finally {
+      setLoadingCases(false);
+    }
+  }, []);
+
+  const runTests = useCallback(async () => {
+    setRunning(true);
+    try {
+      const { data } = await api.post("/bot/tests/run", { limit: 300 });
+      setReport(data?.report || null);
+      toast.success("Suite ejecutada");
+    } catch {
+      toast.error("No se pudo ejecutar la suite");
+    } finally {
+      setRunning(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCases();
+  }, [loadCases]);
+
+  const splitCsv = (value) =>
+    String(value || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const saveCase = async () => {
+    if (!form.name.trim() || !form.user_text.trim()) return;
+    setSaving(true);
+    try {
+      await api.post("/bot/tests/cases", {
+        name: form.name.trim(),
+        user_text: form.user_text.trim(),
+        expected_intent: form.expected_intent.trim() || undefined,
+        expected_source_type: form.expected_source_type.trim() || undefined,
+        expected_contains: splitCsv(form.expected_contains),
+        expected_not_contains: splitCsv(form.expected_not_contains),
+        expected_must_ask_fields: splitCsv(form.expected_must_ask_fields),
+      });
+      toast.success("Caso guardado");
+      setForm({
+        name: "",
+        user_text: "",
+        expected_intent: "",
+        expected_source_type: "",
+        expected_contains: "",
+        expected_not_contains: "",
+        expected_must_ask_fields: "",
+      });
+      setFormOpen(false);
+      loadCases();
+    } catch {
+      toast.error("No se pudo guardar el caso");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteCase = async (id) => {
+    try {
+      await api.delete(`/bot/tests/cases/${id}`);
+      toast.success("Caso eliminado");
+      loadCases();
+    } catch {
+      toast.error("No se pudo eliminar el caso");
+    }
+  };
+
+  const passed = report?.passed || 0;
+  const failed = report?.failed || 0;
+  const total = report?.total || cases.length || 0;
+  const rate = total > 0 ? Math.round((passed / total) * 100) : 0;
+  const failures = report?.results?.filter((item) => !item.pass) || [];
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_0.95fr]">
+        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/35">Centro de pruebas</div>
+              <div className="mt-2 text-lg font-semibold text-white">Salud automática del bot</div>
+              <div className="mt-1 max-w-2xl text-sm leading-6 text-white/45">
+                Ejecutá una batería de pruebas para validar intents, fuentes, guardrails, preguntas obligatorias y calidad de respuesta del bot.
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={loadCases}
+                disabled={loadingCases}
+                className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-sm font-semibold text-white/70 transition hover:bg-white/[0.07] disabled:opacity-50"
+              >
+                {loadingCases ? "Actualizando..." : "Actualizar casos"}
+              </button>
+              <button
+                onClick={runTests}
+                disabled={running}
+                className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:opacity-50"
+              >
+                {running ? "Ejecutando suite..." : "Ejecutar suite completa"}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <MetricCard label="Casos cargados" value={cases.length || "0"} />
+            <MetricCard label="Último OK" value={passed || "0"} change={report ? `${rate}% aprobadas` : "Sin corrida"} changeType="up" />
+            <MetricCard label="Fallos" value={failed || "0"} change={failed ? "Requiere revisión" : "Sin fallos"} changeType={failed ? "down" : "up"} />
+            <MetricCard label="Salud" value={report ? `${rate}%` : "—"} change={report ? (rate >= 80 ? "Operación estable" : "Debajo del objetivo") : "Corré la suite"} changeType={rate >= 80 ? "up" : "neutral"} />
+          </div>
+
+          <div className="mt-4">
+            <div className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-wide text-white/35">
+              <span>Barra de aprobación</span>
+              <span>{report ? `${passed}/${total}` : "Sin corrida"}</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-white/[0.06]">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${rate >= 80 ? "bg-green-400" : rate >= 50 ? "bg-amber-400" : "bg-red-400"}`}
+                style={{ width: `${Math.max(4, rate || 0)}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/35">Diagnóstico rápido</div>
+          <div className="mt-3 space-y-2">
+            {[
+              { label: "Intent correcto", ok: !failures.some((item) => item.reasons?.some((reason) => String(reason).includes("intent esperado"))) },
+              { label: "Fuente correcta", ok: !failures.some((item) => item.reasons?.some((reason) => String(reason).includes("source_type"))) },
+              { label: "Textos obligatorios", ok: !failures.some((item) => item.reasons?.some((reason) => String(reason).includes("faltan textos"))) },
+              { label: "No inventa / guardrails", ok: !failures.some((item) => item.reasons?.some((reason) => String(reason).includes("prohibido"))) },
+              { label: "Hace preguntas clave", ok: !failures.some((item) => item.reasons?.some((reason) => String(reason).includes("no pide el campo"))) },
+            ].map((item) => (
+              <div key={item.label} className={`flex items-center justify-between rounded-xl border px-3 py-2.5 ${item.ok ? "border-green-500/15 bg-green-500/10" : "border-red-500/15 bg-red-500/10"}`}>
+                <span className="text-sm text-white">{item.label}</span>
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${item.ok ? "bg-green-500/15 text-green-300" : "bg-red-500/15 text-red-300"}`}>
+                  {item.ok ? "OK" : "Falla"}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 rounded-xl border border-white/[0.06] bg-[#111522] p-3 text-xs leading-5 text-white/45">
+            Ideal para detectar rápido si el bot se rompe por cambios en prompts, catálogo o reglas de negocio.
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/35">Casos de prueba</div>
+            <div className="mt-1 text-sm text-white/45">Base editable para validar ventas, stock, financiación, permuta y fallback.</div>
+          </div>
+          <button
+            onClick={() => setFormOpen((value) => !value)}
+            className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-300 transition hover:bg-amber-500/15"
+          >
+            {formOpen ? "Cancelar" : "+ Nuevo caso"}
+          </button>
+        </div>
+
+        {formOpen && (
+          <div className="mb-5 grid grid-cols-1 gap-3 rounded-2xl border border-white/[0.08] bg-[#111522] p-4 lg:grid-cols-2">
+            <input className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-500/40" placeholder="Nombre interno" value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} />
+            <input className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-500/40" placeholder="Intent esperado" value={form.expected_intent} onChange={(e) => setForm((prev) => ({ ...prev, expected_intent: e.target.value }))} />
+            <textarea className="lg:col-span-2 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-500/40" rows={3} placeholder="Mensaje del usuario" value={form.user_text} onChange={(e) => setForm((prev) => ({ ...prev, user_text: e.target.value }))} />
+            <input className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-500/40" placeholder="Fuente esperada: policy, faq, playbook, rag" value={form.expected_source_type} onChange={(e) => setForm((prev) => ({ ...prev, expected_source_type: e.target.value }))} />
+            <input className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-500/40" placeholder="Debe contener (coma)" value={form.expected_contains} onChange={(e) => setForm((prev) => ({ ...prev, expected_contains: e.target.value }))} />
+            <input className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-500/40" placeholder="No debe contener (coma)" value={form.expected_not_contains} onChange={(e) => setForm((prev) => ({ ...prev, expected_not_contains: e.target.value }))} />
+            <input className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-500/40" placeholder="Campos que debe pedir (coma)" value={form.expected_must_ask_fields} onChange={(e) => setForm((prev) => ({ ...prev, expected_must_ask_fields: e.target.value }))} />
+            <div className="lg:col-span-2 flex justify-end">
+              <button onClick={saveCase} disabled={saving || !form.name.trim() || !form.user_text.trim()} className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:opacity-50">
+                {saving ? "Guardando..." : "Guardar caso"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {loadingCases ? (
+          <div className="py-10 text-center text-sm text-white/30">Cargando casos...</div>
+        ) : cases.length === 0 ? (
+          <div className="py-10 text-center text-sm text-white/25">No hay casos cargados todavía.</div>
+        ) : (
+          <div className="space-y-3">
+            {cases.map((item) => {
+              const run = report?.results?.find((result) => result.id === item.id);
+              const pass = run?.pass;
+              return (
+                <div key={item.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold text-white">{item.name}</span>
+                        {item.expected_intent ? <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold text-blue-300">{item.expected_intent}</span> : null}
+                        {item.expected_source_type ? <span className="rounded-full bg-purple-500/10 px-2 py-0.5 text-[10px] font-semibold text-purple-300">{item.expected_source_type}</span> : null}
+                        {run ? (
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${pass ? "bg-green-500/15 text-green-300" : "bg-red-500/15 text-red-300"}`}>
+                            {pass ? "PASS" : "FAIL"}
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-white/35">Sin ejecutar</span>
+                        )}
+                      </div>
+                      <div className="mt-2 text-sm text-white/70">{item.user_text}</div>
+                      {run?.reply ? (
+                        <div className="mt-3 rounded-xl border border-white/[0.05] bg-[#111522] p-3 text-xs leading-5 text-white/55">
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-white/30">Respuesta del bot</div>
+                          {run.reply}
+                        </div>
+                      ) : null}
+                      {run?.reasons?.length ? (
+                        <div className="mt-3 rounded-xl border border-red-500/15 bg-red-500/10 p-3">
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-red-300/80">Motivos del fallo</div>
+                          <div className="space-y-1 text-xs text-red-200/80">
+                            {run.reasons.map((reason, idx) => <div key={idx}>• {reason}</div>)}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-2 xl:w-[220px] xl:justify-end">
+                      <button
+                        onClick={() => onUseCaseInPlayground && onUseCaseInPlayground(item.user_text)}
+                        className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-xs font-semibold text-white/70 transition hover:bg-white/[0.08]"
+                      >
+                        Probar en playground
+                      </button>
+                      <button
+                        onClick={() => deleteCase(item.id)}
+                        className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-300 transition hover:bg-red-500/15"
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {failures.length > 0 ? (
+          <div className="mt-5 rounded-2xl border border-amber-500/15 bg-amber-500/10 p-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200/80">Fallos recientes</div>
+            <div className="mt-2 space-y-2 text-sm text-amber-100/80">
+              {failures.slice(0, 5).map((item) => (
+                <div key={item.id} className="rounded-xl border border-amber-500/10 bg-black/10 px-3 py-2">
+                  <div className="font-semibold">{item.name}</div>
+                  <div className="mt-1 text-xs">{item.reasons.join(" · ")}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 // ─── Tab: Configuración ───────────────────────────────────────────────────────
 
 function TabConfig() {
@@ -1668,6 +1962,7 @@ const TABS = [
   { id: "reglas",      label: "Reglas y FAQs" },
   { id: "playbooks",   label: "Playbooks" },
   { id: "aprendizaje", label: "Aprendizaje" },
+  { id: "pruebas",     label: "Pruebas" },
   { id: "config",      label: "Configuración" },
 ];
 
@@ -1699,6 +1994,8 @@ export default function BotPanel() {
   const [loadingPlaybooks, setLoadingPlaybooks]   = useState(false);
   const [catalogDebug, setCatalogDebug]           = useState(null);
   const [loadingCatalogDebug, setLoadingCatalogDebug] = useState(false);
+  const [playgroundPrefill, setPlaygroundPrefill] = useState("");
+  const [playgroundNonce, setPlaygroundNonce] = useState(0);
 
   // Cargar estado del bot
   useEffect(() => {
@@ -1812,6 +2109,12 @@ export default function BotPanel() {
   };
 
   const vehiculosActivos = vehicles.filter(v => v.status !== "sold").length;
+  const catalogStatus = !catalogDebug ? { tone: "neutral", dot: "bg-white/20", label: "Sin datos", hint: "Todavía no se consultó el estado del catálogo." }
+    : (catalogDebug?.ok && Number(catalogDebug?.count || 0) > 0)
+      ? { tone: "success", dot: "bg-green-400", label: "🟢 OK", hint: "Catálogo operativo y con stock disponible." }
+      : (catalogDebug?.ok)
+        ? { tone: "warning", dot: "bg-amber-400", label: "🟡 fallback", hint: "Conecta pero no está encontrando unidades publicables." }
+        : { tone: "danger", dot: "bg-red-400", label: "🔴 error", hint: "Hay un problema leyendo el catálogo o su origen." };
 
   return (
     <div className="min-h-screen bg-[#0f1117] p-6">
@@ -1875,49 +2178,57 @@ export default function BotPanel() {
           )}
           {tab === "stock" && (
             <div className="space-y-4">
-              <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5">
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.9fr]">
                   <div>
-                    <div className="text-sm font-semibold text-white">Debug del catálogo</div>
-                    <div className="text-xs text-white/45">
-                      Validá rápido si el panel está leyendo Supabase, cuántos autos ve y qué tabla detectó.
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/35">Estado del catálogo</div>
+                        <div className="mt-2 text-lg font-semibold text-white">🔍 Ver estado del catálogo</div>
+                        <div className="mt-1 max-w-2xl text-sm leading-6 text-white/45">
+                          Chequeá si WaPro está leyendo bien el stock, desde qué origen lo toma y si el bot tiene catálogo suficiente para responder.
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={loadCatalogDebug}
+                          disabled={loadingCatalogDebug}
+                          className="inline-flex items-center justify-center rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-300 transition hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {loadingCatalogDebug ? "Actualizando..." : "Actualizar estado"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => { setTab("pruebas"); setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 80); }}
+                          className="inline-flex items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-sm font-semibold text-white/75 transition hover:bg-white/[0.07]"
+                        >
+                          Testear respuesta del bot con este catálogo
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={loadCatalogDebug}
-                    disabled={loadingCatalogDebug}
-                    className="inline-flex items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {loadingCatalogDebug ? "Actualizando..." : "Actualizar debug"}
-                  </button>
-                </div>
 
-                <div className="mt-3 grid gap-3 md:grid-cols-4">
-                  <div className="rounded-lg border border-white/[0.06] bg-[#111522] p-3">
-                    <div className="text-[11px] uppercase tracking-wide text-white/35">Estado</div>
-                    <div className="mt-1 text-sm font-semibold text-white">
-                      {catalogDebug?.ok ? "OK" : "Sin datos"}
+                    <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                      <MetricCard label="Semáforo" value={catalogStatus.label} change={catalogStatus.hint} changeType={catalogStatus.tone === "danger" ? "down" : catalogStatus.tone === "warning" ? "neutral" : "up"} />
+                      <MetricCard label="Stock visible" value={String(catalogDebug?.count ?? vehiculosActivos ?? 0)} change="Contador principal" changeType="up" />
+                      <MetricCard label="Origen" value={catalogDebug?.supabase ? "Supabase" : "No detectado"} change={catalogDebug?.source?.schema && catalogDebug?.source?.table ? `${catalogDebug.source.schema}.${catalogDebug.source.table}` : "Sin tabla detectada"} changeType="neutral" />
+                      <MetricCard label="Bot" value={botEnabled ? "Activo" : "Pausado"} change={botEnabled ? "Puede responder" : "No procesará mensajes"} changeType={botEnabled ? "up" : "neutral"} />
                     </div>
                   </div>
-                  <div className="rounded-lg border border-white/[0.06] bg-[#111522] p-3">
-                    <div className="text-[11px] uppercase tracking-wide text-white/35">Origen</div>
-                    <div className="mt-1 text-sm font-semibold text-white">
-                      {catalogDebug?.supabase ? "Supabase" : "No detectado"}
+
+                  <div className="rounded-2xl border border-white/[0.08] bg-[#111522] p-4">
+                    <div className="flex items-center gap-2">
+                      <span className={`h-3 w-3 rounded-full ${catalogStatus.dot}`} />
+                      <span className="text-sm font-semibold text-white">{catalogStatus.label}</span>
                     </div>
-                  </div>
-                  <div className="rounded-lg border border-white/[0.06] bg-[#111522] p-3">
-                    <div className="text-[11px] uppercase tracking-wide text-white/35">Tabla</div>
-                    <div className="mt-1 text-sm font-semibold text-white">
-                      {catalogDebug?.source?.schema && catalogDebug?.source?.table
-                        ? `${catalogDebug.source.schema}.${catalogDebug.source.table}`
-                        : "-"}
+                    <div className="mt-3 text-4xl font-black tracking-tight text-white">
+                      {Number(catalogDebug?.count ?? vehiculosActivos ?? 0).toLocaleString("es-AR")}
                     </div>
-                  </div>
-                  <div className="rounded-lg border border-white/[0.06] bg-[#111522] p-3">
-                    <div className="text-[11px] uppercase tracking-wide text-white/35">Vehículos</div>
-                    <div className="mt-1 text-sm font-semibold text-white">
-                      {catalogDebug?.count ?? 0}
+                    <div className="mt-1 text-xs uppercase tracking-[0.2em] text-white/35">vehículos detectados</div>
+                    <div className="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 text-xs leading-5 text-white/45">
+                      <div><span className="text-white/60">Fuente:</span> {catalogDebug?.source?.schema && catalogDebug?.source?.table ? `${catalogDebug.source.schema}.${catalogDebug.source.table}` : "-"}</div>
+                      <div><span className="text-white/60">Supabase:</span> {catalogDebug?.supabase ? "sí" : "no"}</div>
+                      <div><span className="text-white/60">Hint:</span> {catalogStatus.hint}</div>
                     </div>
                   </div>
                 </div>
@@ -1927,7 +2238,7 @@ export default function BotPanel() {
             </div>
           )}
           {tab === "playground" && (
-            <TabPlayground />
+            <TabPlayground externalInput={playgroundPrefill} externalNonce={playgroundNonce} />
           )}
           {tab === "reglas" && (
             <TabReglas
@@ -1947,6 +2258,15 @@ export default function BotPanel() {
           )}
           {tab === "aprendizaje" && (
             <TabAprendizaje />
+          )}
+          {tab === "pruebas" && (
+            <TabPruebas
+              onUseCaseInPlayground={(value) => {
+                setPlaygroundPrefill(value || "");
+                setPlaygroundNonce((prev) => prev + 1);
+                setTab("playground");
+              }}
+            />
           )}
           {tab === "config" && (
             <TabConfig />
