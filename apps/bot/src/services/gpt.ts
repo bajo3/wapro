@@ -54,10 +54,7 @@ export async function askGPT(params: GptParams): Promise<string | null> {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`
       },
-      // GPT-5.x and newer chat-completions models reject `max_tokens`.
-      // `max_completion_tokens` works for the newer models we use in production
-      // and avoids the 400 unsupported_parameter seen in Railway logs.
-      body: JSON.stringify({ model, max_completion_tokens: maxTokens, temperature, messages }),
+      body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages }),
       // 15 segundos de timeout para no trabar el flujo principal
       signal: AbortSignal.timeout?.(15_000) as any
     });

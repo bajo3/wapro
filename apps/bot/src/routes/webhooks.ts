@@ -470,46 +470,6 @@ function hasStructuredSearchNeed(extracted: any): boolean {
   );
 }
 
-
-function isInventoryOverviewRequest(rawText: string): boolean {
-  const t = normalize(rawText || '');
-  if (!t) return false;
-  return (
-    /\bque\s+(autos|vehiculos?)\s+(disponibles\s+)?tenes\b/.test(t) ||
-    /\bque\s+tenes\s+(disponible|en\s+stock)\b/.test(t) ||
-    /\bque\s+(autos|vehiculos?)\s+hay\b/.test(t) ||
-    /\bmostrame\s+(los\s+)?(autos|vehiculos?|stock)\b/.test(t) ||
-    /\bstock\s+(disponible|actual)\b/.test(t) ||
-    /\bautos\s+disponibles\b/.test(t)
-  );
-}
-
-function buildInventoryOverviewReply(catalog: any[], limit = 3): string {
-  const allVehicles = (catalog || []).filter((it) => isVehicleItem(it));
-  const vehicles = [...allVehicles]
-    .sort((a, b) => {
-      const ay = Number(a?.year || 0);
-      const by = Number(b?.year || 0);
-      if (ay !== by) return by - ay;
-      const ap = Number(a?.priceNumber || 0);
-      const bp = Number(b?.priceNumber || 0);
-      if (ap && bp && ap !== bp) return ap - bp;
-      return String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''));
-    })
-    .slice(0, Math.max(1, limit));
-
-  if (!vehicles.length) {
-    return 'Ahora mismo no tengo autos cargados para mostrarte. Si querés, decime marca o presupuesto y lo reviso.';
-  }
-
-  return [
-    `Sí, tengo ${allVehicles.length} autos disponibles. Para arrancar te muestro estos:`,
-    ...vehicles.map((it, i) => formatItemLine(it, i + 1)),
-    '',
-    'Si querés, te lo filtro por año, marca, presupuesto o tipo de uso.'
-  ].join('\n');
-}
-
 function scoreVehicleForContext(it: any, ctx: any, rawText: string): number {
   let score = 0;
   const itemText = normalize(getItemText(it));
@@ -1254,22 +1214,6 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // ── Awaiting query from previous turn ───────────────────────────────────
     if (state.stage === 'awaiting_query') {
-      if (isInventoryOverviewRequest(rawText) && !hasStructuredSearchNeed(extracted)) {
-        const inventoryReply = buildInventoryOverviewReply(catalog, 3);
-        const inventoryHits = catalog.filter((it) => isVehicleItem(it)).slice(0, 3);
-        const nextState: ConvState = {
-          ...state,
-          stage: 'awaiting_query',
-          search_context: {} as any,
-          search_context_at: nowIso,
-          last_intent: 'inventory_overview',
-          last_query: rawText,
-          last_hits: inventoryHits.map((it) => it.id),
-          last_hits_at: nowIso
-        };
-        scheduleReply(inventoryReply, nextState, { imageUrl: (inventoryHits[0] as any)?.image ?? undefined });
-        return;
-      }
       const rawMatches = getVehicleMatches(catalog, rawText, state.search_context, 3);
       const guarded = applyVehicleGuardrails(rawText, rawMatches.hits);
       const matches = { ...rawMatches, hits: guarded.hits };
@@ -1320,8 +1264,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       const normText = normalize(rawText);
       const hasContent = normText.length >= 3 && /[a-z0-9]/i.test(normText);
       const stage = state.stage as ConvState['stage'];
-      const isInventoryRequest = isInventoryOverviewRequest(rawText) && !hasStructuredSearchNeed(extracted);
-      const shouldSearch = isInventoryRequest || stage === 'awaiting_query' || looksLikeGamingQuery || looksLikeVehicleQuery || hasStructuredSearchNeed(extracted) || (asksPrice && hasContent);
+      const shouldSearch = stage === 'awaiting_query' || looksLikeGamingQuery || looksLikeVehicleQuery || hasStructuredSearchNeed(extracted) || (asksPrice && hasContent);
 
       if (isGreeting) {
         // v3: si el cliente vuelve después de que el contexto expiró, recordarle su búsqueda anterior
@@ -1456,16 +1399,6 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         ]);
         newState.stage = 'awaiting_query';
         newState.last_intent = 'price_request';
-
-      } else if (isInventoryRequest) {
-        reply = buildInventoryOverviewReply(catalog, 3);
-        newState.search_context = {} as any;
-        newState.search_context_at = nowIso;
-        newState.stage = 'awaiting_query';
-        newState.last_intent = 'inventory_overview';
-        newState.last_query = rawText;
-        newState.last_hits = catalog.filter((it) => isVehicleItem(it)).slice(0, 3).map((it) => it.id);
-        newState.last_hits_at = nowIso;
 
       } else if (shouldSearch) {
         const rawMatches = getVehicleMatches(catalog, rawText, state.search_context, 3);

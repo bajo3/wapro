@@ -268,10 +268,7 @@ function detectBrandModel(text: string): { brand?: string; model?: string } {
     for (const model of BRAND_MODELS[brand]) {
       if (t.includes(norm(model))) {
         out.model = model;
-        // El modelo es más específico que la marca mencionada en texto libre.
-        // Si aparece una combinación imposible tipo "ford corolla", priorizamos
-        // la marca canónica del modelo para no persistir contextos inválidos.
-        out.brand = brand;
+        if (!out.brand) out.brand = brand;
         return out;
       }
     }
@@ -364,7 +361,8 @@ function detectCondition(text: string): 'nuevo' | 'usado' | null {
  */
 function detectFinancing(text: string): boolean {
   const t = norm(text);
-  return /\b(?:con\s*cuotas?|en\s*cuotas?|a\s*cuotas?|financiado|financiacion|credito|banco|prestamo|anticipo|cuota\s*fija|pago\s*mensual|a\s*plazos?|plan\s*de\s*pago|lotes?)\b/.test(t);
+  // Extend financing detection to capture more conjugations and synonyms like "financian" or "financia".
+  return /\b(?:con\s*cuotas?|en\s*cuotas?|a\s*cuotas?|financian|financia|financiar|financiado|financiacion|financiamiento|credito|banco|prestamo|anticipo|cuota\s*fija|pago\s*mensual|a\s*plazos?|plan\s*de\s*pago|lotes?)\b/.test(t);
 }
 
 /**
@@ -373,7 +371,11 @@ function detectFinancing(text: string): boolean {
  */
 export function detectShowIntent(text: string): boolean {
   const t = norm(text);
-  return /\b(?:mostrame|mostra|muestrame|muestra|que\s+tenes|que\s+tienen|que\s+hay|listame|lista|ver\s+opciones?|quiero\s+ver|dame\s+opciones?|que\s+opciones?|que\s+modelos?|tenes\s+algo|tienen\s+algo|hay\s+algo|que\s+tienen\s+de|manda|mandame|pasame)\b/.test(t);
+  // Extend show-intent detection with "disponibles", "stock" and generic vehicle queries like "que autos tenes".
+  // Also match phrases like "que autos disponibles tenes".
+  const base = /\b(?:mostrame|mostra|muestrame|muestra|que\s+tenes|que\s+tienen|que\s+hay|listame|lista|ver\s+opciones?|quiero\s+ver|dame\s+opciones?|que\s+opciones?|que\s+modelos?|tenes\s+algo|tienen\s+algo|hay\s+algo|que\s+tienen\s+de|manda|mandame|pasame|disponible|disponibles|stock|que\s+autos|que\s+coches|que\s+vehiculos)\b/.test(t);
+  const extras = /\bque\s+.*disponibles\s+tenes\b/.test(t);
+  return base || extras;
 }
 
 /**

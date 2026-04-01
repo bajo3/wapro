@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 
 import {
@@ -50,7 +49,6 @@ import {
   runRecontact,
   updateDemand
 } from "../../../services/demands";
-import api from "../../../services/api";
 
 // IMPORTANT:
 // Always create a *fresh* form object when opening the modal.
@@ -111,7 +109,6 @@ function pickScore(m) {
 }
 
 export default function Demands() {
-  const history = useHistory();
   const [status, setStatus] = useState("open");
   const [loading, setLoading] = useState(false);
   const [demands, setDemands] = useState([]);
@@ -297,45 +294,6 @@ export default function Demands() {
     }
   };
 
-  const openDemandChat = async (demand) => {
-    try {
-      const rawNumber = String(demand?.remoteJid || demand?.phone || "");
-      const digits = rawNumber.replace(/\D/g, "");
-      const searchParam = digits || String(demand?.contactName || "").trim();
-      if (!searchParam) {
-        toast.info("Esta demanda no tiene teléfono o contacto vinculado todavía.");
-        return;
-      }
-
-      const { data } = await api.get("/contacts", {
-        params: { searchParam, pageNumber: 1, pageSize: 20 }
-      });
-      const contacts = Array.isArray(data?.contacts) ? data.contacts : [];
-      const target = contacts.find((c) => {
-        const candidate = String(c?.number || "").replace(/\D/g, "");
-        return digits ? (candidate === digits || candidate.endsWith(digits) || digits.endsWith(candidate)) : false;
-      }) || contacts[0];
-
-      if (!target?.id) {
-        toast.info("No encontré un contacto/ticket para este recontacto todavía.");
-        return;
-      }
-
-      const ticketsResp = await api.get(`/contacts/${target.id}/tickets`, { params: { limit: 10 } });
-      const tickets = Array.isArray(ticketsResp?.data?.tickets) ? ticketsResp.data.tickets : [];
-      const ticket = tickets.find((t) => t?.status !== "closed") || tickets[0];
-
-      if (!ticket?.id) {
-        toast.info("Encontré el contacto, pero no tiene ticket abierto para navegar.");
-        return;
-      }
-
-      history.push(`/tickets/${ticket.id}`);
-    } catch (e) {
-      toastError(e);
-    }
-  };
-
   return (
     <div className="flex h-full flex-col bg-[#0f1117]">
       {/* Header */}
@@ -405,15 +363,8 @@ export default function Demands() {
                         </button>
                       </td>
                       <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={() => openDemandChat(d)}
-                          className="group text-left"
-                          title="Abrir chat vinculado"
-                        >
-                          <p className="font-semibold text-white group-hover:text-amber-300 transition-colors">{d.contactName || "(sin nombre)"}</p>
-                          <p className="text-xs text-white/40 group-hover:text-white/60 transition-colors">{d.remoteJid || d.phone || ""}</p>
-                        </button>
+                        <p className="font-semibold text-white">{d.contactName || "(sin nombre)"}</p>
+                        <p className="text-xs text-white/40">{d.remoteJid || d.phone || ""}</p>
                       </td>
                       <td className="px-4 py-3">
                         <p className="font-semibold text-white">{d.query}</p>
@@ -460,13 +411,6 @@ export default function Demands() {
                       </td>
                       <td className="px-4 py-3 text-xs text-white/40">{fmtDate(d.updatedAt)}</td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => openDemandChat(d)}
-                          className="mr-1 inline-flex h-7 items-center justify-center rounded-lg border border-white/[0.08] px-2 text-xs text-white/50 hover:bg-white/[0.08] hover:text-white transition-colors"
-                          title="Abrir chat"
-                        >
-                          Chat
-                        </button>
                         <button
                           onClick={() => openEdit(d)}
                           className="mr-1 inline-flex h-7 w-7 items-center justify-center rounded-lg text-white/40 hover:bg-white/[0.08] hover:text-white/80 transition-colors"
