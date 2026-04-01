@@ -1697,6 +1697,8 @@ export default function BotPanel() {
   const [loadingVehicles, setLoadingVehicles]     = useState(false);
   const [loadingPolicies, setLoadingPolicies]     = useState(false);
   const [loadingPlaybooks, setLoadingPlaybooks]   = useState(false);
+  const [catalogDebug, setCatalogDebug]           = useState(null);
+  const [loadingCatalogDebug, setLoadingCatalogDebug] = useState(false);
 
   // Cargar estado del bot
   useEffect(() => {
@@ -1732,6 +1734,19 @@ export default function BotPanel() {
       setVehicles([]);
     } finally {
       setLoadingVehicles(false);
+    }
+  }, []);
+
+  const loadCatalogDebug = useCallback(async () => {
+    setLoadingCatalogDebug(true);
+    try {
+      const { data } = await api.get("/admin/catalog-debug");
+      setCatalogDebug(data || null);
+    } catch {
+      setCatalogDebug(null);
+      toast.error("No se pudo obtener el debug del catálogo");
+    } finally {
+      setLoadingCatalogDebug(false);
     }
   }, []);
 
@@ -1775,10 +1790,11 @@ export default function BotPanel() {
   useEffect(() => {
     loadDecisions();
     loadVehicles();
+    loadCatalogDebug();
     loadPolicies();
     loadFaqs();
     loadPlaybooks();
-  }, [loadDecisions, loadVehicles, loadPolicies, loadFaqs, loadPlaybooks]);
+  }, [loadDecisions, loadVehicles, loadCatalogDebug, loadPolicies, loadFaqs, loadPlaybooks]);
 
   const handleToggleBot = async (next) => {
     setTogglingBot(true);
@@ -1858,7 +1874,57 @@ export default function BotPanel() {
             <TabEstado decisions={decisions} loadingDecisions={loadingDecisions} />
           )}
           {tab === "stock" && (
-            <TabStock vehicles={vehicles} loadingVehicles={loadingVehicles} onDelete={loadVehicles} />
+            <div className="space-y-4">
+              <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Debug del catálogo</div>
+                    <div className="text-xs text-white/45">
+                      Validá rápido si el panel está leyendo Supabase, cuántos autos ve y qué tabla detectó.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadCatalogDebug}
+                    disabled={loadingCatalogDebug}
+                    className="inline-flex items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {loadingCatalogDebug ? "Actualizando..." : "Actualizar debug"}
+                  </button>
+                </div>
+
+                <div className="mt-3 grid gap-3 md:grid-cols-4">
+                  <div className="rounded-lg border border-white/[0.06] bg-[#111522] p-3">
+                    <div className="text-[11px] uppercase tracking-wide text-white/35">Estado</div>
+                    <div className="mt-1 text-sm font-semibold text-white">
+                      {catalogDebug?.ok ? "OK" : "Sin datos"}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-white/[0.06] bg-[#111522] p-3">
+                    <div className="text-[11px] uppercase tracking-wide text-white/35">Origen</div>
+                    <div className="mt-1 text-sm font-semibold text-white">
+                      {catalogDebug?.supabase ? "Supabase" : "No detectado"}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-white/[0.06] bg-[#111522] p-3">
+                    <div className="text-[11px] uppercase tracking-wide text-white/35">Tabla</div>
+                    <div className="mt-1 text-sm font-semibold text-white">
+                      {catalogDebug?.source?.schema && catalogDebug?.source?.table
+                        ? `${catalogDebug.source.schema}.${catalogDebug.source.table}`
+                        : "-"}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-white/[0.06] bg-[#111522] p-3">
+                    <div className="text-[11px] uppercase tracking-wide text-white/35">Vehículos</div>
+                    <div className="mt-1 text-sm font-semibold text-white">
+                      {catalogDebug?.count ?? 0}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <TabStock vehicles={vehicles} loadingVehicles={loadingVehicles} onDelete={loadVehicles} />
+            </div>
           )}
           {tab === "playground" && (
             <TabPlayground />

@@ -121,3 +121,8 @@ if (!rawUrl) {
 
 Estas notas forman parte del proceso de mejora continua y pretenden servir de
 referencia para desarrolladores y agentes que trabajen con el proyecto en el futuro.
+
+
+## Panel Bot — acceso visual al catálogo debug
+
+Se agregó un bloque visual en la pestaña **Stock del bot** (`apps/panel-whaticket/frontend/src/pages/Bot/index.js`) que consulta `GET /admin/catalog-debug` y muestra en pantalla el estado, origen, tabla y cantidad de vehículos del catálogo. Esto evita depender de Postman para validar si el panel está leyendo Supabase correctamente.
