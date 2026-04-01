@@ -45,7 +45,25 @@ let _supabasePool: pg.Pool | null = null;
 export function getSupabasePool(): pg.Pool | null {
   if (_supabasePool) return _supabasePool;
 
-  const rawUrl = process.env.SUPABASE_DATABASE_URL;
+  /**
+   * Derive a connection string for Supabase:
+   *   1. Prefer the explicit SUPABASE_DATABASE_URL env.
+   *   2. Fall back to DATABASE_URL if it appears to be a Supabase connection.
+   *      Many deployments already expose the DB via DATABASE_URL; in those
+   *      cases no additional env var was set for the panel, leading to the
+   *      vehicles endpoint hitting the main Railway DB and returning 0 rows.
+   *
+   * We intentionally avoid using DATABASE_URL for non-Supabase hosts to
+   * prevent accidental writes to the wrong database. The heuristic is
+   * conservative: we only fall back when the URL contains ".supabase".
+   */
+  let rawUrl = process.env.SUPABASE_DATABASE_URL;
+  if (!rawUrl) {
+    const fallback = process.env.DATABASE_URL || process.env.DB_URL;
+    if (fallback && /supabase/i.test(fallback)) {
+      rawUrl = fallback;
+    }
+  }
   if (!rawUrl) return null;
 
   try {
