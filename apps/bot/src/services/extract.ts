@@ -268,7 +268,10 @@ function detectBrandModel(text: string): { brand?: string; model?: string } {
     for (const model of BRAND_MODELS[brand]) {
       if (t.includes(norm(model))) {
         out.model = model;
-        if (!out.brand) out.brand = brand;
+        // El modelo es más específico que la marca mencionada en texto libre.
+        // Si aparece una combinación imposible tipo "ford corolla", priorizamos
+        // la marca canónica del modelo para no persistir contextos inválidos.
+        out.brand = brand;
         return out;
       }
     }
