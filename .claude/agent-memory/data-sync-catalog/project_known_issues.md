@@ -46,4 +46,4 @@ Problemas detectados al auditar el catálogo en 2026-03-26:
 
 12. **Acceso visual al debug del catálogo en el panel**: agregado 2026-04-01. La pestaña `Stock del bot` ahora incluye un bloque de `Debug del catálogo` con botón `Actualizar debug` que consume `GET /admin/catalog-debug` y muestra estado, origen, tabla y cantidad. Esto acelera diagnóstico cuando el panel y el bot muestran stocks distintos.
 
-13. **Bot Test Lab + forced catalog replies**: agregado 2026-04-01. El panel Bot ahora usa un Test Lab visual para ver extracción, matches, respuesta y resultados de la suite. Además, `buildForcedCatalogReply()` fuerza respuestas con autos reales cuando hay coincidencias fuertes entre lo que pidió el cliente y el catálogo. Esto evita que el bot tenga stock pero no lo ofrezca en la conversación.
+13. **Build frontend roto por `MetricCard` duplicado**: detectado en logs del frontend Railway. `src/pages/Bot/index.js` tenía una segunda declaración de `MetricCard`, y Vite/esbuild abortó el build con `The symbol "MetricCard" has already been declared`. Se renombró la segunda declaración a `TestLabMetricCard` para evitar colisión y restaurar el deploy.

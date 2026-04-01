@@ -13,8 +13,6 @@
  *  - Intenciones implícitas propagadas desde extract.ts al prompt.
  */
 
-import { formatItemLine, searchCatalog } from './catalog.js';
-
 export interface AgentDecision {
   intent?: string;
   confidence?: number;
@@ -39,116 +37,6 @@ export interface AgentLoopData {
    * Number of user turns so far in the conversation. Used to adjust tone.
    */
   turnCount?: number;
-}
-
-export type ForcedCatalogReplyResult = {
-  query: string;
-  reason: string;
-  matches: any[];
-  suggestedReply: string;
-};
-
-function normalizeLight(value: any): string {
-  return String(value ?? '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .trim();
-}
-
-function buildCatalogSearchQuery(userMessage: string, extracted: Record<string, any> = {}): string {
-  const chunks = [
-    extracted.brand,
-    extracted.model,
-    extracted.bodywork,
-    extracted.transmission,
-    extracted.fuel,
-    extracted.condition === 'nuevo' ? '0km' : extracted.condition,
-    extracted.year,
-    extracted.minYear,
-    extracted.maxYear,
-    userMessage
-  ]
-    .flat()
-    .filter(Boolean)
-    .map((x) => String(x).trim())
-    .filter(Boolean);
-
-  return chunks.join(' ');
-}
-
-function isStrongEnoughMatch(item: any, extracted: Record<string, any> = {}, query: string): boolean {
-  const hay = normalizeLight([
-    item?.name,
-    item?.brand,
-    item?.model,
-    item?.version,
-    item?.year,
-    item?.fuel,
-    item?.transmission,
-    item?.bodywork
-  ].filter(Boolean).join(' '));
-
-  const brand = normalizeLight(extracted.brand);
-  const model = normalizeLight(extracted.model);
-  const year = Number(extracted.year ?? extracted.minYear ?? 0);
-  const transmission = normalizeLight(extracted.transmission);
-  const fuel = normalizeLight(extracted.fuel);
-  const bodywork = normalizeLight(extracted.bodywork);
-
-  if (brand && !hay.includes(brand)) return false;
-  if (model && !hay.includes(model)) return false;
-  if (year && Number(item?.year) && Number(item.year) < year) return false;
-  if (transmission && !normalizeLight(item?.transmission).includes(transmission)) return false;
-  if (fuel && !normalizeLight(item?.fuel).includes(fuel)) return false;
-  if (bodywork && !normalizeLight(item?.bodywork).includes(bodywork)) return false;
-
-  const requestedNew = extracted.condition === 'nuevo';
-  const requestedUsed = extracted.condition === 'usado';
-  if (requestedNew && item?.isNew !== true) return false;
-  if (requestedUsed && item?.isNew === true) return false;
-
-  const budget = Number(extracted.maxPrice ?? extracted.amount ?? 0);
-  if (budget > 0 && typeof item?.priceNumber === 'number') {
-    const expand = extracted.rangeExpansion ? 1.20 : 1.12;
-    if (item.priceNumber > budget * expand) return false;
-  }
-
-  const hasUsefulFilter = Boolean(brand || model || bodywork || transmission || fuel || budget > 0 || year);
-  return hasUsefulFilter || normalizeLight(query).split(/\s+/).filter(Boolean).length >= 2;
-}
-
-export function buildForcedCatalogReply(params: {
-  userMessage: string;
-  extracted?: Record<string, any>;
-  catalog?: any[];
-  maxItems?: number;
-}): ForcedCatalogReplyResult | null {
-  const extracted = params.extracted ?? {};
-  const catalog = Array.isArray(params.catalog) ? params.catalog : [];
-  if (!catalog.length) return null;
-
-  const query = buildCatalogSearchQuery(params.userMessage, extracted).trim();
-  if (!query) return null;
-
-  const matches = searchCatalog(catalog, query, 8).filter((item) => isStrongEnoughMatch(item, extracted, query));
-  if (!matches.length) return null;
-
-  const maxItems = Math.max(1, Math.min(4, Number(params.maxItems ?? 3)));
-  const shortlisted = matches.slice(0, maxItems);
-  const leadIn = extracted.cheapestRequest
-    ? 'Te paso las opciones más convenientes que tengo hoy:'
-    : 'Te paso opciones reales que sí tengo hoy en stock:';
-
-  const detail = shortlisted.map((item, idx) => formatItemLine(item, idx + 1)).join('\n\n');
-  const reply = `${leadIn}\n\n${detail}\n\nSi querés, te las filtro más fino por financiación, año o kilometraje.`;
-
-  return {
-    query,
-    reason: 'strong_catalog_match',
-    matches: shortlisted,
-    suggestedReply: reply,
-  };
 }
 
 /**

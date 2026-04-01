@@ -431,8 +431,6 @@ function TabPlayground() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [decision, setDecision] = useState(null);
-  const [suiteLoading, setSuiteLoading] = useState(false);
-  const [testReport, setTestReport] = useState(null);
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -468,25 +466,8 @@ function TabPlayground() {
     }
   };
 
-  const runSuite = async () => {
-    setSuiteLoading(true);
-    try {
-      const { data } = await api.post("/bot/tests/run", { limit: 50 });
-      setTestReport(data?.report || null);
-      toast.success("Suite ejecutada");
-    } catch {
-      toast.error("No se pudo ejecutar la suite de pruebas");
-    } finally {
-      setSuiteLoading(false);
-    }
-  };
-
-  const extracted = decision?.extracted || {};
-  const diagnostics = decision?.diagnostics || {};
-  const matches = Array.isArray(diagnostics?.matches) ? diagnostics.matches : [];
-
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-3">
+    <div className="grid grid-cols-[1fr_280px] gap-3">
       {/* Chat */}
       <div className="bg-white/[0.03] border border-white/[0.07] rounded-xl flex flex-col h-[380px]">
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 scrollbar-thin scrollbar-thumb-white/10">
@@ -539,115 +520,58 @@ function TabPlayground() {
       </div>
 
       {/* Panel de decisión */}
-      <div className="space-y-3">
-        <div className="bg-white/[0.03] border border-white/[0.07] rounded-xl p-4">
-          <div className="flex items-center justify-between gap-3 mb-4">
-            <div className="text-[11px] font-semibold text-white/30 uppercase tracking-wider">
-              Test Lab del bot
-            </div>
-            <button
-              onClick={runSuite}
-              disabled={suiteLoading}
-              className="px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.10] disabled:opacity-50 text-xs font-semibold text-white"
-            >
-              {suiteLoading ? "Corriendo suite..." : "Correr suite"}
-            </button>
+      <div className="bg-white/[0.03] border border-white/[0.07] rounded-xl p-4">
+        <div className="text-[11px] font-semibold text-white/30 uppercase tracking-wider mb-4">
+          Decisión del agente
+        </div>
+
+        {!decision ? (
+          <div className="text-sm text-white/20 text-center pt-8">
+            Enviá un mensaje para ver cómo decide el bot
           </div>
-
-          {!decision ? (
-            <div className="text-sm text-white/20 text-center pt-8">
-              Enviá un mensaje para ver extracción, matches, decisión y respuesta final.
+        ) : (
+          <div className="flex flex-col gap-3">
+            <Row label="Intent" value={decision.intent} mono />
+            <Row label="Action">
+              {actionBadge(decision.action)}
+            </Row>
+            <Row label="Urgencia" value={decision.urgency} />
+            <Row label="Marca" value={decision.extracted?.brand} />
+            <Row label="Modelo" value={decision.extracted?.model} />
+            {decision.extracted?.maxPrice && (
+              <Row
+                label="Presupuesto"
+                value={`${decision.extracted.currency || "ARS"} ${Number(decision.extracted.maxPrice).toLocaleString("es-AR")}`}
+              />
+            )}
+            <div>
+              <Row label="Lead score" value={decision.leadScore ?? "—"} />
+              <div className="h-1 bg-white/[0.06] rounded-full mt-1.5 overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${Math.min(100, decision.leadScore || 0)}%`,
+                    background: `linear-gradient(90deg, #22c55e, ${scoreColor(decision.leadScore || 0)})`,
+                  }}
+                />
+              </div>
             </div>
-          ) : (
-            <div className="flex flex-col gap-3">
-              <div className="grid grid-cols-2 gap-2">
-                <MetricCard label="Intent" value={decision.intent || "—"} />
-                <MetricCard label="Action" value={decision.action || (diagnostics?.forcedCatalog ? "SHOW_RESULTS" : "—")} />
-                <MetricCard label="Matches" value={String(diagnostics?.matchCount ?? matches.length ?? 0)} />
-                <MetricCard label="Forzado" value={diagnostics?.forcedCatalog ? "Sí" : "No"} />
-              </div>
-
-              <div className="bg-white/[0.04] border border-white/[0.07] rounded-lg p-3">
-                <div className="text-[10px] text-white/30 uppercase tracking-wide mb-2">Extracción</div>
-                <pre className="text-[11px] text-white/70 whitespace-pre-wrap break-words">{JSON.stringify(extracted, null, 2)}</pre>
-              </div>
-
-              <div className="bg-white/[0.04] border border-white/[0.07] rounded-lg p-3">
-                <div className="text-[10px] text-white/30 uppercase tracking-wide mb-2">Matches catálogo</div>
-                {matches.length ? (
-                  <div className="space-y-2">
-                    {matches.map((item, idx) => (
-                      <div key={item.id || idx} className="rounded-lg border border-white/[0.06] bg-black/20 p-2">
-                        <div className="text-xs font-semibold text-white">{idx + 1}. {item.name || `${item.brand || ""} ${item.model || ""}`.trim()}</div>
-                        <div className="text-[11px] text-white/45 mt-1">
-                          {[item.year, item.transmission, item.fuel].filter(Boolean).join(" · ") || "Sin specs"}
-                        </div>
-                        <div className="text-[11px] text-amber-300 mt-1">
-                          {item.currency || "ARS"} {typeof item.priceNumber === "number" ? Number(item.priceNumber).toLocaleString("es-AR") : "s/d"}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-xs text-white/35">No hubo matches claros en esta corrida.</div>
-                )}
-              </div>
-
-              <div className="bg-white/[0.04] border border-white/[0.07] rounded-lg p-3">
-                <div className="text-[10px] text-white/30 uppercase tracking-wide mb-1">Respuesta final</div>
-                <div className="text-xs text-white/70 leading-relaxed whitespace-pre-wrap">{decision.suggestedReply || decision.reply || "—"}</div>
-              </div>
-
-              {diagnostics?.query && (
-                <div className="bg-white/[0.04] border border-white/[0.07] rounded-lg p-3">
-                  <div className="text-[10px] text-white/30 uppercase tracking-wide mb-1">Query usada</div>
-                  <div className="text-xs text-white/70">{diagnostics.query}</div>
+            <Row label="Handoff">
+              {decision.handoffRecommended
+                ? <span className="text-amber-400 text-xs font-semibold">Sí — escalar ahora</span>
+                : <span className="text-white/30 text-xs">No</span>}
+            </Row>
+            {decision.suggestedReply && (
+              <div className="bg-white/[0.04] border border-white/[0.07] rounded-lg p-3 mt-1">
+                <div className="text-[10px] text-white/30 uppercase tracking-wide mb-1">Respuesta sugerida</div>
+                <div className="text-xs text-white/60 leading-relaxed italic">
+                  "{decision.suggestedReply}"
                 </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="bg-white/[0.03] border border-white/[0.07] rounded-xl p-4">
-          <div className="text-[11px] font-semibold text-white/30 uppercase tracking-wider mb-3">
-            Suite de pruebas
+              </div>
+            )}
           </div>
-          {!testReport ? (
-            <div className="text-xs text-white/30">Corré la suite para validar regresiones del bot.</div>
-          ) : (
-            <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2">
-                <MetricCard label="Total" value={String(testReport.total || 0)} />
-                <MetricCard label="OK" value={String(testReport.passed || 0)} />
-                <MetricCard label="Fail" value={String(testReport.failed || 0)} />
-              </div>
-              <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
-                {(testReport.results || []).slice(0, 12).map((row) => (
-                  <div key={row.id} className="rounded-lg border border-white/[0.06] bg-black/20 p-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs font-semibold text-white truncate">{row.name}</div>
-                      <span className={`text-[10px] font-bold ${row.pass ? "text-green-400" : "text-red-400"}`}>{row.pass ? "OK" : "FAIL"}</span>
-                    </div>
-                    <div className="text-[11px] text-white/45 mt-1">{row.user_text}</div>
-                    {!row.pass && row.reasons?.length ? (
-                      <div className="text-[11px] text-red-300 mt-1">{row.reasons.join(" · ")}</div>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        )}
       </div>
-    </div>
-  );
-}
-
-function MetricCard({ label, value }) {
-  return (
-    <div className="rounded-lg border border-white/[0.06] bg-black/20 p-2.5">
-      <div className="text-[10px] uppercase tracking-wide text-white/35">{label}</div>
-      <div className="text-sm font-semibold text-white mt-1">{value}</div>
     </div>
   );
 }
@@ -1740,7 +1664,7 @@ function TabConfig() {
 const TABS = [
   { id: "estado",      label: "Estado" },
   { id: "stock",       label: "Stock del bot" },
-  { id: "playground",  label: "Test Lab" },
+  { id: "playground",  label: "Playground" },
   { id: "reglas",      label: "Reglas y FAQs" },
   { id: "playbooks",   label: "Playbooks" },
   { id: "aprendizaje", label: "Aprendizaje" },

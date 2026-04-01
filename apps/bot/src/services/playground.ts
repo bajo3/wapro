@@ -19,7 +19,7 @@ import {
   detectClosingIntent
 } from './extract.js';
 import { getCatalog } from './catalog.js';
-import { buildForcedCatalogReply, decideAgentAction } from './agent.js';
+import { decideAgentAction } from './agent.js';
 
 export type PlaygroundSource = {
   type: 'policy' | 'faq' | 'playbook' | 'agent';
@@ -84,7 +84,7 @@ function isCasualClosure(text: string): boolean {
 export async function runPlayground(input: {
   text: string;
   state?: any;
-}): Promise<{ reply: string; intent: string; sources: PlaygroundSource[]; settings: any; extracted?: any; missing_fields?: string[]; variant?: string | null; suggestedReply?: string; diagnostics?: any }> {
+}): Promise<{ reply: string; intent: string; sources: PlaygroundSource[]; settings: any; extracted?: any; missing_fields?: string[]; variant?: string | null; suggestedReply?: string }> {
   const text = String(input.text ?? '');
   const state = input.state ?? {};
   const settings = await getIntelligenceSettings();
@@ -202,45 +202,6 @@ export async function runPlayground(input: {
       if (detectClosure(text)) mergedExtracted.isClosure = true;
       if (detectClosingIntent(text)) mergedExtracted.closingIntent = true;
 
-      const forced = buildForcedCatalogReply({
-        userMessage: text,
-        extracted: mergedExtracted,
-        catalog,
-        maxItems: 3
-      });
-
-      if (forced) {
-        sources.push({ type: 'agent', id: 0, title: 'Forced Catalog Match', intent: 'stock_search' });
-        return {
-          reply: forced.suggestedReply,
-          suggestedReply: forced.suggestedReply,
-          intent: 'stock_search',
-          sources,
-          settings,
-          extracted: mergedExtracted,
-          missing_fields: [],
-          diagnostics: {
-            forcedCatalog: true,
-            forcedReason: forced.reason,
-            query: forced.query,
-            matchCount: forced.matches.length,
-            matches: forced.matches.map((item) => ({
-              id: item.id,
-              name: item.name,
-              brand: item.brand,
-              model: item.model,
-              version: item.version,
-              year: item.year,
-              priceNumber: item.priceNumber,
-              currency: item.currency,
-              transmission: item.transmission,
-              fuel: item.fuel,
-              isNew: item.isNew,
-            }))
-          }
-        };
-      }
-
       const decision = await decideAgentAction({
         dealershipName: process.env.DEALERSHIP_NAME ?? settings?.dealership_name ?? undefined,
         userMessage: text,
@@ -261,15 +222,7 @@ export async function runPlayground(input: {
           sources,
           settings,
           extracted: { ...mergedExtracted, ...decision.extracted },
-          missing_fields: decision.missingFields ?? [],
-          diagnostics: {
-            forcedCatalog: false,
-            action: decision.action ?? null,
-            urgency: decision.urgency ?? null,
-            handoffRecommended: Boolean(decision.handoffRecommended),
-            vehicleIds: decision.vehicleIds ?? [],
-            internalReason: decision.internalReason ?? null,
-          }
+          missing_fields: decision.missingFields ?? []
         };
       }
     } catch (e) {

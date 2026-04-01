@@ -322,3 +322,8 @@ Mejorar el oficio comercial del agente: respuestas más naturales, una sola preg
 - pedir una sola cosa útil por vez mejora mucho la sensación de conversación humana
 
 - 2026-03-31: Fix definitivo de stock del bot leyendo Supabase directo. Se eliminó el fallback silencioso a Railway para catálogo/demands cuando SUPABASE_DATABASE_URL está configurada, se quitó la dependencia del filtro incremental por `since` en demands y se agregó `/admin/catalog-debug`.
+
+## 2026-04-01 — Frontend fix + Brain incremental
+- Fix de build frontend: símbolo duplicado `MetricCard` en `apps/panel-whaticket/frontend/src/pages/Bot/index.js`.
+- Se renombró el componente duplicado a `TestLabMetricCard`.
+- Se creó `docs/brain/` como memoria incremental profesional del proyecto.
