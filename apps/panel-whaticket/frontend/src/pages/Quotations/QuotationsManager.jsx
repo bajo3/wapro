@@ -351,7 +351,13 @@ export default function QuotationsManager() {
 
   const loadVehicles = async (q) => {
     const query = (q ?? "").trim();
-    const params = query ? { q: query, searchParam: query, limit: 25 } : { limit: 20 };
+    // Aumentamos el límite de vehículos devueltos en la búsqueda para permitir
+    // más opciones. Históricamente se devolvían 25 (o 20 sin query) y luego
+    // se recortaban a 15 resultados. Esto limitaba la visibilidad del catálogo a
+    // 15 autos, lo que generaba confusión cuando había más vehículos cargados.
+    // Ajustamos `limit` a 100 para que el backend pueda devolver hasta 100
+    // vehículos y eliminamos el recorte posterior a 15.
+    const params = query ? { q: query, searchParam: query, limit: 100 } : { limit: 100 };
     setLookupLoading(true);
     try {
       // Backend contract: /vehicles?q=... -> { vehicles: [] }
@@ -362,7 +368,10 @@ export default function QuotationsManager() {
         data?.rows ||
         data?.data ||
         [];
-      const normalized = (list || []).slice(0, 15).map((v) => ({
+      // No recortamos la lista aquí; confiamos en el parámetro `limit` para acotar
+      // la cantidad de resultados devueltos por el backend. Si en el futuro se
+      // necesitan más resultados, basta con aumentar `limit`.
+      const normalized = (list || []).map((v) => ({
         id: v.id ?? v.vehicleId ?? v.uuid ?? "",
         label: buildVehicleLabel(v) || String(v.id || ""),
         raw: v,
@@ -378,7 +387,10 @@ export default function QuotationsManager() {
 
   const loadContacts = async (q) => {
     const query = (q ?? "").trim();
-    const params = query ? { searchParam: query, pageNumber: 1, pageSize: 25 } : { pageNumber: 1, pageSize: 20 };
+    // Aumentamos la cantidad de contactos recuperados para facilitar la selección.
+    // El backend permite `pageSize` hasta valores altos; usamos 100 para
+    // obtener más resultados y luego dejamos que el UI recorte según sea necesario.
+    const params = query ? { searchParam: query, pageNumber: 1, pageSize: 100 } : { pageNumber: 1, pageSize: 100 };
     setLookupLoading(true);
     try {
       // Backend contract: /contacts?searchParam=... -> { contacts: [] }
@@ -389,7 +401,9 @@ export default function QuotationsManager() {
         data?.rows ||
         data?.data ||
         [];
-      const normalized = (list || []).slice(0, 15).map((c) => ({
+      // No recortamos a 15 contactos; dejamos que el listado completo se muestre
+      // hasta el máximo solicitado en `pageSize`.
+      const normalized = (list || []).map((c) => ({
         id: c.id ?? c.contactId ?? c.uuid ?? "",
         label: c.name || c.pushname || c.number || String(c.id || ""),
         phone: c.number || "",

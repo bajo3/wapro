@@ -633,3 +633,41 @@ export const remove = async (req: Request, res: Response): Promise<Response> => 
     return res.status(500).json({ ok: false, error: msg });
   }
 };    
+
+/**
+ * GET /admin/catalog-debug
+ * Devuelve información de depuración sobre la fuente del catálogo de vehículos.
+ * Permite a los operadores y desarrolladores verificar rápidamente desde qué
+ * base y tabla se está leyendo el inventario, cuántos vehículos hay y si
+ * se está utilizando Supabase como origen.
+ */
+export const debug = async (_req: Request, res: Response): Promise<Response> => {
+  try {
+    const source = await detectSource();
+    const supabasePool = getSupabasePool();
+    let count = 0;
+    if (source) {
+      // Contar todos los registros de la tabla detectada
+      try {
+        const rows = await catalogQuery(
+          `SELECT COUNT(*) as count FROM "${source.schema}"."${source.table}"`
+        );
+        const cnt = rows?.[0]?.count;
+        count = typeof cnt === "number" ? cnt : parseInt(String(cnt || 0), 10);
+      } catch (e) {
+        // Si la consulta falla, dejamos count en 0 y exponemos el error en la respuesta
+        console.error("[vehicles#debug] count error", e);
+      }
+    }
+    return res.json({
+      ok: true,
+      supabase: !!supabasePool,
+      source: source || null,
+      count,
+    });
+  } catch (err) {
+    console.error("[vehicles#debug] error", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ ok: false, error: msg });
+  }
+};

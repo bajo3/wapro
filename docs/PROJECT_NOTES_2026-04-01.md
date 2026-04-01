@@ -101,11 +101,21 @@ if (!rawUrl) {
 
 ## Próximos pasos sugeridos
 
-1. Implementar un endpoint de depuración (`/admin/catalog-debug`) en el panel para
-   inspeccionar rápidamente la fuente del catálogo y los conteos de vehículos.
-2. Mejorar la experiencia del usuario en la pestaña Stock permitiendo filtrar por
-   concesionaria (`dealership_id`) y mostrando advertencias cuando el catálogo esté vacío
-   por falta de configuración.
+1. **Endpoint de depuración del catálogo**: ahora existe `GET /admin/catalog-debug`
+   en el backend del panel. Este endpoint devuelve un JSON con el estado del
+   catálogo (origen, cantidad de vehículos, si se utiliza Supabase, etc.) y se
+   implementó en `VehiclesController.debug`. Con ello se cumple la sugerencia de
+   depurar el catálogo sin necesidad de acceder manualmente a la base de datos.
+
+2. **Experiencia de Stock del bot**: se sugiere mejorar la UI para filtrar por
+   concesionaria (`dealership_id`) y mostrar mensajes útiles cuando el catálogo
+   esté vacío o mal configurado. Esto aún queda por implementar.
+
+3. **Cotizaciones y búsqueda de vehículos**: el formulario de cotizaciones del
+   panel (`QuotationsManager.jsx`) limitaba la lista de vehículos y contactos a
+   solo 15 elementos, aunque el backend pudiera devolver más resultados. Se
+   actualizó esta lógica para aumentar `limit` a 100 y eliminar el recorte a 15,
+   de modo que se muestren más autos y contactos en los *combobox* de búsqueda.
 3. Consolidar la lógica de lectura de vehículos en un paquete compartido (por ejemplo,
    `@wapro/catalog`) que pueda ser importado tanto por el bot como por el panel.
 
