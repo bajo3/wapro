@@ -20,6 +20,51 @@ import { pool } from './db.js';
 
 type Settings = Record<string, any>;
 
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function deepMergeSettings(base: Record<string, any>, patch: Record<string, any>): Record<string, any> {
+  const next: Record<string, any> = { ...base };
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (value === undefined) continue;
+    if (isPlainObject(value) && isPlainObject(next[key])) {
+      next[key] = deepMergeSettings(next[key], value);
+      continue;
+    }
+    next[key] = value;
+  }
+  return next;
+}
+
+export function normalizeIntelligenceSettings(input: unknown): Settings {
+  const seen = new Set<any>();
+  let current: any = isPlainObject(input) ? input : {};
+  let merged: Record<string, any> = {};
+
+  for (let depth = 0; depth < 12 && isPlainObject(current) && !seen.has(current); depth++) {
+    seen.add(current);
+
+    const own: Record<string, any> = {};
+    for (const [key, value] of Object.entries(current)) {
+      if (key === 'settings' || value === undefined) continue;
+      own[key] = value;
+    }
+    merged = deepMergeSettings(merged, own);
+
+    if (!isPlainObject(current.settings)) break;
+    current = current.settings;
+  }
+
+  if (isPlainObject(merged.settings)) {
+    const nested = merged.settings;
+    delete merged.settings;
+    merged = deepMergeSettings(merged, normalizeIntelligenceSettings(nested));
+  }
+
+  return merged;
+}
+
 export function normalize(s: string): string {
   return (s || '')
     .toLowerCase()
@@ -64,17 +109,26 @@ function triggerScore(text: string, triggers: string[]): number {
 // ─── Settings ────────────────────────────────────────────────────────────────────
 export async function getIntelligenceSettings(): Promise<Settings> {
   const r = await pool.query('select value from bot_intelligence_settings where id=1');
-  return (r.rows?.[0]?.value as Settings) || {};
+  const raw = (r.rows?.[0]?.value as Settings) || {};
+  const normalized = normalizeIntelligenceSettings(raw);
+  if (JSON.stringify(raw ?? {}) !== JSON.stringify(normalized ?? {})) {
+    await pool.query(
+      'update bot_intelligence_settings set value=$2::jsonb, updated_at=now() where id=$1',
+      [1, JSON.stringify(normalized)]
+    );
+  }
+  return normalized;
 }
 
 export async function updateIntelligenceSettings(value: Settings): Promise<Settings> {
+  const normalized = normalizeIntelligenceSettings((value as any)?.settings ?? value ?? {});
   const r = await pool.query(
     'insert into bot_intelligence_settings (id, value, updated_at) values (1, $1::jsonb, now())\n' +
       'on conflict (id) do update set value=excluded.value, updated_at=now()\n' +
       'returning value',
-    [JSON.stringify(value ?? {})]
+    [JSON.stringify(normalized)]
   );
-  return r.rows[0].value as Settings;
+  return normalizeIntelligenceSettings(r.rows[0].value as Settings);
 }
 
 // ─── FAQ ─────────────────────────────────────────────────────────────────────────

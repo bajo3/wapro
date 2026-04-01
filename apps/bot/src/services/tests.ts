@@ -42,22 +42,10 @@ const fieldHints: Record<string, string[]> = {
   year: ['año', 'anio'],
   km: ['km', 'kms', 'kilomet'],
   gnc: ['gnc'],
-  percent: ['%', 'porcentaje', 'anticipo'],
+  percent: ['%', 'porcentaje'],
   cuotas: ['cuotas', 'meses'],
   city: ['zona', 'ciudad'],
-  query: ['cual', 'que producto', 'que modelo'],
-  tradein_model: ['modelo', 'marca/modelo', 'vehiculo'],
-  tradein_year: ['año', 'anio'],
-  tradein_km: ['km', 'kms', 'kilometros', 'kilómetros'],
-  down_payment: ['anticipo', 'entrega'],
-  installments: ['cuotas', 'meses'],
-  vehicle_query: ['marca', 'modelo', 'presupuesto', 'opciones'],
-  from_zone: ['zona', 'barrio', 'desde que zona'],
-  payment_type: ['efectivo', 'financiar', 'financiado'],
-  priority: ['ciudad', 'ruta', 'presupuesto', 'espacio'],
-  use_case: ['uso', 'ciudad', 'ruta', 'familia', 'trabajo'],
-  budget: ['presupuesto', 'monto'],
-  vehicle_id: ['auto', 'modelo', 'vehiculo']
+  query: ['cual', 'que producto', 'que modelo']
 };
 
 export async function runTestSuite(limit = 200): Promise<{

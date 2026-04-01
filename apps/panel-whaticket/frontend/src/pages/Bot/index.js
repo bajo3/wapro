@@ -26,6 +26,50 @@ import { toast } from "react-toastify";
 import api from "../../services/api";
 import { AuthContext } from "../../context/Auth/AuthContext";
 
+function isPlainObject(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeDeep(base, patch) {
+  const next = { ...(base || {}) };
+  Object.entries(patch || {}).forEach(([key, value]) => {
+    if (value === undefined) return;
+    if (isPlainObject(value) && isPlainObject(next[key])) {
+      next[key] = mergeDeep(next[key], value);
+      return;
+    }
+    next[key] = value;
+  });
+  return next;
+}
+
+function normalizeBotSettings(raw) {
+  let current = isPlainObject(raw) ? raw : {};
+  let merged = {};
+  const seen = new Set();
+
+  for (let depth = 0; depth < 12 && isPlainObject(current) && !seen.has(current); depth += 1) {
+    seen.add(current);
+    const own = {};
+    Object.entries(current).forEach(([key, value]) => {
+      if (key === "settings" || value === undefined) return;
+      own[key] = value;
+    });
+    merged = mergeDeep(merged, own);
+    if (!isPlainObject(current.settings)) break;
+    current = current.settings;
+  }
+
+  if (isPlainObject(merged.settings)) {
+    const nested = merged.settings;
+    delete merged.settings;
+    merged = mergeDeep(merged, normalizeBotSettings(nested));
+  }
+
+  return merged;
+}
+
+
 // ─── Utilidades ──────────────────────────────────────────────────────────────
 
 function fmtTime(iso) {
@@ -1802,7 +1846,7 @@ function TabConfig() {
   useEffect(() => {
     api.get("/bot/intelligence/settings")
       .then(({ data }) => {
-        const s = data?.settings || data || {};
+        const s = normalizeBotSettings(data?.settings || data || {});
         setSettings(s);
         setForm({
           agencyName:         String(s.agencyName || s.dealershipName || ""),
@@ -1830,7 +1874,7 @@ function TabConfig() {
         handoffPhoneNumber: form.handoffPhoneNumber,
         handoffMessage:     form.handoffMessage,
       };
-      await api.put("/bot/intelligence/settings", { settings: patch });
+      await api.put("/bot/intelligence/settings", patch);
       setSettings(patch);
       toast.success("Configuración guardada ✓");
     } catch {
@@ -2001,7 +2045,7 @@ export default function BotPanel() {
   useEffect(() => {
     api.get("/bot/intelligence/settings")
       .then(({ data }) => {
-        const s = data?.settings || data || {};
+        const s = normalizeBotSettings(data?.settings || data || {});
         if (typeof s.botEnabled === "boolean") setBotEnabled(s.botEnabled);
       })
       .catch(() => {});
@@ -2097,7 +2141,7 @@ export default function BotPanel() {
     setTogglingBot(true);
     try {
       const { data } = await api.get("/bot/intelligence/settings");
-      const current = data?.settings || data || {};
+      const current = normalizeBotSettings(data?.settings || data || {});
       await api.put("/bot/intelligence/settings", { settings: { ...current, botEnabled: next } });
       setBotEnabled(next);
       toast.success(next ? "Bot activado" : "Bot pausado");

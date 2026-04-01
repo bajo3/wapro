@@ -575,99 +575,36 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
   return out;
 }
 
-
-const FIELD_ALIASES: Record<string, string[]> = {
-  tradein_model: ['tradein_model', 'tradeInModel', 'model'],
-  tradein_year: ['tradein_year', 'tradeInYear', 'year'],
-  tradein_km: ['tradein_km', 'tradeInKm', 'km'],
-  down_payment: ['down_payment', 'downPayment', 'percent', 'amount'],
-  installments: ['installments', 'cuotas'],
-  vehicle_query: ['vehicle_query', 'brand', 'model', 'bodywork', 'condition', 'useCase', 'amount', 'maxPrice'],
-  from_zone: ['from_zone', 'fromZone', 'city', 'zone'],
-  payment_type: ['payment_type', 'paymentType'],
-  priority: ['priority'],
-  use_case: ['use_case', 'useCase'],
-  budget: ['budget', 'amount', 'maxPrice'],
-  vehicle_id: ['vehicle_id', 'vehicleId', 'model', 'brand'],
-  visit_day: ['visit_day', 'visitDay'],
-  gnc: ['gnc']
-};
-
-const FIELD_QUESTIONS: Record<string, string> = {
-  tradein_model: '¿Qué vehículo tenés para entregar? Pasame modelo o marca/modelo.',
-  tradein_year: '¿De qué año es?',
-  tradein_km: '¿Cuántos kilómetros tiene?',
-  down_payment: '¿Cuánto podés poner de anticipo?',
-  installments: '¿En cuántas cuotas te gustaría pagarlo?',
-  vehicle_query: '¿Qué marca o modelo buscás? Si preferís, pasame tu presupuesto y te filtro opciones.',
-  from_zone: '¿Desde qué zona venís? Así te paso la referencia para llegar.',
-  payment_type: '¿Vas a pagar en efectivo o querés financiar parte?',
-  priority: '¿Qué priorizás más: ciudad, ruta, espacio o presupuesto?',
-  use_case: '¿Para qué lo vas a usar más: ciudad, ruta, familia o trabajo?',
-  budget: '¿Qué presupuesto máximo manejás?',
-  vehicle_id: '¿Qué auto te interesa ver puntualmente?',
-  visit_day: '¿Qué día te gustaría pasar?',
-  gnc: '¿Tiene GNC?'
-};
-
-function normalizeRequestedFieldKey(value: string): string {
-  return String(value || '')
-    .trim()
-    .replace(/([a-z])([A-Z])/g, '$1_$2')
-    .replace(/[\s-]+/g, '_')
-    .toLowerCase();
-}
-
-function getFieldQuestion(key: string): string {
-  return FIELD_QUESTIONS[normalizeRequestedFieldKey(key)] || `¿Me pasás el dato de ${key}?`;
-}
-
-function hasExtractedFieldValue(extracted: Extracted, rawKey: string): boolean {
-  const key = normalizeRequestedFieldKey(rawKey);
-  const aliases = FIELD_ALIASES[key] || [rawKey, key];
-  return aliases.some((alias) => {
-    const value = extracted?.[alias];
-    return !(value === undefined || value === null || value === '' || value === false);
-  });
-}
-
 export function requiredFieldsForIntent(intent: string, playbookConfig?: any): Array<{ key: string; question: string }> {
   const cfg = playbookConfig && typeof playbookConfig === 'object' ? playbookConfig : {};
   if (Array.isArray(cfg.required_fields) && cfg.required_fields.length) {
     return cfg.required_fields
-      .map((x: any) => {
-        if (typeof x === 'string') {
-          const key = normalizeRequestedFieldKey(x);
-          return { key, question: getFieldQuestion(key) };
-        }
-        const key = normalizeRequestedFieldKey(String(x?.key ?? ''));
-        return { key, question: String(x?.question ?? '') || getFieldQuestion(key) };
-      })
+      .map((x: any) => ({ key: String(x?.key ?? ''), question: String(x?.question ?? '') }))
       .filter((x: any) => x.key);
   }
 
   const i = norm(intent);
   if (i.includes('usado') || i.includes('permuta') || i.includes('tradein') || i.includes('canje')) {
     return [
-      { key: 'tradein_model', question: getFieldQuestion('tradein_model') },
-      { key: 'tradein_year', question: getFieldQuestion('tradein_year') },
-      { key: 'tradein_km', question: getFieldQuestion('tradein_km') },
-      { key: 'gnc', question: getFieldQuestion('gnc') }
+      { key: 'tradeInModel', question: '¿Qué vehículo tenés para entregar (marca/modelo)?' },
+      { key: 'tradeInYear', question: '¿De qué año es?' },
+      { key: 'tradeInKm', question: '¿Cuántos km tiene?' },
+      { key: 'gnc', question: '¿Tiene GNC? (sí/no)' }
     ];
   }
   if (i.includes('finan') || i.includes('cuota')) {
     return [
-      { key: 'down_payment', question: getFieldQuestion('down_payment') },
-      { key: 'installments', question: getFieldQuestion('installments') }
+      { key: 'percent', question: '¿Qué % del precio querés financiar?' },
+      { key: 'cuotas', question: '¿En cuántas cuotas?' }
     ];
   }
-  if (i.includes('ubic') || i.includes('horario') || i.includes('visita')) {
-    return [{ key: 'from_zone', question: getFieldQuestion('from_zone') }];
+  if (i.includes('ubic') || i.includes('horario')) {
+    return [{ key: 'city', question: '¿En qué ciudad/zona estás?' }];
   }
   if (i.includes('stock') || i.includes('dispon') || i.includes('busco')) {
     return [
-      { key: 'vehicle_query', question: getFieldQuestion('vehicle_query') },
-      { key: 'budget', question: getFieldQuestion('budget') }
+      { key: 'brand', question: '¿Qué marca/modelo buscás?' },
+      { key: 'amount', question: '¿Tenés un presupuesto?' }
     ];
   }
   return [];
@@ -679,11 +616,12 @@ export function computeMissingFields(
 ): string[] {
   return (required || [])
     .filter(({ key }) => {
-      const k = normalizeRequestedFieldKey(key);
+      const k = key.trim();
       if (!k) return false;
-      return !hasExtractedFieldValue(extracted, k);
+      const v = extracted?.[k];
+      return v === undefined || v === null || String(v).trim() === '' || v === false;
     })
-    .map(({ key }) => normalizeRequestedFieldKey(key));
+    .map(({ key }) => key);
 }
 
 export function buildMissingQuestions(
@@ -691,14 +629,11 @@ export function buildMissingQuestions(
   missing: string[]
 ): string {
   const lines = missing
-    .map((m) => {
-      const row = required.find((r) => normalizeRequestedFieldKey(r.key) === normalizeRequestedFieldKey(m));
-      return row?.question || getFieldQuestion(m);
-    })
+    .map((m) => required.find((r) => r.key === m)?.question)
     .filter(Boolean)
     .map((q) => `• ${q}`);
   if (!lines.length) return '';
-  return ['Para ayudarte mejor necesito algunos datos 👇', ...lines].join('\\n');
+  return ['Para ayudarte mejor necesito algunos datos 👇', ...lines].join('\n');
 }
 
 /**
