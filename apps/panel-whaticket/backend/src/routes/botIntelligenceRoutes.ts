@@ -216,4 +216,42 @@ botIntelligenceRoutes.get("/bot/learning/examples/preview", async (req, res) => 
   return res.status(r.status).json(r.data);
 });
 
+// ─── Memoria Incremental de Patrones ─────────────────────────────────────────
+
+// Listar patrones de memoria
+botIntelligenceRoutes.get("/bot/learning/memory", async (req, res) => {
+  const params = new URLSearchParams();
+  if (req.query.type)   params.set("type",   String(req.query.type));
+  if (req.query.status) params.set("status", String(req.query.status));
+  if (req.query.limit)  params.set("limit",  String(req.query.limit));
+  if (req.query.offset) params.set("offset", String(req.query.offset));
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const r = await forward(req, `/admin/learning/memory${qs}`);
+  return res.status(r.status).json(r.data);
+});
+
+// Resumen por tipo de patrón
+botIntelligenceRoutes.get("/bot/learning/memory/summary", async (req, res) => {
+  const r = await forward(req, "/admin/learning/memory/summary");
+  return res.status(r.status).json(r.data);
+});
+
+// Actualizar estado/nota de un patrón
+botIntelligenceRoutes.patch("/bot/learning/memory/:id", async (req, res) => {
+  const r = await forward(req, `/admin/learning/memory/${encodeURIComponent(req.params.id)}`);
+  return res.status(r.status).json(r.data);
+});
+
+// Disparar extracción manual de patrones
+botIntelligenceRoutes.post("/bot/learning/memory/extract", async (req, res) => {
+  const r = await forward(req, "/admin/learning/memory/extract");
+  return res.status(r.status).json(r.data);
+});
+
+// Registrar patrón manualmente
+botIntelligenceRoutes.post("/bot/learning/memory", async (req, res) => {
+  const r = await forward(req, "/admin/learning/memory");
+  return res.status(r.status).json(r.data);
+});
+
 export default botIntelligenceRoutes;

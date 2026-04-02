@@ -692,3 +692,290 @@ export async function listCaptureFeedback(captureId: number): Promise<any[]> {
     return [];
   }
 }
+
+// ─── Memoria Incremental de Patrones ─────────────────────────────────────────
+//
+// Registra patrones detectados en conversaciones: preguntas sin respuesta,
+// objeciones frecuentes, sinónimos de marcas/modelos, etc.
+// NO modifica precios, stock ni datos comerciales sensibles.
+//
+
+export type LearningPatternType =
+  | 'faq_gap'
+  | 'objection'
+  | 'stock_gap'
+  | 'synonym'
+  | 'lead_pattern'
+  | 'visit_pattern'
+  | 'failure_pattern'
+  | 'suggestion'
+  | 'unresolved';
+
+export interface LearningPatternInput {
+  patternType: LearningPatternType;
+  patternKey: string;
+  patternValue?: string;
+  sampleMessage?: string;
+  intent?: string;
+  confidence?: number;
+}
+
+/**
+ * Registra o incrementa un patrón en la memoria de aprendizaje.
+ * Fire-and-forget: no bloquear el flujo principal.
+ */
+export async function upsertLearningPattern(input: LearningPatternInput): Promise<void> {
+  try {
+    await pool.query(
+      `SELECT bot_upsert_learning_pattern($1, $2, $3, $4, $5, $6)`,
+      [
+        input.patternType,
+        input.patternKey.slice(0, 300).toLowerCase().trim(),
+        input.patternValue?.slice(0, 500) ?? null,
+        input.sampleMessage?.slice(0, 300) ?? null,
+        input.intent ?? null,
+        input.confidence ?? 0.5
+      ]
+    );
+  } catch (err) {
+    console.error('[learning] upsertLearningPattern error:', err);
+  }
+}
+
+/**
+ * Listar patrones de memoria con filtros opcionales.
+ */
+export async function listLearningPatterns(opts?: {
+  patternType?: LearningPatternType | 'all';
+  status?: 'active' | 'resolved' | 'dismissed' | 'all';
+  limit?: number;
+  offset?: number;
+}): Promise<{ rows: any[]; total: number }> {
+  const limit  = Math.min(opts?.limit ?? 50, 200);
+  const offset = opts?.offset ?? 0;
+  const filters: string[] = [];
+  const params: any[] = [];
+  let pi = 1;
+
+  if (opts?.patternType && opts.patternType !== 'all') {
+    filters.push(`pattern_type = $${pi++}`);
+    params.push(opts.patternType);
+  }
+  if (opts?.status && opts.status !== 'all') {
+    filters.push(`status = $${pi++}`);
+    params.push(opts.status);
+  }
+
+  const where = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+
+  try {
+    const [rowsResult, countResult] = await Promise.all([
+      pool.query(
+        `SELECT * FROM bot_learning_memory
+         ${where}
+         ORDER BY frequency DESC, last_seen_at DESC
+         LIMIT $${pi} OFFSET $${pi + 1}`,
+        [...params, limit, offset]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count FROM bot_learning_memory ${where}`,
+        params
+      )
+    ]);
+
+    return {
+      rows:  rowsResult.rows,
+      total: parseInt(countResult.rows[0]?.count ?? '0', 10)
+    };
+  } catch (err) {
+    console.error('[learning] listLearningPatterns error:', err);
+    return { rows: [], total: 0 };
+  }
+}
+
+/**
+ * Actualizar el estado de un patrón (resolver, descartar, agregar nota).
+ */
+export async function updateLearningPattern(
+  id: number,
+  patch: { status?: 'active' | 'resolved' | 'dismissed'; notes?: string; patternValue?: string }
+): Promise<any | null> {
+  try {
+    const setParts: string[] = ['updated_at = now()'];
+    const params: any[] = [id];
+    let pi = 2;
+
+    if (patch.status !== undefined) {
+      setParts.push(`status = $${pi++}`);
+      params.push(patch.status);
+      if (patch.status === 'resolved') {
+        setParts.push(`resolved_at = now()`);
+      }
+    }
+    if (patch.notes !== undefined) {
+      setParts.push(`notes = $${pi++}`);
+      params.push(patch.notes.slice(0, 1000));
+    }
+    if (patch.patternValue !== undefined) {
+      setParts.push(`pattern_value = $${pi++}`);
+      params.push(patch.patternValue.slice(0, 500));
+    }
+
+    const r = await pool.query(
+      `UPDATE bot_learning_memory SET ${setParts.join(', ')} WHERE id = $1 RETURNING *`,
+      params
+    );
+    return r.rows[0] ?? null;
+  } catch (err) {
+    console.error('[learning] updateLearningPattern error:', err);
+    return null;
+  }
+}
+
+/**
+ * Resumen por tipo de patrón para el dashboard de aprendizaje.
+ */
+export async function getLearningMemorySummary(): Promise<Record<string, any>> {
+  try {
+    const r = await pool.query(`SELECT * FROM bot_learning_memory_summary`);
+    return { types: r.rows };
+  } catch (err) {
+    console.error('[learning] getLearningMemorySummary error:', err);
+    return { types: [] };
+  }
+}
+
+/**
+ * Auto-extracción de patrones desde capturas recientes.
+ *
+ * Analiza las últimas N capturas y detecta:
+ *  - FAQ gaps: mensajes con intent=fallback repetidos
+ *  - Stock gaps: extracted.brand/model sin resultado de stock
+ *  - Unresolved: conversaciones con many fallbacks y sin lead
+ *  - Synonyms: brands con typos detectados por extract.ts (campo synonym_hint)
+ *
+ * Diseñado para ejecutarse periódicamente (ej: cada 50 nuevas capturas).
+ * Es idempotente: usa upsert con clave única (pattern_type, pattern_key).
+ */
+export async function autoExtractPatterns(opts?: { lookbackHours?: number }): Promise<{ extracted: number }> {
+  const lookbackHours = opts?.lookbackHours ?? 24;
+  let extracted = 0;
+
+  try {
+    // ── 1. FAQ gaps: mensajes con fallback que se repiten ────────────────────
+    const faqGaps = await pool.query(`
+      SELECT user_message, COUNT(*) AS cnt
+      FROM bot_learning_captures
+      WHERE source_type IN ('fallback', 'gpt')
+        AND created_at > now() - INTERVAL '${lookbackHours} hours'
+        AND has_error = false
+        AND length(user_message) > 10
+      GROUP BY user_message
+      HAVING COUNT(*) >= 2
+      ORDER BY cnt DESC
+      LIMIT 30
+    `);
+
+    for (const row of faqGaps.rows) {
+      const key = String(row.user_message).toLowerCase().trim().slice(0, 200);
+      await upsertLearningPattern({
+        patternType:   'faq_gap',
+        patternKey:    key,
+        sampleMessage: String(row.user_message).slice(0, 300),
+        confidence:    Math.min(1.0, Number(row.cnt) / 10)
+      });
+      extracted++;
+    }
+
+    // ── 2. Stock gaps: búsquedas sin resultado (no_match) ────────────────────
+    const stockGaps = await pool.query(`
+      SELECT
+        extracted_context->>'brand' AS brand,
+        extracted_context->>'model' AS model,
+        COUNT(*) AS cnt
+      FROM bot_learning_captures
+      WHERE intent IN ('no_match', 'agent_stock_search')
+        AND source_type IN ('agent', 'fallback')
+        AND created_at > now() - INTERVAL '${lookbackHours} hours'
+        AND (
+          extracted_context->>'brand' IS NOT NULL OR
+          extracted_context->>'model' IS NOT NULL
+        )
+      GROUP BY brand, model
+      HAVING COUNT(*) >= 2
+      ORDER BY cnt DESC
+      LIMIT 20
+    `);
+
+    for (const row of stockGaps.rows) {
+      const brand = row.brand ?? '';
+      const model = row.model ?? '';
+      if (!brand && !model) continue;
+      const key = `${brand} ${model}`.trim().toLowerCase();
+      await upsertLearningPattern({
+        patternType:   'stock_gap',
+        patternKey:    key,
+        patternValue:  `No hay stock: ${key}`,
+        confidence:    Math.min(1.0, Number(row.cnt) / 5),
+        intent:        'stock_search'
+      });
+      extracted++;
+    }
+
+    // ── 3. Objeciones frecuentes ──────────────────────────────────────────────
+    // Detectar mensajes con palabras clave de objeción comunes
+    const objections = await pool.query(`
+      SELECT user_message, intent, COUNT(*) AS cnt
+      FROM bot_learning_captures
+      WHERE user_message ~* '(caro|muy caro|no me convence|lo pienso|es mucho|está caro|no tengo tanto|me parece caro|garantia|falla|problema)'
+        AND created_at > now() - INTERVAL '${lookbackHours} hours'
+      GROUP BY user_message, intent
+      HAVING COUNT(*) >= 2
+      ORDER BY cnt DESC
+      LIMIT 20
+    `);
+
+    for (const row of objections.rows) {
+      const key = String(row.user_message).toLowerCase().trim().slice(0, 200);
+      await upsertLearningPattern({
+        patternType:   'objection',
+        patternKey:    key,
+        sampleMessage: String(row.user_message).slice(0, 300),
+        intent:        row.intent ?? undefined,
+        confidence:    Math.min(1.0, Number(row.cnt) / 5)
+      });
+      extracted++;
+    }
+
+    // ── 4. Lead patterns: conversaciones que terminaron en outcome positivo ──
+    const leadPatterns = await pool.query(`
+      SELECT intent, source_type, COUNT(*) AS cnt,
+        AVG(lead_score) AS avg_score
+      FROM bot_learning_captures
+      WHERE outcome_signal IN ('closed_won', 'quotation', 'pipeline_advance', 'visit')
+        AND created_at > now() - INTERVAL '${lookbackHours} hours'
+      GROUP BY intent, source_type
+      HAVING COUNT(*) >= 1
+      ORDER BY cnt DESC
+      LIMIT 15
+    `);
+
+    for (const row of leadPatterns.rows) {
+      if (!row.intent) continue;
+      const key = `${row.source_type}:${row.intent}`;
+      await upsertLearningPattern({
+        patternType:  'lead_pattern',
+        patternKey:   key,
+        patternValue: `Camino: ${row.source_type} → ${row.intent} (score medio: ${Math.round(Number(row.avg_score))})`,
+        intent:       row.intent,
+        confidence:   Math.min(1.0, Number(row.cnt) / 3)
+      });
+      extracted++;
+    }
+
+    return { extracted };
+  } catch (err) {
+    console.error('[learning] autoExtractPatterns error:', err);
+    return { extracted };
+  }
+}

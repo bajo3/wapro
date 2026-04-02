@@ -470,6 +470,42 @@ function hasStructuredSearchNeed(extracted: any): boolean {
   );
 }
 
+/**
+ * detectRepeatedMissingFields — v6
+ * Detecta qué campos le fueron pedidos al cliente en el turno anterior
+ * pero todavía no están en el estado acumulado.
+ * Se pasa como loopData.repeatedMissingFields al agente para que NO los
+ * vuelva a pedir y avance con lo disponible.
+ */
+function detectRepeatedMissingFields(state: ConvState): string[] {
+  const prevMissing: string[] = Array.isArray((state as any).missing_fields)
+    ? (state as any).missing_fields
+    : [];
+  if (!prevMissing.length) return [];
+
+  const ctx = state.search_context ?? {};
+  const ext = (state as any).extracted ?? {};
+
+  return prevMissing.filter(f => {
+    switch (f) {
+      case 'brand':        return !ctx.brand      && !ext.brand;
+      case 'model':        return !ctx.model      && !ext.model;
+      case 'budget':
+      case 'maxPrice':     return !ctx.maxPrice   && !ext.maxPrice && !ext.amount;
+      case 'transmission': return !ctx.transmission && !ext.transmission;
+      case 'fuel':         return !ctx.fuel       && !ext.fuel;
+      case 'bodywork':     return !ctx.bodywork   && !ext.bodywork;
+      case 'year':         return !ctx.year       && !ext.year && !ext.minYear;
+      case 'tradeInYear':  return !ext.tradeInYear;
+      case 'tradeInKm':    return !ext.tradeInKm;
+      case 'precio':       return !ext.amount     && !ctx.maxPrice;
+      case 'entrada':      return ext.downPayment === undefined || ext.downPayment === null;
+      case 'cuotas':       return !ext.cuotas;
+      default:             return true;
+    }
+  });
+}
+
 function scoreVehicleForContext(it: any, ctx: any, rawText: string): number {
   let score = 0;
   const itemText = normalize(getItemText(it));
@@ -843,13 +879,17 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               ? nextState.last_intent.trim()
               : undefined;
 
-            // Inferir source_type desde last_intent
+            // Inferir source_type desde last_intent (v6 — orden de prioridad corregido)
             let captureSource: SourceType = 'agent';
-            if (!captureIntent || captureIntent === 'fallback') captureSource = 'fallback';
-            else if (captureIntent === 'gpt_fallback') captureSource = 'gpt';
-            else if (captureIntent.startsWith('faq') || captureIntent === 'knowledge') captureSource = 'faq';
-            else if (
+            if (!captureIntent || captureIntent === 'fallback') {
+              captureSource = 'fallback';
+            } else if (captureIntent === 'gpt_fallback') {
+              captureSource = 'gpt';
+            } else if (captureIntent.startsWith('faq') || captureIntent.startsWith('knowledge_faq') || captureIntent === 'knowledge') {
+              captureSource = 'faq';
+            } else if (
               captureIntent.startsWith('policy') ||
+              captureIntent.startsWith('knowledge_policy') ||
               captureIntent.startsWith('playbook') ||
               captureIntent === 'compra_directa' ||
               captureIntent === 'indecision' ||
@@ -858,8 +898,12 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               captureIntent === 'visita' ||
               captureIntent === 'financiacion' ||
               captureIntent === 'permuta'
-            ) captureSource = 'playbook';
-            else if (captureIntent.startsWith('agent_')) captureSource = 'agent';
+            ) {
+              captureSource = 'playbook';
+            } else if (captureIntent.startsWith('agent_')) {
+              captureSource = 'agent';
+            }
+            // Nota: greeting, tradein, financing, product_results quedan como 'agent' (comportamiento esperado)
 
             void captureConversationTurn({
               instance,
@@ -1481,6 +1525,13 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               }
             } catch { /* no bloquear el flujo principal */ }
 
+            // ── loopData: anti-loop + contexto para el agente v5 ──────────────
+            const repeatedMissingFields = detectRepeatedMissingFields(state);
+            const agentLoopData = {
+              turnCount: userMsgCount,
+              repeatedMissingFields
+            };
+
             const agentDecision = await decideAgentAction({
               dealershipName: process.env.DEALERSHIP_NAME ?? undefined,
               userMessage: rawText,
@@ -1489,7 +1540,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               faqSummary,
               extracted: mergedExtracted,
               leadScore: state.leadScore,
-              dynamicExamples: dynamicExamplesBlock
+              dynamicExamples: dynamicExamplesBlock,
+              loopData: agentLoopData
             });
 
             if (agentDecision?.suggestedReply) {

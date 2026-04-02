@@ -59,7 +59,12 @@ import {
   getLearningStats,
   listCaptureFeedback,
   selectDynamicExamples,
-  formatExamplesForPrompt
+  formatExamplesForPrompt,
+  listLearningPatterns,
+  updateLearningPattern,
+  getLearningMemorySummary,
+  autoExtractPatterns,
+  upsertLearningPattern
 } from '../services/learning.js';
 
 import {
@@ -1216,6 +1221,78 @@ adminRouter.get('/learning/examples/preview', async (req, res) => {
     const examples = await selectDynamicExamples({ intent, maxExamples: max });
     const block = formatExamplesForPrompt(examples);
     return res.json({ ok: true, count: examples.length, examples, block });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// ─── Memoria Incremental de Patrones ─────────────────────────────────────────
+
+// GET /admin/learning/memory — listar patrones de memoria
+adminRouter.get('/learning/memory', async (req, res) => {
+  try {
+    const patternType = typeof req.query.type   === 'string' ? req.query.type   : 'all';
+    const status      = typeof req.query.status === 'string' ? req.query.status : 'active';
+    const limit       = Math.min(Number(req.query.limit  ?? 50),  200);
+    const offset      = Number(req.query.offset ?? 0);
+    const result = await listLearningPatterns({ patternType: patternType as any, status: status as any, limit, offset });
+    return res.json({ ok: true, ...result });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// GET /admin/learning/memory/summary — resumen por tipo de patrón
+adminRouter.get('/learning/memory/summary', async (req, res) => {
+  try {
+    const summary = await getLearningMemorySummary();
+    return res.json({ ok: true, ...summary });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// PATCH /admin/learning/memory/:id — actualizar estado/nota de un patrón
+adminRouter.patch('/learning/memory/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+    const { status, notes, patternValue } = req.body ?? {};
+    const updated = await updateLearningPattern(id, { status, notes, patternValue });
+    if (!updated) return res.status(404).json({ ok: false, error: 'not_found' });
+    return res.json({ ok: true, pattern: updated });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// POST /admin/learning/memory/extract — disparar extracción de patrones manualmente
+adminRouter.post('/learning/memory/extract', async (req, res) => {
+  try {
+    const lookbackHours = Number(req.body?.lookbackHours ?? 24);
+    const result = await autoExtractPatterns({ lookbackHours: Math.min(lookbackHours, 168) });
+    return res.json({ ok: true, ...result });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// POST /admin/learning/memory — registrar patrón manualmente (por operador)
+adminRouter.post('/learning/memory', async (req, res) => {
+  try {
+    const { patternType, patternKey, patternValue, sampleMessage, intent, confidence } = req.body ?? {};
+    if (!patternType || !patternKey) {
+      return res.status(400).json({ ok: false, error: 'patternType and patternKey are required' });
+    }
+    await upsertLearningPattern({
+      patternType,
+      patternKey,
+      patternValue,
+      sampleMessage,
+      intent,
+      confidence: Number(confidence ?? 0.8)
+    });
+    return res.json({ ok: true });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
   }
