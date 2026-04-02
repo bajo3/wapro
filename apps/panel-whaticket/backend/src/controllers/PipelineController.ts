@@ -115,7 +115,7 @@ export const board = async (req: Request, res: Response) => {
   const tickets = await Ticket.findAll({
     where: {
       [Op.or]: [
-        { pipelineStageId: { [Op.ne]: null } },
+        { pipelineStageId: { [Op.ne]: null } } as any,
         { updatedAt: { [Op.gte]: cutoff } }
       ]
     },
