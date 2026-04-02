@@ -3,6 +3,7 @@ import fetch from "node-fetch";
 import { getIO } from "../libs/socket";
 
 import CreateTicketService from "../services/TicketServices/CreateTicketService";
+import ClearTicketConversationService from "../services/TicketServices/ClearTicketConversationService";
 import DeleteTicketService from "../services/TicketServices/DeleteTicketService";
 import ListTicketsService from "../services/TicketServices/ListTicketsService";
 import ShowTicketService from "../services/TicketServices/ShowTicketService";
@@ -272,6 +273,33 @@ export const remove = async (
   });
 
   return res.status(200).json({ message: "ticket deleted" });
+};
+
+export const clearConversation = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  const { ticketId } = req.params;
+
+  const { ticket, deletedCount } = await ClearTicketConversationService(ticketId);
+
+  const io = getIO();
+
+  io.to(ticket.id.toString()).emit("appMessage", {
+    action: "clear",
+    ticketId: ticket.id
+  });
+
+  io.to(ticket.status).to(ticket.id.toString()).emit("ticket", {
+    action: "update",
+    ticket
+  });
+
+  return res.status(200).json({
+    ok: true,
+    ticket,
+    deletedCount
+  });
 };
 
 

@@ -26,6 +26,7 @@ const TicketOptionsMenu = ({
   onOpenContact = () => {},
 }) => {
   const [confirmationOpen, setConfirmationOpen] = useState(false);
+  const [clearConversationOpen, setClearConversationOpen] = useState(false);
   const [transferTicketModalOpen, setTransferTicketModalOpen] = useState(false);
   const isMounted = useRef(true);
   const { user } = useContext(AuthContext);
@@ -58,6 +59,20 @@ const TicketOptionsMenu = ({
     if (isMounted.current) {
       setTransferTicketModalOpen(false);
     }
+  };
+
+  const handleClearConversation = async () => {
+    handleClose();
+    try {
+      await api.delete(`/tickets/${ticket.id}/conversation`);
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const handleOpenClearConversationModal = () => {
+    setClearConversationOpen(true);
+    handleClose();
   };
 
   // New action handlers for extended menu
@@ -158,10 +173,10 @@ const TicketOptionsMenu = ({
           }
         }}
       >
-        <MenuItem onClick={() => handleOpenLeadTools(1)}>
+        <MenuItem onClick={() => handleOpenLeadTools({ tab: 1, section: "commercial" })}>
           Gestión del lead
         </MenuItem>
-        <MenuItem onClick={() => handleOpenLeadTools(1)}>
+        <MenuItem onClick={() => handleOpenLeadTools({ tab: 1, section: "recontact" })}>
           Programar / recontacto
         </MenuItem>
         <MenuItem onClick={() => handleSetBotMode("HUMAN_ONLY")}>
@@ -182,7 +197,7 @@ const TicketOptionsMenu = ({
         <MenuItem onClick={handlePostponeTicket}>
           {i18n.t("ticketOptionsMenu.postpone")}
         </MenuItem>
-        <MenuItem onClick={() => handleOpenLeadTools(0)}>{i18n.t("ticketOptionsMenu.contactDetails")}</MenuItem>
+        <MenuItem onClick={() => handleOpenLeadTools({ tab: 0, section: "contact" })}>{i18n.t("ticketOptionsMenu.contactDetails")}</MenuItem>
         <MenuItem onClick={handleKeepWithMe}>
           {i18n.t("ticketOptionsMenu.keep")}
         </MenuItem>
@@ -194,6 +209,9 @@ const TicketOptionsMenu = ({
         </MenuItem>
         <MenuItem onClick={handleOpenTransferModal}>
           {i18n.t("ticketOptionsMenu.transfer")}
+        </MenuItem>
+        <MenuItem onClick={handleOpenClearConversationModal}>
+          Limpiar conversación
         </MenuItem>
         <Can
           role={user.profile}
@@ -214,6 +232,14 @@ const TicketOptionsMenu = ({
         onConfirm={handleDeleteTicket}
       >
         {i18n.t("ticketOptionsMenu.confirmationModal.message")}
+      </ConfirmationModal>
+      <ConfirmationModal
+        title={`Limpiar conversación #${ticket.id} de ${ticket.contact.name}?`}
+        open={clearConversationOpen}
+        onClose={setClearConversationOpen}
+        onConfirm={handleClearConversation}
+      >
+        Se borrarán los mensajes guardados en el CRM de este ticket. Esta acción no elimina el contacto.
       </ConfirmationModal>
       <TransferTicketModal
         modalOpen={transferTicketModalOpen}

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useHistory } from "react-router-dom";
+import { toast } from "react-toastify";
 import api from "../services/api";
 import toastError from "../errors/toastError";
 
@@ -59,13 +60,13 @@ function SectionLabel({ children }) {
   );
 }
 
-function Card({ children, className = "" }) {
+const Card = React.forwardRef(({ children, className = "" }, ref) => {
   return (
-    <div className={`bg-auto-panel2 border border-auto-border rounded-auto-lg p-3.5 ${className}`}>
+    <div ref={ref} className={`bg-auto-panel2 border border-auto-border rounded-auto-lg p-3.5 ${className}`}>
       {children}
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Hook: fetch pipeline stages once, shared across renders
@@ -98,7 +99,7 @@ function usePipelineStages() {
   return stages;
 }
 
-export default function LeadPanelAutos({ ticketId }) {
+export default function LeadPanelAutos({ ticketId, initialSection = "commercial", focusNonce = 0 }) {
   const dynamicStages = usePipelineStages();
   const history = useHistory();
 
@@ -112,9 +113,15 @@ export default function LeadPanelAutos({ ticketId }) {
   // Cotizaciones vinculadas a este ticket
   const [quotations, setQuotations]         = useState([]);
   const [quotationsLoading, setQuotationsLoading] = useState(false);
+  const [scheduledRows, setScheduledRows] = useState([]);
+  const [recontactAt, setRecontactAt] = useState("");
+  const [recontactDays, setRecontactDays] = useState(3);
+  const [recontactBody, setRecontactBody] = useState("Hola! ¿Cómo venimos? Si querés, decime presupuesto y qué estás buscando y te paso opciones disponibles 😊");
+  const [conversationBusy, setConversationBusy] = useState(false);
 
   const stage    = useMemo(() => parseKvpTag(tags, "stage"),    [tags]);
   const interest = useMemo(() => parseKvpTag(tags, "interest"), [tags]);
+  const sectionRefs = useRef({});
 
   // visible tags = excluir los kvp internos
   const visibleTags = useMemo(
@@ -129,18 +136,21 @@ export default function LeadPanelAutos({ ticketId }) {
     setTicket(null);
     setTags([]);
     setNotes([]);
+    setScheduledRows([]);
 
     const run = async () => {
       try {
-        const [tRes, tagsRes, notesRes] = await Promise.all([
+        const [tRes, tagsRes, notesRes, scheduledRes] = await Promise.all([
           api.get(`/tickets/${ticketId}`),
           api.get(`/tickets/${ticketId}/tags`),
           api.get(`/tickets/${ticketId}/notes`),
+          api.get(`/scheduled-messages`, { params: { ticketId, limit: 25 } }),
         ]);
         if (!mounted) return;
         setTicket(tRes.data || null);
         setTags(tagsRes.data?.tags || []);
         setNotes(notesRes.data?.notes || []);
+        setScheduledRows(scheduledRes.data?.rows || []);
       } catch (err) {
         toastError(err);
       } finally {
@@ -254,6 +264,80 @@ export default function LeadPanelAutos({ ticketId }) {
 
   const setInterest = (v) => saveTags(upsertKvpTag(tags, "interest", v));
 
+  const refreshScheduled = async () => {
+    if (!ticketId) return;
+    try {
+      const { data } = await api.get(`/scheduled-messages`, { params: { ticketId, limit: 25 } });
+      setScheduledRows(data?.rows || []);
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const createRecontact = async () => {
+    if (!ticketId || !ticket?.contact?.id) return;
+
+    const body = String(recontactBody || "").trim();
+    const days = Math.max(0, Number(recontactDays) || 0);
+
+    if (!body) return;
+
+    let sendAt = recontactAt ? new Date(recontactAt).toISOString() : null;
+    if (!sendAt) {
+      sendAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+    }
+
+    try {
+      await api.post(`/scheduled-messages`, {
+        ticketId,
+        contactId: ticket.contact.id,
+        body,
+        sendAt
+      });
+      setRecontactAt("");
+      toast.success("Recontacto agendado");
+      await refreshScheduled();
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const cancelScheduled = async (id) => {
+    try {
+      await api.post(`/scheduled-messages/${id}/cancel`);
+      toast.success("Recontacto cancelado");
+      await refreshScheduled();
+    } catch (err) {
+      toastError(err);
+    }
+  };
+
+  const clearConversation = async () => {
+    if (!ticketId || conversationBusy) return;
+    const ok = window.confirm("Se borrarán los mensajes guardados en este ticket. El contacto y el ticket seguirán existiendo. ¿Continuar?");
+    if (!ok) return;
+
+    setConversationBusy(true);
+    try {
+      const { data } = await api.delete(`/tickets/${ticketId}/conversation`);
+      const nextTicket = data?.ticket || {};
+      setTicket((prev) => ({ ...(prev || {}), ...nextTicket }));
+      toast.success(`Conversación limpiada (${Number(data?.deletedCount || 0)} mensajes)`);
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setConversationBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (loading || !initialSection) return;
+    const node = sectionRefs.current?.[initialSection];
+    if (node && typeof node.scrollIntoView === "function") {
+      node.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [initialSection, focusNonce, loading]);
+
   const contact = ticket?.contact;
   const phone   = contact?.number ? String(contact.number) : "";
   const waLink  = phone ? `https://wa.me/${phone.replace(/\D/g, "")}` : "";
@@ -305,7 +389,7 @@ export default function LeadPanelAutos({ ticketId }) {
         <div className="min-h-0 flex-1 overflow-y-auto p-3 flex flex-col gap-2 scrollbar-thin scrollbar-thumb-auto-border">
 
           {/* Contacto */}
-          <Card>
+          <Card className="scroll-mt-3" ref={(node) => { sectionRefs.current.contact = node; }}>
             <SectionLabel>Contacto</SectionLabel>
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-full bg-auto-accent/10 border border-auto-accent/20 flex items-center justify-center text-[13px] font-bold text-auto-accent flex-shrink-0">
@@ -340,7 +424,7 @@ export default function LeadPanelAutos({ ticketId }) {
           </Card>
 
           {/* Estado comercial */}
-          <Card>
+          <Card className="scroll-mt-3" ref={(node) => { sectionRefs.current.commercial = node; }}>
             <SectionLabel>Estado comercial</SectionLabel>
             <div className="flex gap-2 mb-2">
               {stage && (
@@ -484,8 +568,101 @@ export default function LeadPanelAutos({ ticketId }) {
             )}
           </Card>
 
+          {/* Recontacto */}
+          <Card className="scroll-mt-3" ref={(node) => { sectionRefs.current.recontact = node; }}>
+            <div className="flex items-center justify-between gap-2 mb-2.5">
+              <SectionLabel>Recontacto</SectionLabel>
+              <button
+                type="button"
+                onClick={refreshScheduled}
+                className="h-6 px-2 rounded-auto-md bg-auto-surface border border-auto-border text-white/40 text-[11px] hover:text-auto-text hover:border-auto-accent/40 transition-colors"
+              >
+                Refrescar
+              </button>
+            </div>
+            <div className="text-[12px] text-white/35 mb-3">Agendá un mensaje automático para este lead.</div>
+            <div className="grid grid-cols-[110px_1fr] gap-2 mb-2">
+              <input
+                type="number"
+                min="0"
+                value={recontactDays}
+                onChange={(e) => setRecontactDays(e.target.value)}
+                className="h-8 w-full bg-auto-surface border border-auto-border rounded-auto-md px-2.5 text-[12px] text-auto-text outline-none focus:border-auto-accent/50 transition-colors"
+                placeholder="Días"
+              />
+              <button
+                type="button"
+                onClick={createRecontact}
+                className="h-8 px-3 rounded-auto-md bg-auto-accent text-black text-xs font-bold hover:bg-auto-accent2 transition-colors"
+              >
+                Agendar
+              </button>
+            </div>
+            <input
+              type="datetime-local"
+              value={recontactAt}
+              onChange={(e) => setRecontactAt(e.target.value)}
+              className="h-8 w-full bg-auto-surface border border-auto-border rounded-auto-md px-2.5 text-[12px] text-auto-text outline-none focus:border-auto-accent/50 transition-colors mb-2"
+            />
+            <textarea
+              value={recontactBody}
+              onChange={(e) => setRecontactBody(e.target.value)}
+              rows={3}
+              className="w-full bg-auto-surface border border-auto-border rounded-auto-md px-2.5 py-2 text-[12px] text-auto-text placeholder-white/20 outline-none focus:border-auto-accent/50 transition-colors resize-y min-h-[88px]"
+              placeholder="Mensaje de recontacto..."
+            />
+
+            <div className="mt-3 flex flex-col gap-2">
+              {scheduledRows.length === 0 ? (
+                <div className="text-[12px] text-white/20">No hay recontactos agendados.</div>
+              ) : (
+                scheduledRows.map((row) => (
+                  <div key={row.id} className="bg-auto-surface border border-auto-border rounded-auto-md p-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono text-white/30">#{row.id}</span>
+                          <span className="text-[11px] font-semibold text-auto-text">{row.status}</span>
+                        </div>
+                        <div className="text-[11px] text-white/35 mt-1">
+                          {row.sendAt ? new Date(row.sendAt).toLocaleString("es-AR") : "Sin fecha"}
+                        </div>
+                        <div className="text-[12px] text-white/55 mt-1 leading-relaxed">
+                          {String(row.body || "").slice(0, 160)}
+                          {String(row.body || "").length > 160 ? "…" : ""}
+                        </div>
+                      </div>
+                      {row.status === "PENDING" ? (
+                        <button
+                          type="button"
+                          onClick={() => cancelScheduled(row.id)}
+                          className="h-7 px-2.5 rounded-auto-md bg-auto-surface border border-red-500/20 text-red-400 text-[11px] hover:bg-red-500/10 transition-colors flex-shrink-0"
+                        >
+                          Cancelar
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="mt-4 border-t border-auto-border pt-3">
+              <SectionLabel>Conversación</SectionLabel>
+              <div className="text-[12px] text-white/30 mb-2">Borra el historial guardado en el CRM de este ticket.</div>
+              <button
+                type="button"
+                onClick={clearConversation}
+                disabled={conversationBusy}
+                className="h-8 px-3 rounded-auto-md bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-semibold hover:bg-red-500/15 transition-colors disabled:opacity-50"
+              >
+                {conversationBusy ? "Limpiando..." : "Limpiar conversación"}
+              </button>
+            </div>
+          </Card>
+
           {/* Notas */}
-          <Card>
+          <Card className="scroll-mt-3" ref={(node) => { sectionRefs.current.notes = node; }}>
             <SectionLabel>Notas internas</SectionLabel>
             <div className="flex gap-2 mb-3">
               <input

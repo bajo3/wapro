@@ -504,6 +504,12 @@ const MessagesList = ({ ticketId, isGroup }) => {
       if (data.action === "update") {
         dispatch({ type: "UPDATE_MESSAGE", payload: data.message });
       }
+
+      if (data.action === "clear") {
+        dispatch({ type: "RESET" });
+        setPageNumber(1);
+        setHasMore(false);
+      }
     });
 
     return () => {

@@ -60,6 +60,8 @@ const Ticket = () => {
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState(1);
+  const [drawerSection, setDrawerSection] = useState("commercial");
+  const [drawerFocusNonce, setDrawerFocusNonce] = useState(0);
   const [proView, setProView] = useState(true);
   const [loading, setLoading] = useState(true);
   const [contact, setContact] = useState({});
@@ -137,8 +139,19 @@ const Ticket = () => {
     };
   }, [ticketId, history]);
 
-  const handleDrawerOpen = (tab = 1) => {
-    setDrawerTab(typeof tab === "number" ? tab : 1);
+  const handleDrawerOpen = (target = 1) => {
+    if (typeof target === "number") {
+      setDrawerTab(target);
+      setDrawerSection(target === 0 ? "contact" : "commercial");
+    } else if (target && typeof target === "object") {
+      setDrawerTab(typeof target.tab === "number" ? target.tab : 1);
+      setDrawerSection(String(target.section || "commercial"));
+    } else {
+      setDrawerTab(1);
+      setDrawerSection("commercial");
+    }
+
+    setDrawerFocusNonce(prev => prev + 1);
     setDrawerOpen(true);
   };
   const handleDrawerClose = () => setDrawerOpen(false);
@@ -241,7 +254,7 @@ const Ticket = () => {
           </div>
           {/* Contenido scrollable */}
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-            <LeadPanelAutos ticketId={ticketId} />
+            <LeadPanelAutos ticketId={ticketId} initialSection={drawerSection} focusNonce={drawerFocusNonce} />
           </div>
         </div>
       ) : null}

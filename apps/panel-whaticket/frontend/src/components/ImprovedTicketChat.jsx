@@ -209,7 +209,7 @@ export default function ImprovedTicketChat({
 
             <button
               type="button"
-              onClick={() => onOpenContact?.(1)}
+              onClick={() => onOpenContact?.({ tab: 1, section: "commercial" })}
               className={actionButtonBase}
               title="Gestión del lead"
             >
@@ -229,7 +229,7 @@ export default function ImprovedTicketChat({
 
             <button
               type="button"
-              onClick={() => onOpenContact?.(1)}
+              onClick={() => onOpenContact?.({ tab: 1, section: "recontact" })}
               className={actionButtonBase}
               title="Programar recontacto"
             >

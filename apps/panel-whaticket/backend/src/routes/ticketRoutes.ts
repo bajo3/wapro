@@ -93,6 +93,8 @@ ticketRoutes.put(
   TicketTagsController.update
 );
 
+ticketRoutes.delete("/tickets/:ticketId/conversation", isAuth, TicketController.clearConversation);
+
 ticketRoutes.delete("/tickets/:ticketId", isAuth, TicketController.remove);
 
 export default ticketRoutes;
