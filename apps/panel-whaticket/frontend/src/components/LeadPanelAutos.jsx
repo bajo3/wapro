@@ -233,7 +233,7 @@ export default function LeadPanelAutos({ ticketId, initialSection = "commercial"
   };
 
   // Set stage: update kvp tag AND, if the new value maps to a pipeline stage id,
-  // call PUT /pipeline/tickets/:ticketId/stage for the board to stay in sync.
+  // call PATCH /pipeline/tickets/:ticketId/stage for the board to stay in sync.
   const setStage = async (v) => {
     // Optimistic local update first
     const nextTags = upsertKvpTag(tags, "stage", v);
@@ -253,7 +253,7 @@ export default function LeadPanelAutos({ ticketId, initialSection = "commercial"
       const toStageId = matched?._id ?? (Number.isFinite(Number(v)) ? Number(v) : null);
       if (toStageId) {
         try {
-          await api.put(`/pipeline/tickets/${ticketId}/stage`, { toStageId });
+          await api.patch(`/pipeline/tickets/${ticketId}/stage`, { toStageId });
         } catch (err) {
           toastError(err);
           // Do not roll back the tag — the tag is the source of truth in LeadPanel

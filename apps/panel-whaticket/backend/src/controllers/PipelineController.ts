@@ -137,8 +137,13 @@ export const board = async (req: Request, res: Response) => {
     }
   }
 
+  const stagesWithTickets = stages.map(stage => ({
+    ...stage.toJSON(),
+    tickets: byStage[String(stage.id)] || []
+  }));
+
   return res.json({
-    stages,
+    stages: stagesWithTickets,
     ticketsByStage: byStage,
     lookbackDays
   });

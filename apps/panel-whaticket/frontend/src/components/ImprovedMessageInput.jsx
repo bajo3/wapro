@@ -8,8 +8,9 @@ import { ReplyMessageContext } from "../context/ReplyingMessage/ReplyingMessageC
 import toastError from "../errors/toastError";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 
-export default function ImprovedMessageInput({ ticketStatus }) {
-  const { ticketId } = useParams();
+export default function ImprovedMessageInput({ ticketStatus, ticketId: ticketIdProp }) {
+  const { ticketId: routeTicketId } = useParams();
+  const ticketId = ticketIdProp || routeTicketId;
   const { user } = useContext(AuthContext);
   const { replyingMessage, setReplyingMessage } = useContext(ReplyMessageContext);
   const [signMessage] = useLocalStorage("signOption", true);
@@ -47,7 +48,7 @@ export default function ImprovedMessageInput({ ticketStatus }) {
 
   const handleSend = async () => {
     const body = message.trim();
-    if (!body || sending || ticketStatus !== "open") return;
+    if (!ticketId || !body || sending || ticketStatus !== "open") return;
     setSending(true);
     try {
       await api.post(`/messages/${ticketId}`, {

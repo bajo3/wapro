@@ -1,11 +1,21 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Columns, LayoutList, RefreshCw, AlertTriangle } from "lucide-react";
-import api from "../../services/api";
-import toastError from "../../errors/toastError";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  Columns,
+  ExternalLink,
+  LayoutList,
+  MessageSquareText,
+  RefreshCw,
+} from "lucide-react";
+import { useHistory } from "react-router-dom";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+import MessagesList from "../../components/MessagesList";
+import ImprovedMessageInput from "../../components/ImprovedMessageInput";
+import { ReplyMessageProvider } from "../../context/ReplyingMessage/ReplyingMessageContext";
+import toastError from "../../errors/toastError";
+import api from "../../services/api";
 
 const STALE_THRESHOLD_HOURS = 72;
 
@@ -41,10 +51,6 @@ function savePref(key, value) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
-
 function LoadingState({ viewMode = "focus" }) {
   if (viewMode === "kanban") {
     return (
@@ -53,24 +59,25 @@ function LoadingState({ viewMode = "focus" }) {
           <div
             key={i}
             className="flex w-[320px] shrink-0 flex-col gap-3 rounded-[20px] border border-white/[0.06] bg-auto-panel p-3"
-            style={{ maxHeight: "calc(100vh - 160px)" }}
+            style={{ maxHeight: "calc(100vh - 220px)" }}
           >
             <div className="animate-pulse rounded-lg bg-white/[0.06]" style={{ height: 44 }} />
             {[1, 2].map((j) => (
-              <div key={j} className="animate-pulse rounded-2xl bg-white/[0.04]" style={{ height: 110 }} />
+              <div key={j} className="animate-pulse rounded-2xl bg-white/[0.04]" style={{ height: 124 }} />
             ))}
           </div>
         ))}
       </div>
     );
   }
+
   return (
     <div className="flex flex-col gap-3 p-4">
       {[1, 2, 3].map((i) => (
         <div
           key={i}
           className="animate-pulse rounded-2xl border border-white/[0.06] bg-auto-panel"
-          style={{ height: 120 }}
+          style={{ height: 124 }}
         />
       ))}
     </div>
@@ -105,15 +112,12 @@ function EmptyColumn() {
   );
 }
 
-// Move-to-stage dropdown rendered inside each ticket card.
-// Shows a compact select with all stages except the current one.
 function MoveButton({ ticket, stages, currentStageId, onMove, moving }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
-  // Close on outside click
   useEffect(() => {
-    if (!open) return;
+    if (!open) return undefined;
     const handler = (e) => {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
     };
@@ -129,7 +133,10 @@ function MoveButton({ ticket, stages, currentStageId, onMove, moving }) {
       <button
         type="button"
         disabled={moving}
-        onClick={() => setOpen((v) => !v)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
         className="inline-flex items-center gap-1 rounded-lg border border-white/[0.1] bg-white/[0.04] px-2 py-1 text-[11px] text-white/50 transition-colors hover:border-auto-accent/30 hover:text-auto-accent disabled:opacity-40"
       >
         {moving ? "Moviendo..." : "Mover a"}
@@ -141,7 +148,8 @@ function MoveButton({ ticket, stages, currentStageId, onMove, moving }) {
             <button
               key={s.id}
               type="button"
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation();
                 setOpen(false);
                 onMove(ticket.id, s.id);
               }}
@@ -156,8 +164,7 @@ function MoveButton({ ticket, stages, currentStageId, onMove, moving }) {
   );
 }
 
-// Individual ticket card
-function TicketCard({ ticket, stages, stageId, onMove, movingId }) {
+function TicketCard({ ticket, stages, stageId, onMove, movingId, onSelect, isSelected }) {
   const contact = ticket.contact || ticket.Contact || {};
   const name = contact.name || contact.Name || "Sin nombre";
   const lastMsg = ticket.lastMessage || ticket.updatedAt;
@@ -168,11 +175,21 @@ function TicketCard({ ticket, stages, stageId, onMove, movingId }) {
 
   return (
     <article
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect?.(ticket)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect?.(ticket);
+        }
+      }}
       className={`rounded-2xl border bg-white/[0.03] p-4 transition-all hover:border-white/[0.14] hover:bg-white/[0.05] ${
         isStale ? "border-amber-500/20" : "border-white/[0.08]"
-      } ${moving ? "opacity-50 pointer-events-none" : ""}`}
+      } ${moving ? "pointer-events-none opacity-50" : ""} ${
+        isSelected ? "ring-2 ring-auto-accent/60 border-auto-accent/40 bg-auto-accent/10" : ""
+      }`}
     >
-      {/* Header */}
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="truncate text-[13px] font-semibold text-white">{name}</div>
@@ -190,14 +207,16 @@ function TicketCard({ ticket, stages, stageId, onMove, movingId }) {
         )}
       </div>
 
-      {/* Last message preview */}
       {lastMsg && (
-        <div className="mb-3 line-clamp-2 text-[12px] leading-relaxed text-white/40">
-          {typeof lastMsg === "string" && lastMsg.length < 200 ? lastMsg : "Último mensaje disponible"}
+        <div className="mb-3 line-clamp-3 text-[12px] leading-relaxed text-white/40">
+          {typeof lastMsg === "string" && lastMsg.trim()
+            ? lastMsg.length <= 240
+              ? lastMsg
+              : `${lastMsg.slice(0, 237)}...`
+            : "Último mensaje disponible"}
         </div>
       )}
 
-      {/* Meta row */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {updatedMs > 0 && (
           <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 text-[10px] text-white/35">
@@ -209,6 +228,11 @@ function TicketCard({ ticket, stages, stageId, onMove, movingId }) {
             {ticket.status}
           </span>
         )}
+        {Number(ticket.unreadMessages) > 0 && (
+          <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-300">
+            {ticket.unreadMessages} sin leer
+          </span>
+        )}
         {(ticket.value || ticket.quotationValue) && (
           <span className="rounded-full border border-auto-accent/20 bg-auto-accent/10 px-2 py-0.5 text-[10px] font-medium text-auto-accent">
             $ {(ticket.value || ticket.quotationValue).toLocaleString("es-AR")}
@@ -216,24 +240,37 @@ function TicketCard({ ticket, stages, stageId, onMove, movingId }) {
         )}
       </div>
 
-      {/* Actions */}
-      <MoveButton
-        ticket={ticket}
-        stages={stages}
-        currentStageId={stageId}
-        onMove={onMove}
-        moving={moving}
-      />
+      <div className="flex items-center justify-between gap-2">
+        <MoveButton
+          ticket={ticket}
+          stages={stages}
+          currentStageId={stageId}
+          onMove={onMove}
+          moving={moving}
+        />
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect?.(ticket);
+          }}
+          className="inline-flex items-center gap-1 rounded-lg border border-white/[0.1] bg-white/[0.04] px-2 py-1 text-[11px] text-white/50 transition-colors hover:border-auto-accent/30 hover:text-auto-accent"
+        >
+          <MessageSquareText className="h-3 w-3" />
+          Ver chat
+        </button>
+      </div>
     </article>
   );
 }
 
-// Single kanban column
-function KanbanColumn({ stage, stages, onMove, movingId }) {
+function KanbanColumn({ stage, stages, onMove, movingId, selectedTicketId, onSelectTicket }) {
   const tickets = stage.tickets || [];
   return (
-    <div className="flex w-[320px] shrink-0 flex-col rounded-[20px] border border-white/[0.08] bg-auto-panel shadow-auto-soft" style={{ maxHeight: "calc(100vh - 160px)" }}>
-      {/* Column header */}
+    <div
+      className="flex w-[320px] shrink-0 flex-col rounded-[20px] border border-white/[0.08] bg-auto-panel shadow-auto-soft"
+      style={{ maxHeight: "calc(100vh - 220px)" }}
+    >
       <div className="sticky top-0 z-10 rounded-t-[20px] border-b border-white/[0.06] bg-auto-panel px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -251,7 +288,7 @@ function KanbanColumn({ stage, stages, onMove, movingId }) {
           <div className="mt-1 text-[11px] text-white/30">{stage.description}</div>
         )}
       </div>
-      {/* Tickets */}
+
       <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-3 scrollbar-thin scrollbar-thumb-auto-border">
         {tickets.length === 0 ? (
           <EmptyColumn />
@@ -264,6 +301,8 @@ function KanbanColumn({ stage, stages, onMove, movingId }) {
               stageId={stage.id}
               onMove={onMove}
               movingId={movingId}
+              onSelect={onSelectTicket}
+              isSelected={String(selectedTicketId) === String(t.id)}
             />
           ))
         )}
@@ -272,14 +311,12 @@ function KanbanColumn({ stage, stages, onMove, movingId }) {
   );
 }
 
-// Focus view: one stage at a time, full width
-function FocusView({ stages, focusIdx, setFocusIdx, onMove, movingId }) {
+function FocusView({ stages, focusIdx, setFocusIdx, onMove, movingId, selectedTicketId, onSelectTicket }) {
   const stage = stages[focusIdx];
   const tickets = stage?.tickets || [];
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Stage rail */}
       <div className="rounded-[20px] border border-white/[0.08] bg-auto-panel p-3 shadow-auto-soft">
         <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
           {stages.map((s, idx) => {
@@ -337,7 +374,6 @@ function FocusView({ stages, focusIdx, setFocusIdx, onMove, movingId }) {
         </div>
       </div>
 
-      {/* Active column — full width */}
       {stage && (
         <section className="rounded-[24px] border border-white/[0.08] bg-auto-panel p-5 shadow-auto-soft">
           <div className="mb-4 border-b border-white/[0.06] pb-4">
@@ -359,7 +395,7 @@ function FocusView({ stages, focusIdx, setFocusIdx, onMove, movingId }) {
           {tickets.length === 0 ? (
             <EmptyColumn />
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
               {tickets.map((t) => (
                 <TicketCard
                   key={t.id}
@@ -368,6 +404,8 @@ function FocusView({ stages, focusIdx, setFocusIdx, onMove, movingId }) {
                   stageId={stage.id}
                   onMove={onMove}
                   movingId={movingId}
+                  onSelect={onSelectTicket}
+                  isSelected={String(selectedTicketId) === String(t.id)}
                 />
               ))}
             </div>
@@ -378,41 +416,109 @@ function FocusView({ stages, focusIdx, setFocusIdx, onMove, movingId }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
+function ConversationPanel({ ticket, onOpenFullTicket }) {
+  const contact = ticket?.contact || {};
+
+  return (
+    <aside className="flex min-h-[520px] flex-col overflow-hidden rounded-[24px] border border-white/[0.08] bg-auto-panel shadow-auto-soft xl:h-full">
+      {ticket ? (
+        <>
+          <div className="border-b border-white/[0.06] px-4 py-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-white">
+                  {contact.name || "Sin nombre"}
+                </div>
+                {contact.number && (
+                  <div className="mt-1 font-mono text-[12px] text-white/40">{contact.number}</div>
+                )}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {ticket.status && (
+                    <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/50">
+                      {ticket.status}
+                    </span>
+                  )}
+                  {Number(ticket.unreadMessages) > 0 && (
+                    <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-300">
+                      {ticket.unreadMessages} sin leer
+                    </span>
+                  )}
+                  {ticket.pipelineStage?.name && (
+                    <span className="rounded-full border border-auto-accent/20 bg-auto-accent/10 px-2 py-0.5 text-[10px] font-medium text-auto-accent">
+                      {ticket.pipelineStage.name}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onOpenFullTicket}
+                className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-xs text-white/65 transition-colors hover:border-auto-accent/30 hover:text-auto-accent"
+              >
+                <ExternalLink className="h-4 w-4" />
+                Abrir ticket
+              </button>
+            </div>
+            <div className="mt-3 text-[12px] text-white/35">
+              Conversación visible dentro de Pipeline para trabajar sin salir del tablero.
+            </div>
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col">
+            <ReplyMessageProvider>
+              <MessagesList ticketId={ticket.id} isGroup={ticket?.isGroup} />
+              <ImprovedMessageInput ticketId={ticket.id} ticketStatus={ticket?.status} />
+            </ReplyMessageProvider>
+          </div>
+        </>
+      ) : (
+        <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+          <MessageSquareText className="h-10 w-10 text-white/20" />
+          <div className="text-sm font-medium text-white/45">Seleccioná un ticket del pipeline</div>
+          <div className="max-w-xs text-xs leading-relaxed text-white/25">
+            Acá vas a ver los mensajes del lead y vas a poder responder sin salir del tablero.
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+}
 
 export default function Pipeline() {
-  const [stages, setStages]       = useState([]);
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState(null);
-  const [movingId, setMovingId]   = useState(null);
-  const [viewMode, setViewMode]   = useState(() => loadPref("viewMode", "focus"));
-  const [focusIdx, setFocusIdx]   = useState(0);
+  const history = useHistory();
+  const [stages, setStages] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [movingId, setMovingId] = useState(null);
+  const [viewMode, setViewMode] = useState(() => loadPref("viewMode", "focus"));
+  const [focusIdx, setFocusIdx] = useState(0);
+  const [selectedTicketId, setSelectedTicketId] = useState(null);
+  const [selectedTicketDetails, setSelectedTicketDetails] = useState(null);
 
-  // Persist viewMode
-  useEffect(() => { savePref("viewMode", viewMode); }, [viewMode]);
+  useEffect(() => {
+    savePref("viewMode", viewMode);
+  }, [viewMode]);
 
-  // Clamp focusIdx when stages change
   useEffect(() => {
     if (stages.length > 0 && focusIdx >= stages.length) {
       setFocusIdx(stages.length - 1);
     }
   }, [stages.length, focusIdx]);
 
-  // ---------------------------------------------------------------------------
-  // Fetch board
-  // ---------------------------------------------------------------------------
   const fetchBoard = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const { data } = await api.get("/pipeline/board");
-      // The board endpoint returns an array of stages, each with a `tickets` array.
-      // Normalise both snake_case and camelCase variants.
-      const normalised = (Array.isArray(data) ? data : data?.stages || []).map((s) => ({
-        ...s,
-        tickets: s.tickets || s.Tickets || [],
+      const rawStages = Array.isArray(data) ? data : data?.stages || [];
+      const ticketsByStage = data?.ticketsByStage || {};
+      const normalised = rawStages.map((stage) => ({
+        ...stage,
+        tickets: Array.isArray(stage?.tickets)
+          ? stage.tickets
+          : Array.isArray(stage?.Tickets)
+          ? stage.Tickets
+          : ticketsByStage[String(stage.id)] || [],
       }));
       setStages(normalised);
     } catch (err) {
@@ -427,67 +533,140 @@ export default function Pipeline() {
     }
   }, []);
 
-  useEffect(() => { fetchBoard(); }, [fetchBoard]);
-
-  // ---------------------------------------------------------------------------
-  // Move ticket
-  // ---------------------------------------------------------------------------
-  const moveTicket = useCallback(async (ticketId, toStageId) => {
-    // Optimistic update: remove ticket from its current stage and add to target
-    setStages((prev) => {
-      let movedTicket = null;
-      const updated = prev.map((s) => {
-        const idx = s.tickets.findIndex((t) => t.id === ticketId);
-        if (idx === -1) return s;
-        movedTicket = s.tickets[idx];
-        return { ...s, tickets: s.tickets.filter((t) => t.id !== ticketId) };
-      });
-      if (!movedTicket) return prev;
-      return updated.map((s) =>
-        s.id === toStageId
-          ? {
-              ...s,
-              tickets: [
-                { ...movedTicket, pipelineStageId: toStageId, pipelineStageUpdatedAt: new Date().toISOString() },
-                ...s.tickets,
-              ],
-            }
-          : s
-      );
-    });
-
-    setMovingId(ticketId);
-    try {
-      await api.patch(`/pipeline/tickets/${ticketId}/stage`, { toStageId });
-    } catch (err) {
-      // Roll back on failure
-      toastError(err);
-      fetchBoard();
-    } finally {
-      setMovingId(null);
-    }
+  useEffect(() => {
+    fetchBoard();
   }, [fetchBoard]);
 
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
+  const allTickets = useMemo(
+    () => stages.flatMap((stage) => stage.tickets || []),
+    [stages]
+  );
+
+  useEffect(() => {
+    if (!allTickets.length) {
+      setSelectedTicketId(null);
+      setSelectedTicketDetails(null);
+      return;
+    }
+
+    const stillExists = allTickets.some((ticket) => String(ticket.id) === String(selectedTicketId));
+    if (!selectedTicketId || !stillExists) {
+      setSelectedTicketId(allTickets[0].id);
+    }
+  }, [allTickets, selectedTicketId]);
+
+  useEffect(() => {
+    if (!selectedTicketId) {
+      setSelectedTicketDetails(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const loadTicket = async () => {
+      try {
+        const { data } = await api.get(`/tickets/${selectedTicketId}`);
+        if (!cancelled) setSelectedTicketDetails(data || null);
+      } catch (err) {
+        if (!cancelled) {
+          setSelectedTicketDetails(null);
+        }
+      }
+    };
+
+    loadTicket();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTicketId]);
+
+  const selectedTicketFromBoard = useMemo(
+    () => allTickets.find((ticket) => String(ticket.id) === String(selectedTicketId)) || null,
+    [allTickets, selectedTicketId]
+  );
+
+  const selectedTicket = useMemo(() => {
+    if (!selectedTicketFromBoard && !selectedTicketDetails) return null;
+    if (!selectedTicketFromBoard) return selectedTicketDetails;
+    if (!selectedTicketDetails) return selectedTicketFromBoard;
+    return {
+      ...selectedTicketFromBoard,
+      ...selectedTicketDetails,
+      contact: {
+        ...(selectedTicketFromBoard.contact || {}),
+        ...(selectedTicketDetails.contact || {}),
+      },
+      pipelineStage:
+        selectedTicketDetails.pipelineStage || selectedTicketFromBoard.pipelineStage || null,
+    };
+  }, [selectedTicketDetails, selectedTicketFromBoard]);
+
+  const handleSelectTicket = useCallback((ticket) => {
+    setSelectedTicketId(ticket?.id || null);
+  }, []);
+
+  const moveTicket = useCallback(
+    async (ticketId, toStageId) => {
+      setStages((prev) => {
+        let movedTicket = null;
+        const updated = prev.map((stage) => {
+          const idx = stage.tickets.findIndex((ticket) => ticket.id === ticketId);
+          if (idx === -1) return stage;
+          movedTicket = stage.tickets[idx];
+          return { ...stage, tickets: stage.tickets.filter((ticket) => ticket.id !== ticketId) };
+        });
+
+        if (!movedTicket) return prev;
+
+        return updated.map((stage) =>
+          stage.id === toStageId
+            ? {
+                ...stage,
+                tickets: [
+                  {
+                    ...movedTicket,
+                    pipelineStageId: toStageId,
+                    pipelineStageUpdatedAt: new Date().toISOString(),
+                    pipelineStage:
+                      stages.find((candidate) => candidate.id === toStageId) || movedTicket.pipelineStage,
+                  },
+                  ...stage.tickets,
+                ],
+              }
+            : stage
+        );
+      });
+
+      setMovingId(ticketId);
+      try {
+        await api.patch(`/pipeline/tickets/${ticketId}/stage`, { toStageId });
+        if (String(selectedTicketId) === String(ticketId)) {
+          setSelectedTicketDetails((prev) =>
+            prev ? { ...prev, pipelineStageId: toStageId } : prev
+          );
+        }
+      } catch (err) {
+        toastError(err);
+        fetchBoard();
+      } finally {
+        setMovingId(null);
+      }
+    },
+    [fetchBoard, selectedTicketId, stages]
+  );
+
   return (
-    <div className="flex flex-col gap-4 p-4">
-      {/* Header */}
+    <div className="flex h-[calc(100vh-80px)] min-h-0 flex-col gap-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-bold text-white">Pipeline</h1>
           {!loading && stages.length > 0 && (
             <div className="mt-0.5 text-[12px] text-white/35">
-              {stages.reduce((acc, s) => acc + (s.tickets || []).length, 0)} tickets totales
-              &nbsp;·&nbsp;
-              {stages.length} etapas
+              {allTickets.length} tickets totales · {stages.length} etapas
             </div>
           )}
         </div>
 
         <div className="flex items-center gap-2">
-          {/* View toggle */}
           <button
             type="button"
             onClick={() => setViewMode((v) => (v === "focus" ? "kanban" : "focus"))}
@@ -510,7 +689,6 @@ export default function Pipeline() {
             )}
           </button>
 
-          {/* Refresh */}
           <button
             type="button"
             onClick={fetchBoard}
@@ -523,41 +701,54 @@ export default function Pipeline() {
         </div>
       </div>
 
-      {/* Body */}
-      {loading ? (
-        <LoadingState viewMode={viewMode} />
-      ) : error ? (
-        <ErrorState message={error} onRetry={fetchBoard} />
-      ) : stages.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/[0.1] bg-white/[0.02] p-16 text-center">
-          <Columns className="h-10 w-10 text-white/20" />
-          <div className="text-sm font-medium text-white/40">No hay etapas configuradas</div>
-          <div className="text-xs text-white/20">
-            Creá la primera etapa desde la configuración del pipeline.
-          </div>
-        </div>
-      ) : viewMode === "focus" ? (
-        <FocusView
-          stages={stages}
-          focusIdx={focusIdx}
-          setFocusIdx={setFocusIdx}
-          onMove={moveTicket}
-          movingId={movingId}
-        />
-      ) : (
-        // Kanban: horizontal scroll
-        <div className="flex gap-4 overflow-x-auto pb-3">
-          {stages.map((s) => (
-            <KanbanColumn
-              key={s.id}
-              stage={s}
+      <div className="flex min-h-0 flex-1 flex-col gap-4 xl:flex-row">
+        <div className="min-h-0 min-w-0 flex-1 overflow-auto pr-1">
+          {loading ? (
+            <LoadingState viewMode={viewMode} />
+          ) : error ? (
+            <ErrorState message={error} onRetry={fetchBoard} />
+          ) : stages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/[0.1] bg-white/[0.02] p-16 text-center">
+              <Columns className="h-10 w-10 text-white/20" />
+              <div className="text-sm font-medium text-white/40">No hay etapas configuradas</div>
+              <div className="text-xs text-white/20">
+                Creá la primera etapa desde la configuración del pipeline.
+              </div>
+            </div>
+          ) : viewMode === "focus" ? (
+            <FocusView
               stages={stages}
+              focusIdx={focusIdx}
+              setFocusIdx={setFocusIdx}
               onMove={moveTicket}
               movingId={movingId}
+              selectedTicketId={selectedTicketId}
+              onSelectTicket={handleSelectTicket}
             />
-          ))}
+          ) : (
+            <div className="flex gap-4 overflow-x-auto pb-3">
+              {stages.map((stage) => (
+                <KanbanColumn
+                  key={stage.id}
+                  stage={stage}
+                  stages={stages}
+                  onMove={moveTicket}
+                  movingId={movingId}
+                  selectedTicketId={selectedTicketId}
+                  onSelectTicket={handleSelectTicket}
+                />
+              ))}
+            </div>
+          )}
         </div>
-      )}
+
+        <div className="min-h-0 xl:w-[460px] xl:min-w-[460px]">
+          <ConversationPanel
+            ticket={selectedTicket}
+            onOpenFullTicket={() => selectedTicket?.id && history.push(`/tickets/${selectedTicket.id}`)}
+          />
+        </div>
+      </div>
     </div>
   );
 }
