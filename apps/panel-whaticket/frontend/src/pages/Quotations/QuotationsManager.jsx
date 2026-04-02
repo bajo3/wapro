@@ -167,8 +167,8 @@ export default function QuotationsManager() {
       const overrides = {
         ticketId: ticketIdParam,
         contactId: contactIdParam || "",
-        contactName: contactNameParam ? decodeURIComponent(contactNameParam) : "",
-        vehicleLabel: vehicleLabelParam ? decodeURIComponent(vehicleLabelParam) : "",
+        contactName: contactNameParam || "",
+        vehicleLabel: vehicleLabelParam || "",
         price: priceParam || "",
       };
       openCreate(overrides);

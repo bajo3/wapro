@@ -114,7 +114,10 @@ export const board = async (req: Request, res: Response) => {
   const stages = await PipelineStage.findAll({ order: [["order", "ASC"], ["id", "ASC"]] });
   const tickets = await Ticket.findAll({
     where: {
-      updatedAt: { [Op.gte]: cutoff }
+      [Op.or]: [
+        { pipelineStageId: { [Op.ne]: null } },
+        { updatedAt: { [Op.gte]: cutoff } }
+      ]
     },
     include: [{ model: Contact, as: "contact" }, { model: PipelineStage, as: "pipelineStage" }],
     order: [["updatedAt", "DESC"]]

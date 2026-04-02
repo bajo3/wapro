@@ -16,6 +16,7 @@ import ImprovedMessageInput from "../../components/ImprovedMessageInput";
 import { ReplyMessageProvider } from "../../context/ReplyingMessage/ReplyingMessageContext";
 import toastError from "../../errors/toastError";
 import api from "../../services/api";
+import openSocket from "../../services/socket-io";
 
 const STALE_THRESHOLD_HOURS = 72;
 
@@ -484,6 +485,85 @@ function ConversationPanel({ ticket, onOpenFullTicket }) {
   );
 }
 
+
+function mergeTicketIntoStages(stages, incomingTicket) {
+  if (!incomingTicket) return stages;
+
+  let existingTicket = null;
+  let existingStageId = null;
+
+  const strippedStages = (stages || []).map((stage) => {
+    const tickets = Array.isArray(stage?.tickets) ? stage.tickets : [];
+    const idx = tickets.findIndex((ticket) => String(ticket.id) === String(incomingTicket.id));
+
+    if (idx === -1) return stage;
+
+    existingTicket = tickets[idx];
+    existingStageId = stage.id;
+
+    return {
+      ...stage,
+      tickets: tickets.filter((ticket) => String(ticket.id) !== String(incomingTicket.id)),
+    };
+  });
+
+  const mergedTicket = {
+    ...(existingTicket || {}),
+    ...incomingTicket,
+    contact: {
+      ...((existingTicket && existingTicket.contact) || {}),
+      ...(incomingTicket.contact || {}),
+    },
+    pipelineStage:
+      incomingTicket.pipelineStage || (existingTicket && existingTicket.pipelineStage) || null,
+  };
+
+  const targetStageId =
+    incomingTicket.pipelineStageId ??
+    incomingTicket.pipelineStage?.id ??
+    existingTicket?.pipelineStageId ??
+    existingTicket?.pipelineStage?.id ??
+    existingStageId;
+
+  if (targetStageId === undefined || targetStageId === null) {
+    return strippedStages;
+  }
+
+  const targetExists = strippedStages.some((stage) => String(stage.id) === String(targetStageId));
+  if (!targetExists) return strippedStages;
+
+  return strippedStages.map((stage) =>
+    String(stage.id) === String(targetStageId)
+      ? {
+          ...stage,
+          tickets: [mergedTicket, ...(Array.isArray(stage.tickets) ? stage.tickets : [])],
+        }
+      : stage
+  );
+}
+
+function removeTicketFromStages(stages, ticketId) {
+  return (stages || []).map((stage) => ({
+    ...stage,
+    tickets: (stage.tickets || []).filter((ticket) => String(ticket.id) !== String(ticketId)),
+  }));
+}
+
+function mergeContactIntoStages(stages, contact) {
+  if (!contact?.id) return stages;
+  return (stages || []).map((stage) => ({
+    ...stage,
+    tickets: (stage.tickets || []).map((ticket) =>
+      String(ticket?.contact?.id) === String(contact.id)
+        ? {
+            ...ticket,
+            contact: { ...(ticket.contact || {}), ...contact },
+          }
+        : ticket
+    ),
+  }));
+}
+
 export default function Pipeline() {
   const history = useHistory();
   const [stages, setStages] = useState([]);
@@ -536,6 +616,83 @@ export default function Pipeline() {
   useEffect(() => {
     fetchBoard();
   }, [fetchBoard]);
+
+
+  useEffect(() => {
+    const socket = openSocket();
+    const ticketRooms = ["open", "pending", "closed"];
+
+    const joinRooms = () => {
+      socket.emit("joinNotification");
+      ticketRooms.forEach((status) => socket.emit("joinTickets", status));
+    };
+
+    if (socket.connected) joinRooms();
+    socket.on("connect", joinRooms);
+
+    socket.on("ticket", (data) => {
+      if (data.action === "update" && data.ticket) {
+        setStages((prev) => mergeTicketIntoStages(prev, data.ticket));
+        if (String(data.ticket.id) === String(selectedTicketId)) {
+          setSelectedTicketDetails((prev) => ({
+            ...(prev || {}),
+            ...data.ticket,
+            contact: {
+              ...((prev && prev.contact) || {}),
+              ...(data.ticket.contact || {}),
+            },
+          }));
+        }
+      }
+
+      if (data.action === "delete" && data.ticketId) {
+        setStages((prev) => removeTicketFromStages(prev, data.ticketId));
+        if (String(data.ticketId) === String(selectedTicketId)) {
+          setSelectedTicketId(null);
+          setSelectedTicketDetails(null);
+        }
+      }
+    });
+
+    socket.on("appMessage", (data) => {
+      if (data.action === "create" && data.ticket) {
+        setStages((prev) => mergeTicketIntoStages(prev, data.ticket));
+        if (String(data.ticket.id) === String(selectedTicketId)) {
+          setSelectedTicketDetails((prev) => ({
+            ...(prev || {}),
+            ...data.ticket,
+            contact: {
+              ...((prev && prev.contact) || {}),
+              ...(data.contact || data.ticket.contact || {}),
+            },
+          }));
+        }
+      }
+    });
+
+    socket.on("contact", (data) => {
+      if (data.action === "update" && data.contact) {
+        setStages((prev) => mergeContactIntoStages(prev, data.contact));
+        setSelectedTicketDetails((prev) => {
+          if (String(prev?.contact?.id || "") !== String(data.contact.id)) return prev;
+          return {
+            ...(prev || {}),
+            contact: { ...(prev?.contact || {}), ...data.contact },
+          };
+        });
+      }
+    });
+
+    return () => {
+      socket.emit("leaveNotification");
+      ticketRooms.forEach((status) => socket.emit("leaveTickets", status));
+      socket.off("connect", joinRooms);
+      socket.off("ticket");
+      socket.off("appMessage");
+      socket.off("contact");
+    };
+  }, [selectedTicketId]);
+
 
   const allTickets = useMemo(
     () => stages.flatMap((stage) => stage.tickets || []),

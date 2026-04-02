@@ -250,7 +250,7 @@ export const updateBotMode = async (
   await ticket.update({ botMode: next });
 
   const io = getIO();
-  io.to(ticket.status).to(ticket.id.toString()).emit("ticket", {
+  io.to(ticket.status).to(ticket.id.toString()).to("notification").emit("ticket", {
     action: "update",
     ticket
   });
@@ -290,7 +290,7 @@ export const clearConversation = async (
     ticketId: ticket.id
   });
 
-  io.to(ticket.status).to(ticket.id.toString()).emit("ticket", {
+  io.to(ticket.status).to(ticket.id.toString()).to("notification").emit("ticket", {
     action: "update",
     ticket
   });

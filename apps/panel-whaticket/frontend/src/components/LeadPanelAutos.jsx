@@ -188,11 +188,11 @@ export default function LeadPanelAutos({ ticketId, initialSection = "commercial"
     const params = new URLSearchParams();
     params.set("ticketId", ticketId);
     if (contact?.id) params.set("contactId", contact.id);
-    if (contact?.name) params.set("contactName", encodeURIComponent(contact.name));
+    if (contact?.name) params.set("contactName", contact.name);
     // Intentar pre-completar datos del bot desde los tags (best-effort)
     const botVehicle = parseKvpTag(tags, "vehicle") || parseKvpTag(tags, "vehiculo");
     const botBudget  = parseKvpTag(tags, "budget")  || parseKvpTag(tags, "presupuesto");
-    if (botVehicle) params.set("vehicleLabel", encodeURIComponent(botVehicle));
+    if (botVehicle) params.set("vehicleLabel", botVehicle);
     if (botBudget)  params.set("price", botBudget.replace(/\D/g, ""));
     history.push(`/quotations?${params.toString()}`);
   };
