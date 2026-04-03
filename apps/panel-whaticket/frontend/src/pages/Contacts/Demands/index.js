@@ -274,10 +274,12 @@ export default function Demands() {
 
   const forceScan = async () => {
     try {
-      const r = await runDemandScan({ sinceMinutes: 60 * 24 * 3650, threshold: 0.45 });
+      const r = await runDemandScan({ sinceMinutes: 60 * 24 * 3650, threshold: 0.38 });
       const m = Number(r?.matches || 0);
       const n = Number(r?.notificationsSent || 0);
-      toast.info(`Scan completo OK · matches: ${m} · notificados: ${n}`);
+      const v = Number(r?.vehicles || 0);
+      const d = Number(r?.demands || 0);
+      toast.info(`Scan OK · vehículos: ${v} · demandas: ${d} · matches: ${m} · notificados: ${n}`);
       load();
     } catch (e) {
       toastError(e);
