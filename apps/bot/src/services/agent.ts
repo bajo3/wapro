@@ -113,6 +113,7 @@ export function buildAgentSystemPrompt(
   return [
     `Sos el agente comercial de ${agency}, una agencia de autos usados y 0km.`,
     'Tu objetivo es entender al cliente, mostrarle stock real y llevarlo al siguiente paso concreto: cotización, visita, test drive, o hablar con un asesor.',
+    'Sos un vendedor consultivo — no un contestador de preguntas. Cada respuesta debe avanzar la venta una posición.',
     '',
     '── PERSONALIDAD ──',
     '• Hablás en argentino: "che", "dale", "mirá", "genial", "te paso", "¿cómo venís con el presupuesto?".',
@@ -120,6 +121,14 @@ export function buildAgentSystemPrompt(
     '• Máximo 3-4 líneas por respuesta. Breve y claro.',
     '• Si el cliente escribe mal o informal, entendés igual y respondés natural.',
     '• Tolerás typos: "volskwagen"→VW, "pesod"→pesos, "automatico"→automático, etc.',
+    '',
+    '── PSICOLOGÍA DE VENTAS (aplicar siempre) ──',
+    '• ANCLA DE VALOR: antes de nombrar el precio, mencioná el beneficio. "Un Cronos 2022 automático, perfecto para tu uso en ciudad — sale $X". No: "Sale $X, un Cronos 2022."',
+    '• ESCASEZ HONESTA: si hay pocas unidades del auto que le interesa, mencionarlo naturalmente. "Fijate que de ese modelo quedan 2 unidades." Nunca inventar escasez.',
+    '• PRUEBA SOCIAL: cuando aplique, "este modelo tiene mucha salida" / "es uno de los más buscados para trabajo". Solo si es cierto.',
+    '• RECIPROCIDAD: dar información útil antes de pedir datos. No empezar pidiendo nombre/número.',
+    '• COMPROMISO PROGRESIVO: cada turno debe lograr que el cliente tome una posición (aunque sea pequeña). "¿Más ciudad o más ruta?" es mejor que nada.',
+    '• REDUCCIÓN DE FRICCIÓN: ofrecer opciones concretas, no preguntas abiertas cuando hay contexto. "¿Lo preferís en blanco o en gris?" no "¿Qué color querés?".',
     '',
     '── REGLA PRINCIPAL: CUÁNDO MOSTRAR vs CUÁNDO PREGUNTAR ──',
     'MOSTRAR directamente si cualquiera de estas condiciones se cumple:',
@@ -186,6 +195,38 @@ export function buildAgentSystemPrompt(
     '• "¿Puedo hacer test drive?" → "Sí, coordinamos con el asesor. ¿Qué modelo te interesa probar?"',
     '• "¿El precio es negociable?" → "Depende del modelo y la forma de pago. ¿Estás pensando en efectivo o financiado?"',
     '• "¿Tienen [marca/modelo]?" → Buscar en catálogo. Si no hay: "Ahora no tengo ese modelo en stock, pero te aviso si entra. ¿Querés ver alternativas?"',
+    '',
+    '── MANEJO DE OBJECIONES (scripts específicos) ──',
+    '"Está caro" →',
+    '  1. Validar: "Entiendo. ¿Cuánto más lejos está del presupuesto que manejás?"',
+    '  2. Reencuadrar: mencionar valor + cuánto dura + costo por año vs. precio.',
+    '  3. Puente: financiación / permuta como reducción del desembolso inicial.',
+    '  4. NUNCA bajar el precio directamente — eso es tarea del asesor humano.',
+    '"Lo voy a pensar" →',
+    '  1. Interrumpir el patrón: "Perfecto. ¿Hay algo puntual que no te terminó de convencer?"',
+    '  2. Si dice que no: mencionar disponibilidad de stock honestamente.',
+    '  3. Ofrecer "apartar mientras decidís" → derivar al asesor para coordinar.',
+    '"No me convence" →',
+    '  1. Preguntar QUÉ específicamente no convence. No asumir.',
+    '  2. Responder solo lo que aplica: precio / modelo / estado / año / equipamiento.',
+    '  3. Ofrecer alternativa si existe. Si no: "¿Qué le faltaría para que sea el correcto?"',
+    '"Quiero ver más opciones" →',
+    '  1. Preguntar qué está comparando. Posicionar sin atacar la competencia.',
+    '  2. Si tienen precio de referencia, pedir para comparar manzana con manzana.',
+    '"Lo voy a consultar" →',
+    '  1. Facilitar la consulta: ofrecer resumen completo para que lo muestren.',
+    '  2. Preguntar cuándo podría ser para hacer seguimiento.',
+    '  3. No presionar — la decisión compartida es válida.',
+    '',
+    '── TÉCNICAS DE CIERRE (usar según contexto) ──',
+    'CIERRE ASUNTIVO (cuando el cliente ya decidió internamente):',
+    '  "¿A nombre de quién lo hacemos?" / "¿Cuándo podés pasar a verlo?"',
+    'CIERRE ALTERNATIVO (dos opciones, las dos avanzan):',
+    '  "¿Empezamos con la financiación o con los datos para la reserva?"',
+    'CIERRE RESUMEN (repasar lo acordado):',
+    '  "Entonces: [auto] + [precio/condición] + [permuta si aplica]. ¿Arrancamos?"',
+    'CIERRE POR URGENCIA (solo si hay urgencia real):',
+    '  "Fijate que de ese modelo hay una sola unidad. ¿Querés que lo pongamos en espera?"',
     '',
     '── CUANDO DERIVAR A HUMANO ──',
     'SÍ derivar (handoffRecommended=true) cuando:',
@@ -315,14 +356,15 @@ export function buildAgentSystemPrompt(
  * y patrones aprendidos de conversaciones reales.
  */
 export async function decideAgentAction(params: any & { loopData?: AgentLoopData; dynamicExamples?: string }): Promise<any | null> {
-  const { loopData, leadScore, dealershipName, extracted, userMessage, history, catalog, dynamicExamples } = params;
+  const { loopData, leadScore, dealershipName, extracted, userMessage, history, catalog, dynamicExamples, state } = params;
 
   const { askGPTJson } = await import('./gpt.js');
+  const { buildSalesCoachContext, buildSalesCoachSection } = await import('./salesCoach.js');
 
   const isClosingStage = Number(leadScore ?? 0) >= 60;
   const model = selectModel(leadScore);
 
-  // Load learning context (fast DB read, never blocks) and inject into prompt
+  // ── Load learning context (fast DB read, never blocks) ──────────────────────
   let learningSection = '';
   try {
     const learningCtx = await loadLearningContext();
@@ -331,9 +373,45 @@ export async function decideAgentAction(params: any & { loopData?: AgentLoopData
     // best-effort: never block the agent if learning context fails
   }
 
+  // ── Build sales coach section (deterministic, instant) ────────────────────
+  let salesCoachSection = '';
+  try {
+    const catalogSize = Array.isArray(catalog) ? catalog.length : 0;
+    // Count vehicles that roughly match the extracted context (brand / price)
+    const matchingVehicles = Array.isArray(catalog)
+      ? catalog.filter((it: any) => {
+          const b = String(it?.brand ?? '').toLowerCase();
+          const p = Number(it?.priceNumber ?? 0);
+          const eb = String(extracted?.brand ?? '').toLowerCase();
+          const ep = Number(extracted?.maxPrice ?? 0);
+          const brandOk = !eb || b.includes(eb);
+          const priceOk = !ep || !p || p <= ep * 1.15;
+          return brandOk && priceOk;
+        }).length
+      : 0;
+    const lastVehicle = Array.isArray((state as any)?.last_hits) && (state as any).last_hits.length > 0
+      ? (state as any).last_hits[0]
+      : undefined;
+
+    const coachCtx = buildSalesCoachContext({
+      userMessage: String(userMessage ?? ''),
+      extracted: extracted ?? {},
+      history: Array.isArray(history) ? history : [],
+      state: state ?? {},
+      leadScore: Number(leadScore ?? 0),
+      catalogSize,
+      matchingVehicles,
+      lastVehicle,
+    });
+    salesCoachSection = buildSalesCoachSection(coachCtx);
+    console.log(`[agent] sales coach: stage=${coachCtx.stage} closing=${coachCtx.closingOpportunity.score} objection=${coachCtx.objection?.type ?? 'none'}`);
+  } catch (err) {
+    console.error('[agent] salesCoach error (non-blocking):', err);
+  }
+
   const systemPrompt = isClosingStage
     ? buildClosingSystemPrompt(dealershipName, extracted)
-    : buildAgentSystemPrompt(dealershipName, extracted, loopData, dynamicExamples, learningSection);
+    : buildAgentSystemPrompt(dealershipName, extracted, loopData, dynamicExamples, learningSection + '\n' + salesCoachSection);
 
   // Serialize catalog items into a compact text block for the GPT context.
   // Limit to 80 items to avoid hitting token limits.

@@ -54,7 +54,7 @@ const useStyles = makeStyles((theme) => ({
     minHeight: 0,
     padding: "18px 18px 24px",
     overflowY: "auto",
-    scrollBehavior: "smooth",
+    scrollBehavior: "auto",
     [theme.breakpoints.down("sm")]: {
       padding: "14px 12px 90px",
     },
@@ -412,12 +412,23 @@ const reducer = (state, action) => {
     const messageIndex = state.findIndex((m) => m.id === newMessage.id);
 
     if (messageIndex !== -1) {
-      state[messageIndex] = newMessage;
-    } else {
-      state.push(newMessage);
+      // Update in place — timestamps don't change, no re-sort needed
+      const next = [...state];
+      next[messageIndex] = newMessage;
+      return next;
     }
 
-    return sortByCreatedAtAsc([...state]);
+    // Fast path: if the new message is newer than the last one, just append
+    const lastMsg = state.length > 0 ? state[state.length - 1] : null;
+    const newTs = new Date(newMessage?.createdAt || newMessage?.created_at || 0).getTime();
+    const lastTs = lastMsg ? new Date(lastMsg?.createdAt || lastMsg?.created_at || 0).getTime() : 0;
+
+    if (newTs >= lastTs) {
+      return [...state, newMessage];
+    }
+
+    // Fallback: out-of-order message — re-sort to place it correctly
+    return sortByCreatedAtAsc([...state, newMessage]);
   }
 
   if (action.type === "UPDATE_MESSAGE") {
@@ -425,10 +436,12 @@ const reducer = (state, action) => {
     const messageIndex = state.findIndex((m) => m.id === messageToUpdate.id);
 
     if (messageIndex !== -1) {
-      state[messageIndex] = messageToUpdate;
+      const next = [...state];
+      next[messageIndex] = messageToUpdate;
+      return next;
     }
 
-    return sortByCreatedAtAsc([...state]);
+    return state;
   }
 
   if (action.type === "RESET") {
@@ -449,6 +462,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const messageOptionsMenuOpen = Boolean(anchorEl);
   const currentTicketId = useRef(ticketId);
+  const loadingMoreRef = useRef(false);
 
   useEffect(() => {
     dispatch({ type: "RESET" });
@@ -470,6 +484,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
             dispatch({ type: "LOAD_MESSAGES", payload: data.messages });
             setHasMore(data.hasMore);
             setLoading(false);
+            loadingMoreRef.current = false;
           }
 
           if (pageNumber === 1 && data.messages.length > 1) {
@@ -477,11 +492,12 @@ const MessagesList = ({ ticketId, isGroup }) => {
           }
         } catch (err) {
           setLoading(false);
+          loadingMoreRef.current = false;
           toastError(err);
         }
       };
       fetchMessages();
-    }, 500);
+    }, pageNumber === 1 ? 0 : 300);
     return () => {
       clearTimeout(delayDebounceFn);
     };
@@ -490,12 +506,13 @@ const MessagesList = ({ ticketId, isGroup }) => {
   useEffect(() => {
     const socket = openSocket();
 
-    // FIX: join immediately (socket may already be connected on mount)
+    // join immediately (socket may already be connected on mount)
     // AND re-join on every reconnect so we never miss messages.
     socket.emit("joinChatBox", `${ticketId}`);
-    socket.on("connect", () => socket.emit("joinChatBox", `${ticketId}`));
+    const onConnect = () => socket.emit("joinChatBox", `${ticketId}`);
+    socket.on("connect", onConnect);
 
-    socket.on("appMessage", (data) => {
+    const onAppMessage = (data) => {
       if (data.action === "create") {
         dispatch({ type: "ADD_MESSAGE", payload: data.message });
         scrollToBottom();
@@ -510,22 +527,26 @@ const MessagesList = ({ ticketId, isGroup }) => {
         setPageNumber(1);
         setHasMore(false);
       }
-    });
+    };
+    socket.on("appMessage", onAppMessage);
 
     return () => {
       socket.emit("leaveChatBox", `${ticketId}`);
-      socket.off("connect");
-      socket.off("appMessage");
+      socket.off("connect", onConnect);
+      socket.off("appMessage", onAppMessage);
     };
   }, [ticketId]);
 
   const loadMore = () => {
+    if (loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
     setPageNumber((prevPageNumber) => prevPageNumber + 1);
   };
 
   const scrollToBottom = () => {
-    if (lastMessageRef.current) {
-      lastMessageRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    const el = document.getElementById("messagesList");
+    if (el) {
+      el.scrollTop = el.scrollHeight;
     }
   };
 
@@ -537,7 +558,7 @@ const MessagesList = ({ ticketId, isGroup }) => {
       document.getElementById("messagesList").scrollTop = 1;
     }
 
-    if (loading) {
+    if (loadingMoreRef.current) {
       return;
     }
 
