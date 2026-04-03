@@ -151,18 +151,19 @@ export function detectObjection(userMessage: string): ObjectionMatch | null {
 function buildObjectionMatch(type: ObjectionType): ObjectionMatch {
   const playbooks: Record<ObjectionType, Omit<ObjectionMatch, 'type' | 'confidence'>> = {
     precio_alto: {
-      script: `Entiendo que el precio es un punto clave. Antes de ver alternativas, contame:
-→ ¿Cuánto más lejos estaría del valor que tenés en mente?
-Porque a veces la diferencia es menor de lo que parece con financiación o con tu auto como parte de pago.
-Si me decís qué tenés disponible, busco la mejor combinación.`,
-      followUp: '¿Cuánto podés poner de anticipo si financiamos el resto?',
+      script: `Entendido. Mirá, antes de buscar alternativas más baratas:
+¿Cuánto más lejos está del presupuesto que manejás?
+A veces la diferencia la cubrimos con financiación, con tu auto como parte de pago, o con una versión anterior del mismo modelo.
+Si me decís el tope que tenés hoy, busco la mejor combinación sin perderte tiempo.`,
+      followUp: '¿Con cuánto estás manejando hoy, contado o con algo para entregar?',
     },
 
     lo_pienso: {
-      script: `Dale, tomá el tiempo que necesitás. Pero antes de cerrar — ¿hay algo puntual que no te terminó de convencer?
-A veces hay una duda que con un dato se resuelve en el momento.
-Pregunto porque este modelo tiene bastante salida y no siempre hay stock del mismo color/año.`,
-      followUp: '¿Qué sería lo que te terminaría de convencer para avanzar hoy?',
+      script: `Dale, tomá el tiempo que necesitás.
+Una sola cosa antes de cerrar: ¿hay algo puntual que no te terminó de convencer?
+Porque si es una duda de precio, equipamiento o documentación lo resolvemos ahora.
+Si es solo cuestión de consultarlo, te armo un resumen con todo para que lo muestres.`,
+      followUp: '¿Es algo de precio, del auto en sí, o estás esperando otro momento?',
     },
 
     no_convence: {
@@ -202,10 +203,10 @@ La transferencia y los papeles se hacen al día, nada bajo la mesa.
     },
 
     comparacion_precio: {
-      script: `Interesante. ¿Me podés decir qué auto es y a qué precio lo viste?
-Porque a veces la diferencia está en el año, el estado, los km o qué incluye.
-Si es realmente mejor, te lo digo yo. Si es manzana con manzana y nosotros estamos más caros, hablamos.`,
-      followUp: '¿Tenés el link o los datos del que viste más barato?',
+      script: `Tiene sentido comparar antes de decidir. ¿Me pasás cuál es y dónde lo viste?
+Porque en MercadoLibre por ejemplo los precios suelen tener diferencia en año, km, estado o si incluye transferencia.
+Si me decís el auto exacto y el precio, te digo yo si es comparable o no — sin venderte nada que no convenga.`,
+      followUp: '¿Tenés el link o el modelo exacto del que viste más barato?',
     },
 
     no_lo_necesito_ahora: {

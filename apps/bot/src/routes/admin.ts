@@ -76,7 +76,8 @@ import {
   listDemandRecontacts,
   scanRecentVehiclesForDemandMatches,
   runRecontactJob,
-  getDemandVehicleScanDebug
+  getDemandVehicleScanDebug,
+  clearVehicleSourceCache
 } from '../services/demands.js';
 
 export const adminRouter = Router();
@@ -412,10 +413,20 @@ adminRouter.get('/vehicle-demands/:id/recontacts', async (req, res) => {
 adminRouter.post('/vehicle-demands/scan', async (req, res) => {
   try {
     const sinceMinutes = Number(req.body?.sinceMinutes ?? 60);
-    const threshold = Number(req.body?.threshold ?? 0.45);
+    const threshold = Number(req.body?.threshold ?? 0.38);
     const since = new Date(Date.now() - Math.max(1, sinceMinutes) * 60_000);
     const result = await scanRecentVehiclesForDemandMatches({ since, threshold });
     return res.json({ ok: true, since: since.toISOString(), ...result });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// Force-clear vehicle source cache — useful when the vehicles table changed or matching fails
+adminRouter.post('/vehicle-demands/cache/reset', async (_req, res) => {
+  try {
+    clearVehicleSourceCache();
+    return res.json({ ok: true, message: 'Vehicle source cache cleared. Next scan will re-detect the table.' });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
   }

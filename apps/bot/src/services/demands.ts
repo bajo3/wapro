@@ -3,21 +3,21 @@ import { env } from '../lib/env.js';
 import { extractLeadFields } from './extract.js';
 import { sendTextAndPersist } from './panelPersistence.js';
 
-const preferSupabaseVehicles = Boolean(env.supabaseDatabaseUrl && supabasePool);
-
 /**
- * Vehicle reads for demand matching must remain on the same source of truth.
- * Falling back to Railway after a Supabase hiccup can make stock oscillate between 29 and 0.
+ * Always use the same pool as catalog.ts (supabasePool when available, pool otherwise).
+ * The old `preferSupabaseVehicles` check was too strict: it required env.supabaseDatabaseUrl
+ * to be explicitly set, which caused demands.ts to fall back to Railway even when supabasePool
+ * was correctly initialized — making vehicle detection return 0 rows and killing all matches.
  */
+const vehiclePool = supabasePool ?? pool;
+
 async function vehicleQuery(sql: string, params?: any[]): Promise<{ rows: any[] }> {
-  if (preferSupabaseVehicles && supabasePool) {
-    return supabasePool.query(sql, params);
-  }
-  if (supabasePool) {
+  if (vehiclePool !== pool) {
     try {
-      return await supabasePool.query(sql, params);
+      return await vehiclePool.query(sql, params);
     } catch (err: any) {
-      console.warn(`[demands] supabasePool query failed (${err?.code ?? '?'}: ${err?.message ?? err}), falling back to main pool`);
+      console.warn(`[demands] vehiclePool query failed (${err?.code ?? '?'}: ${err?.message ?? err}), falling back to main pool`);
+      return pool.query(sql, params);
     }
   }
   return pool.query(sql, params);
@@ -237,6 +237,7 @@ async function getVehicleSource(): Promise<VehicleSource | null> {
     console.error('[demands] detect vehicle source failed', e);
   }
 
+  console.warn('[demands] getVehicleSource: no vehicle table found. Check that vehiclePool connects to the DB with the vehicles table. vehiclePool===pool:', vehiclePool === pool);
   vehicleSourceCache = { at: now, source: null };
   return null;
 }
@@ -291,10 +292,26 @@ async function listVehiclesForScan(since?: Date) {
   ];
 
   const params: any[] = [];
+  const whereClauses: string[] = [];
+
+  // Only match active/available vehicles — same filter catalog.ts uses
+  const statusCol = source.columns.find(c => ['status', 'estado'].includes(c.toLowerCase()));
+  if (statusCol) {
+    whereClauses.push(`(${qi(statusCol)} is null or btrim(${qi(statusCol)}::text) = '' or lower(${qi(statusCol)}::text) not in ('inactive', 'archived', 'deleted', 'sold', 'paused'))`);
+  }
+
+  // Apply since filter only if the table has an updatedAt column
+  if (since && map.updatedAt) {
+    params.push(since.toISOString());
+    whereClauses.push(`${qi(map.updatedAt)} >= $${params.length}`);
+  }
+
+  const whereExpr = whereClauses.length ? `where ${whereClauses.join(' and ')}` : '';
 
   const sql = `
     select ${fields.join(', ')}
     from ${qi(schema)}.${qi(table)}
+    ${whereExpr}
     order by ${map.updatedAt ? `${qi(map.updatedAt)} desc nulls last,` : ''} ${qi(map.id)} desc
     limit 2000
   `;
@@ -524,11 +541,20 @@ function mapRecontactRow(row: any): DemandRecontact {
 
 export function getDemandVehicleScanDebug() {
   return {
-    directSupabase: preferSupabaseVehicles,
+    vehiclePoolIsSameAsMainPool: vehiclePool === pool,
     hasSupabasePool: Boolean(supabasePool),
+    vehicleSourceCached: Boolean(vehicleSourceCache.source),
+    vehicleSourceTable: vehicleSourceCache.source ? `${vehicleSourceCache.source.schema}.${vehicleSourceCache.source.table}` : null,
+    vehicleSourceCachedAt: vehicleSourceCache.at ? new Date(vehicleSourceCache.at).toISOString() : null,
     lastGoodVehicleScanCount: lastGoodVehicleScan.rows.length,
     lastGoodVehicleScanAt: lastGoodVehicleScan.at ? new Date(lastGoodVehicleScan.at).toISOString() : null
   };
+}
+
+/** Force clear the vehicle source cache so next scan re-detects the table. */
+export function clearVehicleSourceCache() {
+  vehicleSourceCache = { at: 0, source: null };
+  lastGoodVehicleScan = { at: 0, rows: [] };
 }
 
 export async function createVehicleDemand(input: any): Promise<VehicleDemand> {
@@ -733,7 +759,10 @@ function buildMatchMessage(demand: VehicleDemand, vehicles: any[], scores: numbe
 }
 
 export async function scanRecentVehiclesForDemandMatches(params: { since: Date; threshold: number }) {
-  const threshold = clamp01(Number(params.threshold ?? 0.45));
+  // Default 0.38 (was 0.45). Rationale: demands are often expressed in natural language
+  // without explicit brand/model fields. The old threshold caused 0 matches for most real-world
+  // demands like "quiero un auto familiar" or "necesito una Hilux usada".
+  const threshold = clamp01(Number(params.threshold ?? 0.38));
   const since = params.since;
 
   const demandsR = await pool.query(`select * from vehicle_demands where status='open'`);
@@ -790,8 +819,11 @@ export async function scanRecentVehiclesForDemandMatches(params: { since: Date; 
       const sim = textSim(dSet, vSet);
       score += sim * 0.35;
       reasons.textSim = Math.round(sim * 100) / 100;
-      if (!demandCtx.brand && !demandCtx.model && sim >= 0.22) {
-        score += 0.08;
+      if (!demandCtx.brand && !demandCtx.model && sim >= 0.18) {
+        // Generic demand (no brand/model) — give a bigger boost so it can pass the threshold
+        // with just meaningful text similarity. A demand like "quiero una Hilux" extracts
+        // model=hilux via extractLeadFields, so this boost applies only to truly generic demands.
+        score += 0.12;
         reasons.genericIntentBoost = true;
       }
 

@@ -168,12 +168,18 @@ export function buildAgentSystemPrompt(
     '    → Respuesta cálida y breve. NO hagas una nueva pregunta comercial.',
     '    → Ejemplo: "Dale, quedá tranquilo. Cualquier duda me avisás. ¡Éxitos!"',
     '    → action=CLOSE_CONVERSATION.',
+    '14. CAMPO vehicleIds: SIEMPRE incluir los ids de los autos que mencionás en la respuesta.',
+    '    Si mostrás 2 autos del catálogo, ponelos en vehicleIds: ["42", "17"].',
+    '    Esto permite trackear qué autos se mostraron a cada lead y medir conversión.',
+    '    NUNCA inventés ids — solo usá los ids que aparecen entre corchetes en el catálogo [id:X].',
     '',
-    '── CATÁLOGO VACÍO ──',
-    'Si el catálogo no tiene vehículos, NO inventes stock.',
-    '  → Respondé: "En este momento no tengo stock cargado para mostrarte, pero ¿qué estás buscando? Así te aviso apenas ingrese."',
-    '  → Capturá marca, presupuesto, tipo. Esos datos son valiosos aunque no haya stock ahora.',
+    '── CATÁLOGO VACÍO / SIN MATCH ──',
+    'Si el catálogo no tiene vehículos O no hay coincidencia con lo que busca el cliente:',
+    '  → NO inventes stock. NO digas "tenemos mucha variedad".',
+    '  → Ofrecé registrar la demanda: "No tengo ese modelo en este momento, pero te puedo avisar apenas ingrese. ¿Querés que te anote en la lista de espera?"',
+    '  → Capturá: marca, modelo, presupuesto máximo, año mínimo. Son datos valiosos para el asesor.',
     '  → action=CAPTURE_LEAD.',
+    '  → Siempre cerrá con algo positivo: alternativas cercanas si existen, o la oferta de notificación.',
     '',
     '── FINANCIACIÓN Y CRÉDITO ──',
     'Si el cliente pregunta por cuotas, crédito o financiación:',
@@ -246,6 +252,38 @@ export function buildAgentSystemPrompt(
     '• Caliente: pregunta por visita, reserva, cuotas concretas, pide contacto. Acción: derivar.',
     '  Usá esta clasificación en internalReason para orientar al asesor humano.',
     '',
+    '── FORMATO WHATSAPP (crítico) ──',
+    'Cuando mostrás autos en WhatsApp, usá este formato exacto (máximo 2-3 opciones):',
+    '',
+    '🚗 *[Marca Modelo Versión Año]*',
+    '💰 [Precio en ARS/USD]',
+    '📍 [Km] km | [Caja] | [Combustible]',
+    '🔗 [URL del auto si está disponible en el catálogo]',
+    '',
+    'Ejemplo:',
+    '🚗 *Toyota Hilux SR 2021*',
+    '💰 ARS 28.500.000',
+    '📍 42.000 km | Manual | Diesel',
+    '🔗 https://agencia.com/autos/toyota-hilux-sr-2021',
+    '',
+    'Reglas de formato WhatsApp:',
+    '• *texto* para negrita (nombre del auto, precio)',
+    '• Máximo 3 autos por mensaje',
+    '• Si el auto tiene URL en el catálogo, siempre incluila — es el CTA más efectivo',
+    '• Terminá con una pregunta corta que avance: "¿Cuál te llama la atención?"',
+    '• No uses listas interminables. 2 opciones bien presentadas > 8 opciones mediocres.',
+    '',
+    '── MERCADO AUTOMOTOR ARGENTINO (contexto) ──',
+    '• Los precios están en ARS (pesos argentinos) o USD. Nunca confundas monedas.',
+    '• Modelos más buscados: Hilux, Cronos, Tracker, HB20, Sandero, Corolla, Onix, Duster.',
+    '• "0km" = vehículo nuevo de agencia. "Usado" = vehículo de segunda mano.',
+    '• GNC = Gas Natural Comprimido (muy común en Argentina, reduce costo de combustible).',
+    '• Permuta = el cliente entrega su auto usado como parte de pago.',
+    '• Anticipo = enganche / down payment.',
+    '• "Planes" = financiación en cuotas (Banco, PGP, Santander, BBVA, etc.).',
+    '• El año es crucial: autos de 2020+ son más valorados, 2015- tienen precio muy inferior.',
+    '• Km promedio Argentina: 15.000-20.000 km/año. Un auto 2020 con 60.000 km es normal.',
+    '',
     '── INTENCIONES IMPLÍCITAS A INTERPRETAR ──',
     '• "algo para trabajar" → pickup o utilitario',
     '• "algo económico de mantener" / "que rinda" → sugerir GNC o diesel',
@@ -302,6 +340,34 @@ export function buildAgentSystemPrompt(
     '  El Onix es más liviano y fácil en ciudad.',
     '  ¿Qué usás más, ciudad o ruta?',
     'SALIDA INCORRECTA: "Ambos son muy buenas opciones."',
+    '',
+    'ENTRADA: "qué tienen disponible?" (sin filtros)',
+    'SALIDA CORRECTA (suggestedReply):',
+    '  Tenemos stock variado. Para mostrarte algo útil:',
+    '  ¿Qué rango de precio manejás y para qué lo usarías más?',
+    'SALIDA INCORRECTA: "Tenemos autos de todas las marcas y modelos, nuevos y usados..."',
+    '',
+    'ENTRADA: (el cliente pide ver autos y hay matches en catálogo)',
+    'SALIDA CORRECTA (suggestedReply, ejemplo con 2 autos):',
+    '  Mirá estas opciones que tenemos:',
+    '',
+    '  🚗 *Toyota Hilux SR 2021*',
+    '  💰 ARS 28.500.000',
+    '  📍 42.000 km | Manual | Diesel',
+    '  🔗 https://agencia.com/autos/hilux-sr-2021',
+    '',
+    '  🚗 *Volkswagen Amarok 4Motion 2020*',
+    '  💰 ARS 31.000.000',
+    '  📍 55.000 km | Automático | Diesel',
+    '',
+    '  ¿Cuál te llama la atención?',
+    'SALIDA INCORRECTA: "Tenemos la Hilux 2021 a 28.500.000 y la Amarok 2020 a 31.000.000."',
+    '',
+    'ENTRADA: "no hay algo más barato?" (después de mostrar opciones fuera de presupuesto)',
+    'SALIDA CORRECTA (suggestedReply):',
+    '  Sí, déjame ver. ¿Cuál sería tu tope de presupuesto?',
+    '  Con eso te muestro lo que tenemos dentro de ese rango.',
+    'SALIDA INCORRECTA: "Lamentablemente eso es lo más económico que tenemos."',
     '',
     // ── Ejemplos dinámicos aprendidos de conversaciones reales ───────────────
     dynamicExamples || '',
@@ -418,7 +484,7 @@ export async function decideAgentAction(params: any & { loopData?: AgentLoopData
   let catalogContext: string | undefined;
   if (!Array.isArray(catalog) || catalog.length === 0) {
     // Explicitly tell the model there is no available stock so it doesn't invent vehicles
-    catalogContext = '[SIN STOCK DISPONIBLE — no inventes vehículos. Indicá que consultará con el equipo.]';
+    catalogContext = '[SIN STOCK DISPONIBLE — no inventes vehículos. action=CAPTURE_LEAD. Informá que el equipo puede notificar cuando ingrese stock del modelo buscado.]';
   } else if (Array.isArray(catalog) && catalog.length > 0) {
     const items = catalog.slice(0, 80);
     catalogContext = items
@@ -428,14 +494,19 @@ export async function decideAgentAction(params: any & { loopData?: AgentLoopData
           : item.priceText ?? '';
         const specs: string[] = [];
         if (item.year) specs.push(String(item.year));
-        if (typeof item.km === 'number') specs.push(`${Math.round(item.km).toLocaleString('es-AR')} km`);
+        // Condition: 0km vs usado
+        if (item.isNew === true) specs.push('0km');
+        else if (item.isNew === false || (typeof item.km === 'number' && item.km > 0)) specs.push('usado');
+        if (typeof item.km === 'number' && item.km > 0) specs.push(`${Math.round(item.km).toLocaleString('es-AR')} km`);
         if (item.transmission) specs.push(item.transmission);
         if (item.fuel) specs.push(item.fuel);
         if (item.engine) specs.push(item.engine);
         if (item.color) specs.push(item.color);
         const specsStr = specs.length ? ` (${specs.join(', ')})` : '';
         const idStr = item.id ? ` [id:${item.id}]` : '';
-        return `${i + 1}. ${item.name}${idStr} — ${price}${specsStr}`;
+        // Include URL when available — critical for WhatsApp links
+        const urlStr = item.url ? ` | 🔗 ${item.url}` : '';
+        return `${i + 1}. ${item.name}${idStr} — ${price}${specsStr}${urlStr}`;
       })
       .join('\n');
   }
@@ -444,10 +515,10 @@ export async function decideAgentAction(params: any & { loopData?: AgentLoopData
     systemPrompt,
     userMessage: String(userMessage ?? ''),
     context: catalogContext,
-    history: Array.isArray(history) ? history.slice(-6) : [],
+    history: Array.isArray(history) ? history.slice(-8) : [],  // extended from 6 to 8 turns
     model,
-    maxTokens: 1000,
-    temperature: 0.35
+    maxTokens: 1100,
+    temperature: 0.32
   });
 
   if (!result || typeof result !== 'object') return null;
