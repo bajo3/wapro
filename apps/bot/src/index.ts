@@ -51,6 +51,7 @@ import { getConversationRule } from "./services/rules.js";
 import { getContactRule } from "./services/contacts.js";
 import { scanRecentVehiclesForDemandMatches, runRecontactJob } from "./services/demands.js";
 import { sendTextAndPersist } from "./services/panelPersistence.js";
+import { runAutoTrainerScan } from "./services/autoTrainer.js";
 
 async function main() {
   await migrate();
@@ -263,6 +264,42 @@ async function main() {
       console.error('Failed recontact job', e);
     }
   }, Math.max(60_000, RECONTACT_SCAN_MS));
+
+  // ─── Auto-Trainer job ─────────────────────────────────────────────────────────
+  // Runs every 3h. Finds idle conversations (1–8h without activity) and:
+  //  1. Extracts learning patterns deterministically (FAQ gaps, stock gaps, objections)
+  //  2. Calls GPT to analyze conversation quality and auto-generate FAQ entries
+  //  3. Promotes high-quality captures to bot_examples
+  // Never blocks the main flow — fire-and-forget.
+  const AUTOTRAINER_MS = Number(process.env.AUTOTRAINER_SCAN_MS ?? String(3 * 60 * 60 * 1000));
+  let autoTrainerRunning = false;
+
+  // Run once on startup after a short delay (don't block boot)
+  setTimeout(async () => {
+    try {
+      console.log('[autoTrainer] initial scan on startup...');
+      const r = await runAutoTrainerScan();
+      const io = getSocket();
+      io?.emit('autotrainer_scan', { ok: true, ...r });
+    } catch (e) {
+      console.error('[autoTrainer] startup scan error:', e);
+    }
+  }, 5 * 60 * 1000); // 5 min after boot
+
+  setInterval(async () => {
+    if (autoTrainerRunning) return;
+    autoTrainerRunning = true;
+    try {
+      console.log('[autoTrainer] periodic scan starting...');
+      const r = await runAutoTrainerScan();
+      const io = getSocket();
+      io?.emit('autotrainer_scan', { ok: true, ...r });
+    } catch (e) {
+      console.error('[autoTrainer] periodic scan error:', e);
+    } finally {
+      autoTrainerRunning = false;
+    }
+  }, Math.max(60 * 60 * 1000, AUTOTRAINER_MS)); // min 1h between runs
 }
 
 main().catch((e) => {

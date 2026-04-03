@@ -1,5 +1,5 @@
 /*
- * agent.ts — Agente comercial WaPro v5
+ * agent.ts — Agente comercial WaPro v6
  *
  * Mejoras v5:
  *  - Regla MOSTRAR vs PREGUNTAR: si el cliente tiene al menos un filtro útil
@@ -11,7 +11,15 @@
  *  - Derivación a humano: criterios claros y diferenciados.
  *  - buildClosingSystemPrompt: prompt real con instrucciones de cierre.
  *  - Intenciones implícitas propagadas desde extract.ts al prompt.
+ *
+ * Mejoras v6:
+ *  - loadLearningContext(): carga patrones reales de objeciones, gaps de FAQ
+ *    y cierres exitosos desde bot_learning_memory para enriquecer el prompt.
+ *  - buildLearningContextSection(): formatea los patrones como sección del prompt.
+ *  - decideAgentAction() ahora acepta learningContext para inyectarlo.
  */
+
+import { pool } from './db.js';
 
 export interface AgentDecision {
   intent?: string;
@@ -46,7 +54,8 @@ export function buildAgentSystemPrompt(
   dealershipName?: string,
   extractedContext?: Record<string, any>,
   loopData?: AgentLoopData,
-  dynamicExamples?: string   // bloque few-shot dinámico (de learning.ts)
+  dynamicExamples?: string,    // bloque few-shot dinámico (de learning.ts)
+  learningContextSection?: string  // patrones aprendidos (de loadLearningContext)
 ): string {
   const agency = dealershipName || 'la agencia';
   const ctx = extractedContext ?? {};
@@ -256,6 +265,9 @@ export function buildAgentSystemPrompt(
     // ── Ejemplos dinámicos aprendidos de conversaciones reales ───────────────
     dynamicExamples || '',
     '',
+    // ── Patrones aprendidos: objeciones frecuentes, gaps de FAQ, caminos de cierre ──
+    learningContextSection || '',
+    '',
     knownSection,
     intentSection,
     loopSection,
@@ -299,7 +311,8 @@ export function buildAgentSystemPrompt(
 }
 
 /**
- * decideAgentAction — v5: selecciona prompt según etapa, pasa loopData y contexto extraído.
+ * decideAgentAction — v6: selecciona prompt según etapa, pasa loopData, contexto extraído
+ * y patrones aprendidos de conversaciones reales.
  */
 export async function decideAgentAction(params: any & { loopData?: AgentLoopData; dynamicExamples?: string }): Promise<any | null> {
   const { loopData, leadScore, dealershipName, extracted, userMessage, history, catalog, dynamicExamples } = params;
@@ -309,9 +322,18 @@ export async function decideAgentAction(params: any & { loopData?: AgentLoopData
   const isClosingStage = Number(leadScore ?? 0) >= 60;
   const model = selectModel(leadScore);
 
+  // Load learning context (fast DB read, never blocks) and inject into prompt
+  let learningSection = '';
+  try {
+    const learningCtx = await loadLearningContext();
+    learningSection = buildLearningContextSection(learningCtx);
+  } catch {
+    // best-effort: never block the agent if learning context fails
+  }
+
   const systemPrompt = isClosingStage
     ? buildClosingSystemPrompt(dealershipName, extracted)
-    : buildAgentSystemPrompt(dealershipName, extracted, loopData, dynamicExamples);
+    : buildAgentSystemPrompt(dealershipName, extracted, loopData, dynamicExamples, learningSection);
 
   // Serialize catalog items into a compact text block for the GPT context.
   // Limit to 80 items to avoid hitting token limits.
@@ -425,4 +447,92 @@ export function buildClosingSystemPrompt(dealershipName?: string, extracted?: an
       internalReason: 'Temperatura: Caliente. Cliente quiere avanzar. Derivar a asesor urgente.'
     }, null, 2)
   ].join('\n');
+}
+
+// ─── Learning Context Loader ───────────────────────────────────────────────────
+
+export interface LearningContext {
+  topObjections: Array<{ key: string; frequency: number }>;
+  topFaqGaps: Array<{ key: string; frequency: number }>;
+  topLeadPatterns: Array<{ key: string; value: string }>;
+}
+
+/**
+ * Load top learned patterns from bot_learning_memory.
+ * Fast: reads indexed DB. Enriches the agent system prompt with real data.
+ * Returns empty arrays on any error (never blocks the agent call).
+ */
+export async function loadLearningContext(): Promise<LearningContext> {
+  const empty: LearningContext = { topObjections: [], topFaqGaps: [], topLeadPatterns: [] };
+  try {
+    const [objections, gaps, leads] = await Promise.all([
+      pool.query(
+        `SELECT pattern_key, frequency FROM bot_learning_memory
+         WHERE pattern_type = 'objection' AND status = 'active'
+         ORDER BY frequency DESC LIMIT 5`
+      ),
+      pool.query(
+        `SELECT pattern_key, frequency FROM bot_learning_memory
+         WHERE pattern_type = 'faq_gap' AND status = 'active'
+         ORDER BY frequency DESC LIMIT 5`
+      ),
+      pool.query(
+        `SELECT pattern_key, pattern_value FROM bot_learning_memory
+         WHERE pattern_type = 'lead_pattern' AND status = 'active'
+         ORDER BY frequency DESC LIMIT 3`
+      ),
+    ]);
+
+    return {
+      topObjections: (objections.rows ?? []).map((r: any) => ({
+        key: String(r.pattern_key ?? ''),
+        frequency: Number(r.frequency ?? 0),
+      })),
+      topFaqGaps: (gaps.rows ?? []).map((r: any) => ({
+        key: String(r.pattern_key ?? ''),
+        frequency: Number(r.frequency ?? 0),
+      })),
+      topLeadPatterns: (leads.rows ?? []).map((r: any) => ({
+        key: String(r.pattern_key ?? ''),
+        value: String(r.pattern_value ?? ''),
+      })),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+/**
+ * Format a LearningContext into a prompt section string.
+ * Injected into the agent system prompt so it knows real-world friction patterns.
+ * Returns empty string if no data.
+ */
+export function buildLearningContextSection(ctx: LearningContext): string {
+  const lines: string[] = [];
+
+  if (ctx.topObjections.length > 0) {
+    lines.push('── OBJECIONES REALES MÁS FRECUENTES (manejarlas proactivamente) ──');
+    for (const obj of ctx.topObjections) {
+      lines.push(`  • "${obj.key}" (vista ${obj.frequency}x) → responder con empatía y alternativa concreta`);
+    }
+    lines.push('');
+  }
+
+  if (ctx.topFaqGaps.length > 0) {
+    lines.push('── PREGUNTAS FRECUENTES SIN BUENA RESPUESTA (prestar atención) ──');
+    for (const gap of ctx.topFaqGaps) {
+      lines.push(`  • "${gap.key}" (repetida ${gap.frequency}x) → asegurate de responderla bien esta vez`);
+    }
+    lines.push('');
+  }
+
+  if (ctx.topLeadPatterns.length > 0) {
+    lines.push('── CAMINOS EXITOSOS DETECTADOS EN CONVERSACIONES REALES ──');
+    for (const lp of ctx.topLeadPatterns) {
+      lines.push(`  • ${lp.value}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }
