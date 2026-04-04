@@ -1,11 +1,11 @@
 -- Migración 016: Memoria comercial persistente del lead
--- Aplicar con: psql $DATABASE_URL -f sql/016_commercial_memory.sql
+-- Aplicada automáticamente por migrate() al iniciar el bot.
 --
 -- Extiende bot_lead_profiles con campos comerciales que el bot debe recordar
 -- entre conversaciones: etapa del funnel, objeción principal, CTA ofrecido,
 -- interés en visita, vehículos ya mostrados y contador de recontactos.
 
--- 1. Nuevas columnas en bot_lead_profiles
+-- 1. Nuevas columnas en bot_lead_profiles (idempotente)
 alter table bot_lead_profiles
   add column if not exists funnel_stage      varchar(30),
   add column if not exists main_objection    varchar(60),
@@ -25,7 +25,12 @@ create index if not exists idx_blp_funnel_stage
   where funnel_stage is not null;
 
 -- 4. Actualizar vista hot_leads para incluir nuevos campos
-create or replace view v_hot_leads as
+-- CREATE OR REPLACE VIEW no permite cambiar el orden de columnas existentes
+-- (error 42P16 si se insertan columnas antes de las actuales).
+-- DROP + CREATE es la única forma segura e idempotente de hacerlo.
+drop view if exists v_hot_leads;
+
+create view v_hot_leads as
 select
   blp.instance,
   blp.remote_jid,
@@ -46,9 +51,9 @@ select
   blp.shown_vehicle_ids,
   blp.recontact_count,
   blp.updated_at,
-  bc.state->>'stage'                  as conv_stage,
-  bc.state->'agent'->>'action'        as last_agent_action,
-  bc.state->>'user_msg_count'         as msg_count
+  bc.state->>'stage'             as conv_stage,
+  bc.state->'agent'->>'action'   as last_agent_action,
+  bc.state->>'user_msg_count'    as msg_count
 from bot_lead_profiles blp
 left join bot_conversations bc
   on bc.instance = blp.instance and bc.remote_jid = blp.remote_jid
@@ -58,9 +63,9 @@ order by blp.lead_score desc, blp.updated_at desc;
 comment on view v_hot_leads is 'Leads con score >= 30, con etapa de funnel, objeción y último CTA.';
 
 -- 5. Comentarios en columnas
-comment on column bot_lead_profiles.funnel_stage     is 'Última etapa del funnel: discovery/qualification/presentation/objection/closing';
-comment on column bot_lead_profiles.main_objection   is 'Principal objeción planteada por el lead (precio_alto, lo_pienso, etc.)';
-comment on column bot_lead_profiles.last_cta_offered is 'Último CTA ofrecido por el bot (texto del llamado a la acción)';
-comment on column bot_lead_profiles.visit_interest   is 'True si el lead mostró interés en visitar la agencia';
+comment on column bot_lead_profiles.funnel_stage      is 'Última etapa del funnel: discovery/qualification/presentation/objection/closing';
+comment on column bot_lead_profiles.main_objection    is 'Principal objeción planteada por el lead (precio_alto, lo_pienso, etc.)';
+comment on column bot_lead_profiles.last_cta_offered  is 'Último CTA ofrecido por el bot (texto del llamado a la acción)';
+comment on column bot_lead_profiles.visit_interest    is 'True si el lead mostró interés en visitar la agencia';
 comment on column bot_lead_profiles.shown_vehicle_ids is 'Array de IDs de vehículos ya mostrados al lead (para no repetirlos)';
-comment on column bot_lead_profiles.recontact_count  is 'Cantidad de veces que el lead volvió a escribir después de inactividad';
+comment on column bot_lead_profiles.recontact_count   is 'Cantidad de veces que el lead volvió a escribir después de inactividad';
