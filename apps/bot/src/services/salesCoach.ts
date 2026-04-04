@@ -78,57 +78,66 @@ const OBJECTION_PATTERNS: Array<{
   patterns: RegExp[];
 }> = [
   {
+    // precio_alto: handles accents (está/esta), feminine (cara), colloquial (ta caro), se me fue
     type: 'precio_alto',
     patterns: [
-      /\b(muy\s+caro|esta\s+caro|caro\s+para\s+mi|no\s+tengo\s+tanto|me\s+parece\s+mucho|es\s+mucho\s+precio|esta\s+muy\s+por\s+arriba|se\s+me\s+va\s+del\s+presupuesto|no\s+me\s+alcanza|no\s+me\s+llega)\b/i,
+      /\b(muy\s+car[ao]|est[aá]\s+(muy\s+)?car[ao]|ta\s+car[ao]|car[ao]\s+para\s+m[ií]|no\s+tengo\s+tanto|me\s+parece\s+mucho|es\s+mucho\s+precio|est[aá]\s+muy\s+por\s+arriba|se\s+me\s+va\s+del\s+presupuesto|se\s+me\s+fue\s+del\s+presupuesto|no\s+me\s+alcanza|no\s+me\s+llega|supera\s+(mi\s+)?presupuesto|me\s+queda\s+lejos)\b/i,
     ],
   },
   {
+    // lo_pienso: handles accents (sé/se, después/despues), add more variants
     type: 'lo_pienso',
     patterns: [
-      /\b(lo\s+pienso|voy\s+a\s+pensarlo?|lo\s+veo|te\s+aviso|despues\s+te\s+digo|lo\s+consulto\s+y|me\s+lo\s+quedo\s+pensando|voy\s+a\s+meditar|no\s+me\s+decido|no\s+se|no\s+estoy\s+seguro)\b/i,
+      /\b(lo\s+pienso|voy\s+a\s+pensarlo?|lo\s+veo|te\s+aviso|despu[eé]s\s+te\s+digo|lo\s+consulto\s+y|me\s+lo\s+quedo\s+pensando|voy\s+a\s+meditar|no\s+me\s+decido|no\s+s[eé]|no\s+estoy\s+seguro|capaz\s+m[aá]s\s+adelante|lo\s+dejo\s+para\s+despu[eé]s|voy\s+viendo)\b/i,
     ],
   },
   {
+    // no_convence: handles common informal variations
     type: 'no_convence',
     patterns: [
-      /\b(no\s+me\s+convence|no\s+me\s+termina\s+de|no\s+es\s+lo\s+que\s+busco|no\s+me\s+gusta|no\s+me\s+cierra|algo\s+me\s+falta|no\s+me\s+entusiasma|no\s+me\s+llama|esperaba\s+algo|busco\s+algo\s+diferente)\b/i,
+      /\b(no\s+me\s+convence|no\s+me\s+termina\s+de|no\s+es\s+lo\s+que\s+busco|no\s+me\s+gusta|no\s+me\s+cierra|algo\s+me\s+falta|no\s+me\s+entusiasma|no\s+me\s+llama|esperaba\s+algo|busco\s+algo\s+diferente|no\s+es\s+lo\s+que\s+ten[ií]a\s+en\s+mente|no\s+me\s+termina|no\s+me\s+convenci[oó])\b/i,
     ],
   },
   {
+    // quiero_ver_mas: expanded variants
     type: 'quiero_ver_mas',
     patterns: [
-      /\b(quiero\s+ver\s+otras?\s+opciones?|voy\s+a\s+seguir\s+mirando|estoy\s+comparando|quiero\s+comparar|voy\s+a\s+ver\s+en\s+otros\s+lados?|ando\s+buscando\s+en\s+varios|tengo\s+mas\s+opciones)\b/i,
+      /\b(quiero\s+ver\s+otras?\s+opciones?|voy\s+a\s+seguir\s+mirando|estoy\s+comparando|quiero\s+comparar|voy\s+a\s+ver\s+en\s+otros?\s+lados?|ando\s+buscando\s+en\s+varios|tengo\s+m[aá]s\s+opciones?|quer[ií]a\s+ver\s+m[aá]s|mir[eé]\s+en\s+otros\s+lados?|tengo\s+otras?\s+ofertas?)\b/i,
     ],
   },
   {
+    // sin_presupuesto: expanded variants
     type: 'sin_presupuesto',
     patterns: [
-      /\b(no\s+tengo\s+el\s+presupuesto|no\s+me\s+alcanza\s+el\s+presupuesto|tengo\s+menos|mi\s+presupuesto\s+es\s+menor|solo\s+tengo|apenas\s+tengo|me\s+quedo\s+corto)\b/i,
+      /\b(no\s+tengo\s+el\s+presupuesto|no\s+me\s+alcanza\s+(el\s+)?presupuesto|tengo\s+menos|mi\s+presupuesto\s+es\s+menor|solo\s+tengo|apenas\s+tengo|me\s+quedo\s+corto|con\s+menos|manejo\s+menos)\b/i,
     ],
   },
   {
+    // quiero_consultarlo: handles "mi señora", "mi viejo", etc.
     type: 'quiero_consultarlo',
     patterns: [
-      /\b(voy\s+a\s+consultar(lo)?|lo\s+tengo\s+que\s+hablar|quiero\s+preguntarle\s+a|tengo\s+que\s+hablar\s+con|lo\s+comento\s+en\s+casa|lo\s+veo\s+con|lo\s+hablo\s+con\s+mi)\b/i,
+      /\b(voy\s+a\s+consultar(lo)?|lo\s+tengo\s+que\s+hablar|quiero\s+preguntarle\s+a|tengo\s+que\s+hablar\s+con|lo\s+comento\s+en\s+casa|lo\s+veo\s+con|lo\s+hablo\s+con\s+mi|lo\s+consulto\s+con|quiero\s+que\s+(lo\s+)?vea|se\s+lo\s+muestro)\b/i,
     ],
   },
   {
+    // desconfianza: handles informal spelling
     type: 'desconfianza',
     patterns: [
-      /\b(no\s+se\s+si\s+es\s+confiable|como\s+se\s+que|que\s+garantia\s+tienen|y\s+si\s+pasa\s+algo|me\s+da\s+desconfianza|nunca\s+compre\s+as[ií]|no\s+los\s+conozco|vi\s+estafas)\b/i,
+      /\b(no\s+s[eé]\s+si\s+es\s+confiable|c[oó]mo\s+s[eé]\s+que|qu[eé]\s+garant[ií]a\s+tienen|y\s+si\s+pasa\s+algo|me\s+da\s+desconfianza|nunca\s+compr[eé]\s+as[ií]|no\s+los\s+conozco|vi\s+estafas?|c[oó]mo\s+funciona\s+la\s+transfer|y\s+los\s+papeles)\b/i,
     ],
   },
   {
+    // comparacion_precio: handles MercadoLibre, OLX, and informal variants
     type: 'comparacion_precio',
     patterns: [
-      /\b(en\s+otro\s+lado\s+vi|vi\s+uno\s+mas\s+barato|hay\s+uno\s+similar\s+mas|consegu[ií]\s+uno\s+a\s+menos|en\s+mercado\s+libre\s+esta|me\s+pasaron\s+un\s+precio\s+mejor|me\s+dijeron\s+que\s+estaba|consegui\s+mas\s+barato)\b/i,
+      /\b(en\s+otro\s+lado\s+vi|vi\s+uno\s+m[aá]s\s+barato|hay\s+uno\s+similar\s+m[aá]s|consegu[ií]\s+uno\s+a\s+menos|en\s+mercado\s+libre|en\s+ml\s+est[aá]|me\s+pasaron\s+un\s+precio\s+mejor|me\s+dijeron\s+que\s+estaba|consegu[ií]\s+m[aá]s\s+barato|en\s+olx\s+vi|comparando\s+precios?|otras?\s+agencias?)\b/i,
     ],
   },
   {
+    // no_lo_necesito_ahora: handles accent on año, capaz
     type: 'no_lo_necesito_ahora',
     patterns: [
-      /\b(no\s+es\s+urgente|no\s+lo\s+necesito\s+ya|estoy\s+averiguando|recien\s+empiezo\s+a\s+mirar|es\s+para\s+mas\s+adelante|capaz\s+para\s+el\s+año\s+que\s+viene|no\s+tengo\s+apuro)\b/i,
+      /\b(no\s+es\s+urgente|no\s+lo\s+necesito\s+ya|estoy\s+averiguando|reci[eé]n\s+empiezo\s+a\s+mirar|es\s+para\s+m[aá]s\s+adelante|capaz\s+para\s+el\s+a[ñn]o\s+que\s+viene|no\s+tengo\s+apuro|es\s+para\s+m[aá]s\s+adelante|todav[ií]a\s+no\s+s[eé]|a[ún]n\s+no\s+lo\s+decid[ií])\b/i,
     ],
   },
 ];
@@ -352,9 +361,15 @@ export function detectFunnelStage(
   extracted: Record<string, any>,
   leadScore: number,
   userMsgCount: number,
-  lastIntent?: string
+  lastIntent?: string,
+  lastUserMessage?: string
 ): FunnelStage {
+  // Hard closing signals — override everything
   if (leadScore >= 70 || lastIntent === 'closing') return 'closing';
+  // Explicit closing intent in last message
+  if (lastUserMessage && /\b(cu[aá]ndo\s+puedo\s+pasar|quiero\s+reservarlo?|lo\s+sep[ao]|lo\s+aparto|me\s+lo\s+quedo|arrancamos|hago\s+la\s+reserva)\b/i.test(lastUserMessage)) {
+    return 'closing';
+  }
 
   // Objection signals
   if (
@@ -364,12 +379,36 @@ export function detectFunnelStage(
   ) {
     return 'objection';
   }
+  // Detect objection from last user message if intent wasn't classified
+  if (lastUserMessage) {
+    const obj = detectObjection(lastUserMessage);
+    if (obj && obj.type !== 'unknown') return 'objection';
+  }
 
-  // Presentation: we showed vehicles or have enough context
-  const hasContext =
+  // Comparison / "más opciones" = presentation sub-state
+  if (
+    lastIntent === 'comparacion' ||
+    lastIntent === 'quiero_ver_mas' ||
+    (lastUserMessage && /\b(cu[aá]l\s+(me\s+)?conviene|diferencia\s+entre|cu[aá]l\s+es\s+mejor|m[aá]s\s+opciones)\b/i.test(lastUserMessage))
+  ) {
+    return 'presentation';
+  }
+
+  // Presentation: we showed vehicles or have enough context to show
+  const hasRichContext =
     !!(extracted?.brand || extracted?.model || extracted?.maxPrice) &&
     userMsgCount >= 3;
-  if (hasContext && leadScore >= 35) return 'presentation';
+  if (hasRichContext && leadScore >= 35) return 'presentation';
+
+  // Also presentation if user already asked for financing/visit details
+  if (
+    extracted?.wantsFinancing ||
+    extracted?.hasTradeIn ||
+    lastIntent === 'financiacion' ||
+    lastIntent === 'visita'
+  ) {
+    return 'presentation';
+  }
 
   // Qualification: we have some data
   const hasAnyData = !!(
@@ -377,8 +416,11 @@ export function detectFunnelStage(
     extracted?.model ||
     extracted?.useCase ||
     extracted?.maxPrice ||
+    extracted?.amount ||
     extracted?.transmission ||
-    extracted?.fuel
+    extracted?.fuel ||
+    extracted?.condition ||
+    extracted?.bodywork
   );
   if (hasAnyData) return 'qualification';
 
@@ -700,6 +742,8 @@ export interface SalesCoachContext {
   benefits: BenefitMap;
   urgency: UrgencySignal | null;
   useCase: UseCase;
+  /** Raw user message — used to detect specific question patterns */
+  userMessage: string;
 }
 
 /**
@@ -721,7 +765,7 @@ export function buildSalesCoachContext(params: {
   const userMsgCount = history.filter((h) => h.role === 'user').length;
   const lastIntent = (state as any)?.last_intent ?? undefined;
 
-  const stage = detectFunnelStage(extracted, leadScore, userMsgCount, lastIntent);
+  const stage = detectFunnelStage(extracted, leadScore, userMsgCount, lastIntent, userMessage);
   const useCase = parseUseCase(extracted);
   const objection = detectObjection(userMessage);
   const nextQuestion = getNextBestQuestion({ extracted, history, state, stage });
@@ -735,7 +779,50 @@ export function buildSalesCoachContext(params: {
     turnCount: userMsgCount,
   });
 
-  return { stage, objection, nextQuestion, closingOpportunity, benefits, urgency, useCase };
+  return { stage, objection, nextQuestion, closingOpportunity, benefits, urgency, useCase, userMessage };
+}
+
+/**
+ * Detect specific high-frequency question patterns that need tailored responses.
+ * Returns a coaching note if a pattern matches, or null.
+ */
+function detectQuestionPattern(userMessage: string): string | null {
+  const msg = userMessage.toLowerCase();
+
+  // "qué autos tenés?" / "qué tenés?" / "mostrá algo"
+  if (/\b(qu[eé]\s+(autos?|cosas?|modelos?)\s+ten[eé]s?|qu[eé]\s+ten[eé]s|qu[eé]\s+hay\s+disponible|qu[eé]\s+stock|mostr[aá]\s+algo|qu[eé]\s+me\s+ofrecen)\b/i.test(userMessage)) {
+    return `PATRÓN: "qué autos tenés?" sin filtros → si no hay datos del cliente, preguntá UNA cosa: "¿Para qué lo usarías más?". Si ya hay datos, mostrá directamente 2-3 opciones.`;
+  }
+  // "algo más barato?" / "no hay algo más económico?"
+  if (/\b(algo\s+m[aá]s\s+barato|m[aá]s\s+econ[oó]mico|m[aá]s\s+accesible|algo\s+menor|m[aá]s\s+bajo|m[aá]s\s+barata|opci[oó]n\s+m[aá]s\s+barata|no\s+hay\s+(algo\s+)?m[aá]s\s+barato)\b/i.test(userMessage)) {
+    return `PATRÓN: "algo más barato" → mostrar las opciones más baratas del catálogo disponible. Aclarar rango. NO preguntar qué presupuesto tiene si ya lo dijo. Si el catálogo no tiene nada más barato, decirlo honestamente y ofrecer financiación.`;
+  }
+  // "qué me recomendás?" / "qué me sugerís?"
+  if (/\b(qu[eé]\s+me\s+(recomend[aá]s?|suger[ií]s?|aconsejar[ií]as?)|cu[aá]l\s+me\s+recomend[aá]s?|qu[eé]\s+comprar[ií]as?)\b/i.test(userMessage)) {
+    return `PATRÓN: "qué me recomendás?" → NO preguntes más. Recomendá con criterio usando lo que ya sabés. Si no tenés nada, elegí el auto más versátil del catálogo y explicá POR QUÉ. Nunca respondas con otra pregunta.`;
+  }
+  // "puedo financiar?" / "tienen financiación?"
+  if (/\b(puedo\s+financiar|tienen\s+financiaci[oó]n|financian|hay\s+cuotas?|a\s+cuotas?|se\s+puede\s+financiar|cu[aá]nto\s+ser[ií]a\s+la\s+cuota)\b/i.test(userMessage)) {
+    return `PATRÓN: "financiación" → sí, financiamos hasta el 50% del valor. Pedir anticipo y plazo. action=OFFER_FINANCING. NUNCA inventar monto de cuota.`;
+  }
+  // "toman usado?" / "puedo entregar mi auto?"
+  if (/\b(toman\s+usado|aceptan\s+usado|part[eé]\s+de\s+pago|permuta|entrego\s+mi\s+auto|reciben\s+usado|cambio\s+mi\s+auto|entregar\s+(mi\s+)?auto)\b/i.test(userMessage)) {
+    return `PATRÓN: "permuta" → sí, tomamos tu usado como parte de pago. Pedir: marca, año y km del auto actual. extracted.hasTradeIn=true.`;
+  }
+  // "puedo pasar a verlo?" / "cuándo puedo ir?"
+  if (/\b(puedo\s+pasar|cu[aá]ndo\s+puedo\s+ir|cu[aá]ndo\s+puedo\s+verlo|puede\s+ser\s+hoy|me\s+gustar[ií]a\s+pasar|quiero\s+ir|cu[aá]ndo\s+atienden)\b/i.test(userMessage)) {
+    return `PATRÓN: "visita" → señal de cierre. action=ESCALATE_HUMAN, handoffRecommended=true. Proponer día/hora concreto. Confirmar qué auto quiere ver.`;
+  }
+  // "qué diferencia hay entre X e Y?" (but not handled by comparison directive)
+  if (/\b(qu[eé]\s+diferencia\s+hay|en\s+qu[eé]\s+se\s+diferencia|en\s+qu[eé]\s+difiere)\b/i.test(userMessage)) {
+    return `PATRÓN: "diferencia entre" → comparar en 2-3 dimensiones concretas. Tomar partido según el uso del cliente. No decir "ambos son buenos".`;
+  }
+  // "no me convence" — ensure we dig into WHY
+  if (/\b(no\s+me\s+convence|no\s+me\s+termina|algo\s+me\s+falta)\b/i.test(msg)) {
+    return `PATRÓN: "no me convence" → primero preguntar QUÉ específicamente no convence. Nunca asumir. Responder solo lo que aplica.`;
+  }
+
+  return null;
 }
 
 /**
@@ -748,6 +835,14 @@ export function buildSalesCoachSection(ctx: SalesCoachContext): string {
   // Funnel stage
   lines.push(`ETAPA ACTUAL: ${stageName(ctx.stage)}`);
   lines.push('');
+
+  // Question pattern detection — high priority override
+  const patternNote = detectQuestionPattern(ctx.userMessage);
+  if (patternNote) {
+    lines.push(`📌 PATRÓN DE PREGUNTA DETECTADO:`);
+    lines.push(`  ${patternNote}`);
+    lines.push('');
+  }
 
   // Objection handling
   if (ctx.objection) {
@@ -783,10 +878,11 @@ export function buildSalesCoachSection(ctx: SalesCoachContext): string {
     lines.push('');
   }
 
-  // Next best question (only if NOT closing and NOT objection)
+  // Next best question (only if NOT closing, NOT objection, and no pattern override)
   if (
     ctx.stage !== 'closing' &&
     !ctx.objection &&
+    !patternNote &&
     ctx.closingOpportunity.score < 60 &&
     ctx.nextQuestion.priority >= 5
   ) {

@@ -29,13 +29,26 @@ import { getFinanceApr, simulateFinancing, formatArs } from '../services/finance
 import { sendImageAndPersist, sendTextAndPersist } from '../services/panelPersistence.js';
 import { askGPT, buildCarDealershipSystemPrompt } from '../services/gpt.js';
 import { decideAgentAction } from '../services/agent.js';
-import { upsertLeadProfile } from '../services/leadProfile.js';
+import {
+  upsertLeadProfile,
+  loadLeadMemory,
+  mergeMemoryIntoExtracted,
+  buildMemorySummaryBlock,
+  isRecontact,
+  extractCtaFromReply,
+  detectVisitInterest,
+  mergeShownVehicleIds,
+  extractShownVehicleIdsFromHistory,
+} from '../services/leadProfile.js';
+import { rankVehiclesForLead } from '../services/vehicleRanker.js';
+import { auditTurnQuality, logTurnAudit, accumulateAuditMetrics } from '../services/commercialAudit.js';
 import {
   captureConversationTurn,
   selectDynamicExamples,
   formatExamplesForPrompt,
   type SourceType
 } from '../services/learning.js';
+import { applyGuardrail, validateReply } from '../services/guardrails.js';
 
 export const webhookRouter = Router();
 
@@ -784,6 +797,9 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
 
+    // ── Lead memory: start async load in parallel (never blocks) ─────────────
+    const memoryPromise = loadLeadMemory(instance, remoteJid);
+
     // Context timeout (30 min): if idle too long, drop accumulated search/finance context.
     const lastUserAtMs = stateRaw.last_user_at ? Date.parse(stateRaw.last_user_at) : NaN;
     const contextExpired = !Number.isNaN(lastUserAtMs) && now - lastUserAtMs > 30 * 60 * 1000;
@@ -800,6 +816,21 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // Merge extracted fields across turns.
     const extracted = extractLeadFields(rawText, (state as any)?.extracted ?? (state as any)?.lead ?? {});
+
+    // ── Resolve lead memory and merge into extracted ──────────────────────────
+    const leadMemory = await memoryPromise;
+    const sessionHadContext = Boolean(
+      (state as any)?.extracted?.brand ||
+      (state as any)?.extracted?.maxPrice ||
+      (state as any)?.search_context?.brand ||
+      (state as any)?.search_context?.maxPrice
+    );
+    const isRecontactTurn = isRecontact(leadMemory, sessionHadContext && !contextExpired);
+    // When context expired or first visit with DB memory: fill gaps from persistent profile
+    if (leadMemory && (contextExpired || !sessionHadContext)) {
+      const enriched = mergeMemoryIntoExtracted(extracted, leadMemory);
+      Object.assign(extracted, enriched);
+    }
 
     // Update message counters & last user timestamp.
     const userMsgCount = Math.max(0, Number(state.user_msg_count ?? 0)) + 1;
@@ -919,6 +950,11 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             }).catch(() => {});
           }
 
+          // ── Extract commercial fields from this turn for persistent memory ──
+          const newShownIds = extractShownVehicleIdsFromHistory([{ role: 'assistant', content: reply }]);
+          const extractedCta = extractCtaFromReply(reply);
+          const hasVisitInterest = detectVisitInterest(rawText);
+
           void upsertLeadProfile({
             instance,
             remoteJid,
@@ -937,7 +973,14 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               suggestedReply: String(nextState.agent.suggestedReply || ''),
               internalReason: nextState.agent.internalReason || undefined
             } : null,
-            lastSummary: nextState?.agent?.suggestedReply ?? null
+            lastSummary: nextState?.agent?.suggestedReply ?? null,
+            // v016: commercial memory fields
+            funnelStage: (nextState as any)?._coachStage ?? (nextState as any)?.stage ?? null,
+            mainObjection: (nextState as any)?._mainObjection ?? null,
+            lastCtaOffered: extractedCta,
+            visitInterest: hasVisitInterest || null,
+            shownVehicleIds: newShownIds.length ? newShownIds : null,
+            incrementRecontact: isRecontactTurn,
           });
 
           const sock = getSocket();
@@ -1244,15 +1287,28 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         void logDecision({ instance, remoteJid, intent: 'faq', confidence: kScore, data: { type: 'faq', id: row.id } }).catch(() => {});
 
       } else if (type === 'policy') {
-        reply = String(row.body ?? '');
-        newState.last_intent = 'policy';
+        // Policies are INTERNAL RULES — never send body directly to the user.
+        // Inject as context for the downstream agent so it can craft a proper response.
+        (newState as any)._policyContext = String(row.body ?? '');
         (newState as any).last_sources = [{ type: 'policy', id: row.id }];
         void logDecision({ instance, remoteJid, intent: 'policy', confidence: kScore, data: { type: 'policy', id: row.id } }).catch(() => {});
+        // Do NOT set reply — fall through to intent detection / agent
       }
 
       if (reply) {
-        scheduleReply(reply, newState);
-        return;
+        // Run guardrail before sending any FAQ/Playbook response
+        const grResult = validateReply(reply, {
+          source: type,
+          lastBotReply: (state as any).agent?.suggestedReply ?? undefined
+        });
+        if (!grResult.ok && !grResult.safeReply) {
+          console.warn(`[webhooks] guardrail blocked ${type} reply (${grResult.issues.join(',')}). Falling through to agent.`);
+          // Don't return — let it fall through to agent for a better response
+        } else {
+          if (grResult.safeReply && grResult.safeReply !== reply) reply = grResult.safeReply;
+          scheduleReply(reply, newState);
+          return;
+        }
       }
     }
 
@@ -1435,9 +1491,10 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         }
         newState.last_intent = 'tradein';
 
-      } else if (asksPrice) {
+      } else if (asksPrice && !hasStructuredSearchNeed(extracted) && !hasUsefulSearchContext(state.search_context ?? {})) {
+        // Solo pedir modelo si NO tenemos contexto — si ya sabemos la marca/modelo, buscamos directo
         reply = pickOne([
-          'Decime qué modelo viste y te confirmo precio y disponibilidad.',
+          'Decime qué modelo tenés en mente y te confirmo precio y disponibilidad.',
           'Pasame marca o modelo y te lo chequeo bien.',
           'Si me decís la unidad o al menos la marca, te respondo más preciso.'
         ]);
@@ -1472,24 +1529,56 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           }
         }
         if (!reply) {
-          const nextQuestion = getNextUsefulSearchQuestion({ ...(state.search_context || {}), ...extracted });
-          reply = lastMedia && !String(rawText || '').trim()
-            ? 'Te vi la imagen. ¿Qué modelo o marca querés mirar?'
-            : `No encontré un match claro todavía. ${nextQuestion}`;
-          newState.last_intent = 'no_match';
-          newState.last_query = rawText;
-          newState.stage = 'awaiting_query';
-          isFallback = true;
+          if (lastMedia && !String(rawText || '').trim()) {
+            reply = 'Te vi la imagen. ¿Qué modelo o marca querés mirar?';
+            newState.last_intent = 'no_match';
+            newState.stage = 'awaiting_query';
+            isFallback = true;
+          } else {
+            // Sin match en catálogo: no dar genérico de inmediato — dejar que el agente
+            // genere una respuesta más inteligente (alternativas, lista de espera, etc.).
+            // Marcamos el contexto para que el agente sepa que no hubo stock.
+            (newState as any)._noStockContext = true;
+            // reply queda vacío → el código cae al agente en la rama else de shouldSearch? No,
+            // shouldSearch es un else-if. Usamos el flag para mejorarlo en el agente call abajo.
+            // Por ahora damos una respuesta consultiva como fallback de shouldSearch.
+            const ctx = { ...(state.search_context || {}), ...extracted };
+            const hasModel = !!(ctx.brand || ctx.model);
+            if (hasModel) {
+              const what = [ctx.brand, ctx.model].filter(Boolean).join(' ');
+              reply = pickOne([
+                `Ahora mismo no tengo ${what} en stock, pero puedo anotarte para avisarte cuando entre. ¿Querés que te anote o preferís ver alternativas parecidas?`,
+                `No tengo ${what} disponible en este momento. ¿Te sirve que te muestre algo similar o preferís esperar a que entre stock?`,
+              ]);
+            } else {
+              const nextQuestion = getNextUsefulSearchQuestion(ctx);
+              reply = `No encontré algo exacto con lo que tenés. ${nextQuestion}`;
+            }
+            newState.last_intent = 'no_match';
+            newState.last_query = rawText;
+            newState.stage = 'awaiting_query';
+            isFallback = true;
+          }
         }
 
       } else {
         // Fallback 1: full-text knowledge search
         const kResults = await searchKnowledge(rawText, 2);
         if (kResults.length > 0 && kResults[0].rank > 0) {
-          reply = kResults[0].snippet;
-          newState.last_intent = `knowledge_${kResults[0].type}`;
-          (newState as any).last_sources = [{ type: kResults[0].type, id: kResults[0].id }];
-        } else {
+          const snippet = kResults[0].snippet;
+          // Only use snippet if it passes the guardrail (snippets from policies can be internal)
+          const snGr = validateReply(snippet, {
+            source: kResults[0].type,
+            lastBotReply: (state as any).agent?.suggestedReply ?? undefined
+          });
+          if (snGr.ok || snGr.safeReply) {
+            reply = snGr.safeReply ?? snippet;
+            newState.last_intent = `knowledge_${kResults[0].type}`;
+            (newState as any).last_sources = [{ type: kResults[0].type, id: kResults[0].id }];
+          }
+          // If guardrail blocked the snippet → fall through to agent below
+        }
+        if (!reply) {
           // Fallback 2: agente estructurado + GPT clásico
           try {
             const catalogSummary = catalog.slice(0, 12).map((it: any) => {
@@ -1510,8 +1599,41 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             const turns = (state as any).gpt_history ?? [];
             for (const t of turns.slice(-6)) history.push({ role: t.role, content: t.content });
 
-            // Merge search_context + extracted para que el agente tenga el contexto completo acumulado
-            const mergedExtracted = { ...(state.search_context ?? {}), ...extracted };
+            // Merge search_context + extracted + lead memory para que el agente tenga el contexto completo acumulado
+            const mergedExtracted = mergeMemoryIntoExtracted(
+              { ...(state.search_context ?? {}), ...extracted },
+              leadMemory
+            );
+
+            // ── Shown vehicles: combinar DB + historial de sesión ────────────────
+            const historyShownIds = extractShownVehicleIdsFromHistory(history);
+            const allShownIds = mergeShownVehicleIds(leadMemory?.shownVehicleIds, historyShownIds);
+
+            // ── Ranking comercial del catálogo (priorizá relevancia para este lead) ──
+            let rankedCatalog: any[] = catalog;
+            try {
+              if (Array.isArray(catalog) && catalog.length > 0) {
+                const { topVehicles, diagnosticLog } = rankVehiclesForLead({
+                  vehicles: catalog as any[],
+                  extracted: mergedExtracted,
+                  shownVehicleIds: allShownIds,
+                  maxResults: 30,
+                });
+                rankedCatalog = topVehicles;
+                if (diagnosticLog) console.log(`[ranker] top3:\n${diagnosticLog}`);
+              }
+            } catch (rankErr) {
+              console.error('[ranker] error (non-blocking):', rankErr);
+            }
+
+            // ── Memoria comercial: bloque para inyectar al agente ────────────────
+            let memoryBlock = '';
+            try {
+              memoryBlock = buildMemorySummaryBlock(leadMemory, isRecontactTurn, { skipIfEmpty: true });
+              if (isRecontactTurn) {
+                console.log(`[leadMemory] recontact detected for ${remoteJid.slice(0, 12)} (count=${leadMemory?.recontactCount ?? 0})`);
+              }
+            } catch { /* non-blocking */ }
 
             // ── Few-shot dinámico: cargar ejemplos aprendidos relevantes ────────
             let dynamicExamplesBlock: string | undefined;
@@ -1532,17 +1654,46 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               repeatedMissingFields
             };
 
+            // Last bot reply for anti-repeat context
+            const lastBotReply: string | undefined =
+              (state as any).agent?.suggestedReply?.trim()
+              ?? ((state as any).gpt_history ?? []).slice().reverse().find((h: any) => h.role === 'assistant')?.content?.trim()
+              ?? undefined;
+
+            // Policy context captured earlier (if a policy matched but we didn't send its body)
+            const policyContext: string | undefined = (newState as any)._policyContext ?? (state as any)._policyContext ?? undefined;
+
             const agentDecision = await decideAgentAction({
               dealershipName: process.env.DEALERSHIP_NAME ?? undefined,
               userMessage: rawText,
               history,
-              catalog,
+              catalog: rankedCatalog,
               faqSummary,
               extracted: mergedExtracted,
               leadScore: state.leadScore,
               dynamicExamples: dynamicExamplesBlock,
-              loopData: agentLoopData
+              loopData: agentLoopData,
+              lastBotReply,
+              policyContext,
+              noStockContext: !!(newState as any)._noStockContext,
+              memoryBlock: memoryBlock || undefined,
             });
+
+            if (agentDecision?.suggestedReply) {
+              // Apply guardrail to agent response before using it
+              const agentGr = validateReply(agentDecision.suggestedReply, {
+                source: 'agent',
+                lastBotReply
+              });
+              if (!agentGr.ok && !agentGr.safeReply) {
+                console.warn(`[webhooks] guardrail blocked agent reply (${agentGr.issues.join(',')}). Using GPT fallback.`);
+                // Fall through to GPT fallback below by not setting reply
+              } else {
+                if (agentGr.safeReply && agentGr.safeReply !== agentDecision.suggestedReply) {
+                  agentDecision.suggestedReply = agentGr.safeReply;
+                }
+              }
+            }
 
             if (agentDecision?.suggestedReply) {
               reply = agentDecision.suggestedReply;
@@ -1593,7 +1744,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               const gptReply = await askGPT({ systemPrompt, userMessage: rawText, history });
 
               if (gptReply) {
-                reply = gptReply;
+                const gptGr = applyGuardrail(gptReply, { source: 'gpt', lastBotReply });
+                reply = gptGr || gptReply;
                 newState.last_intent = 'gpt_fallback';
                 const newHistory = [
                   ...turns,
@@ -1686,6 +1838,35 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       return;
     }
 
+    // ── Final guardrail: last line of defense before sending ──────────────────
+    // Catches any remaining internal content that slipped through earlier checks.
+    {
+      const finalLastBotReply: string | undefined =
+        (state as any).agent?.suggestedReply?.trim()
+        ?? ((state as any).gpt_history ?? []).slice().reverse().find((h: any) => h.role === 'assistant')?.content?.trim()
+        ?? undefined;
+      const finalGr = validateReply(reply, {
+        source: (newState as any).last_intent?.startsWith('agent') ? 'agent' : String((newState as any).last_intent ?? ''),
+        lastBotReply: finalLastBotReply
+      });
+      if (!finalGr.ok) {
+        if (finalGr.safeReply) {
+          reply = finalGr.safeReply; // use cleaned version
+        } else {
+          // Internal content detected — replace with a safe fallback
+          console.warn(`[webhooks] final guardrail replaced reply. Issues: ${finalGr.issues.join(',')}`);
+          reply = pickOne([
+            '¿Me contás qué auto buscás? Marca, uso o presupuesto y te filtro algo concreto.',
+            'Decime qué necesitás y te ayudo a encontrar la mejor opción.',
+            'Contame un poco más y te respondo con algo útil.',
+          ]);
+          isFallback = true;
+          (newState as any).last_intent = 'fallback';
+          newState.stage = 'awaiting_query';
+        }
+      }
+    }
+
     // ── Auto-tagging de leads por intención ───────────────────────────────────
     // Clasifica el lead con una etiqueta primaria basada en el intent detectado
     // y persiste en bot_conversations (columnas añadidas en migración 014).
@@ -1771,6 +1952,24 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         }
       }
     } catch { /* no bloquear flujo principal */ }
+
+    // ── Commercial audit: calidad de la respuesta (non-blocking) ───────────────
+    try {
+      const auditStage = (newState as any)._coachStage ?? (state as any).stage ?? 'discovery';
+      const prevExtracted: Record<string, any> = (state as any)?.extracted ?? (state as any)?.search_context ?? {};
+      const currentExtracted: Record<string, any> = (newState as any)?.extracted ?? (newState as any)?.search_context ?? extracted;
+      const audit = auditTurnQuality({
+        userMessage: rawText,
+        botReply: reply,
+        extracted: currentExtracted,
+        prevExtracted,
+        stage: auditStage,
+        turnCount: userMsgCount,
+        isFirstTurn: userMsgCount <= 1,
+      });
+      logTurnAudit(audit, { instance, remoteJid, stage: auditStage, turnCount: userMsgCount });
+      accumulateAuditMetrics(audit, instance);
+    } catch { /* never block */ }
 
     scheduleReply(reply, newState, {
       imageUrl: (newState as any)._firstVehicleImage ?? undefined,

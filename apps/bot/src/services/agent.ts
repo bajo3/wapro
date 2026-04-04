@@ -418,17 +418,39 @@ export function buildAgentSystemPrompt(
 }
 
 /**
- * decideAgentAction — v6: selecciona prompt según etapa, pasa loopData, contexto extraído
- * y patrones aprendidos de conversaciones reales.
+ * decideAgentAction — v7: selecciona prompt según etapa, pasa loopData, contexto extraído,
+ * patrones aprendidos, última respuesta enviada y contexto de policy/no-stock.
  */
-export async function decideAgentAction(params: any & { loopData?: AgentLoopData; dynamicExamples?: string }): Promise<any | null> {
-  const { loopData, leadScore, dealershipName, extracted, userMessage, history, catalog, dynamicExamples, state } = params;
+export async function decideAgentAction(params: any & {
+  loopData?: AgentLoopData;
+  dynamicExamples?: string;
+  /** Last reply sent to this user — injected to prevent repetition */
+  lastBotReply?: string;
+  /** Policy body that matched but wasn't sent directly — inject as internal context */
+  policyContext?: string;
+  /** True if shouldSearch found no stock matches — tells agent to offer alternatives/demand capture */
+  noStockContext?: boolean;
+  /** Persistent commercial memory block for returning leads — injected as first intelligence section */
+  memoryBlock?: string;
+}): Promise<any | null> {
+  const { loopData, leadScore, dealershipName, extracted, userMessage, history, catalog, dynamicExamples, state,
+          lastBotReply, policyContext, noStockContext, memoryBlock } = params;
 
   const { askGPTJson } = await import('./gpt.js');
   const { buildSalesCoachContext, buildSalesCoachSection } = await import('./salesCoach.js');
+  const {
+    buildLeadProfileBlock,
+    buildVehicleArgumentAnnotations,
+    detectComparisonIntent,
+    getComparisonDirective,
+    getStageSpecificDirective,
+    auditBotResponse,
+  } = await import('./salesIntelligence.js');
 
   const isClosingStage = Number(leadScore ?? 0) >= 60;
   const model = selectModel(leadScore);
+  const historyArr = Array.isArray(history) ? history : [];
+  const extractedCtx = extracted ?? {};
 
   // ── Load learning context (fast DB read, never blocks) ──────────────────────
   let learningSection = '';
@@ -441,6 +463,7 @@ export async function decideAgentAction(params: any & { loopData?: AgentLoopData
 
   // ── Build sales coach section (deterministic, instant) ────────────────────
   let salesCoachSection = '';
+  let coachStage: import('./salesCoach.js').FunnelStage = 'discovery';
   try {
     const catalogSize = Array.isArray(catalog) ? catalog.length : 0;
     // Count vehicles that roughly match the extracted context (brand / price)
@@ -448,8 +471,8 @@ export async function decideAgentAction(params: any & { loopData?: AgentLoopData
       ? catalog.filter((it: any) => {
           const b = String(it?.brand ?? '').toLowerCase();
           const p = Number(it?.priceNumber ?? 0);
-          const eb = String(extracted?.brand ?? '').toLowerCase();
-          const ep = Number(extracted?.maxPrice ?? 0);
+          const eb = String(extractedCtx?.brand ?? '').toLowerCase();
+          const ep = Number(extractedCtx?.maxPrice ?? 0);
           const brandOk = !eb || b.includes(eb);
           const priceOk = !ep || !p || p <= ep * 1.15;
           return brandOk && priceOk;
@@ -461,23 +484,93 @@ export async function decideAgentAction(params: any & { loopData?: AgentLoopData
 
     const coachCtx = buildSalesCoachContext({
       userMessage: String(userMessage ?? ''),
-      extracted: extracted ?? {},
-      history: Array.isArray(history) ? history : [],
+      extracted: extractedCtx,
+      history: historyArr,
       state: state ?? {},
       leadScore: Number(leadScore ?? 0),
       catalogSize,
       matchingVehicles,
       lastVehicle,
     });
+    coachStage = coachCtx.stage;
     salesCoachSection = buildSalesCoachSection(coachCtx);
     console.log(`[agent] sales coach: stage=${coachCtx.stage} closing=${coachCtx.closingOpportunity.score} objection=${coachCtx.objection?.type ?? 'none'}`);
   } catch (err) {
     console.error('[agent] salesCoach error (non-blocking):', err);
   }
 
+  // ── Build sales intelligence sections (all deterministic, no latency) ───────
+  let leadProfileBlock = '';
+  let vehicleArgAnnotations = '';
+  let stageDirective = '';
+  let comparisonDirective = '';
+  try {
+    const turnCount = Number(loopData?.turnCount ?? historyArr.filter((h: any) => h.role === 'user').length);
+    const hasStock = Array.isArray(catalog) && catalog.length > 0;
+
+    leadProfileBlock = buildLeadProfileBlock({
+      extracted: extractedCtx,
+      history: historyArr,
+      stage: coachStage,
+      leadScore: Number(leadScore ?? 0),
+      turnCount,
+    });
+
+    const catalogSlice = Array.isArray(catalog) ? (catalog as any[]).slice(0, 20) : [];
+    vehicleArgAnnotations = buildVehicleArgumentAnnotations({
+      vehicles: catalogSlice,
+      extracted: extractedCtx,
+    });
+
+    stageDirective = getStageSpecificDirective(
+      coachStage,
+      extractedCtx,
+      Number(leadScore ?? 0),
+      hasStock
+    );
+
+    const isComparison = detectComparisonIntent(String(userMessage ?? ''));
+    if (isComparison) {
+      comparisonDirective = getComparisonDirective({
+        userMessage: String(userMessage ?? ''),
+        extracted: extractedCtx,
+      });
+      console.log('[agent] comparison intent detected — injecting comparison directive');
+    }
+  } catch (err) {
+    console.error('[agent] salesIntelligence error (non-blocking):', err);
+  }
+
+  // Build extra context sections for the prompt
+  const lastBotSection = lastBotReply?.trim()
+    ? `\n── ÚLTIMA RESPUESTA QUE ENVIASTE (NO REPETIR literalmente) ──\n"${lastBotReply.trim().slice(0, 300)}"\n→ Varía el tono o el enfoque para avanzar un paso más.`
+    : '';
+
+  const policySection = policyContext?.trim()
+    ? `\n── POLÍTICA INTERNA ACTIVA (usá como guía, NO citar textualmente al usuario) ──\n${policyContext.trim().slice(0, 600)}`
+    : '';
+
+  const noStockSection = noStockContext
+    ? `\n── SIN STOCK EXACTO ──\nLa búsqueda en catálogo no encontró coincidencias exactas. Opciones:\n  1. Ofrecé alternativas cercanas disponibles en el catálogo.\n  2. Proponé registrar la demanda: "Te aviso cuando entre stock de eso."\n  3. Si hay opciones cercanas, recomendá con criterio por qué sirven.\n  4. action=CAPTURE_LEAD si no hay nada cercano.`
+    : '';
+
+  // Combine all intelligence sections — order matters for prompt priority
+  const intelligenceSections = [
+    memoryBlock,               // 0. Memoria persistente del lead (recontacto / datos previos)
+    leadProfileBlock,          // 1. Quién es este lead (sesión actual)
+    stageDirective,            // 2. Qué hacer exactamente en esta etapa
+    comparisonDirective,       // 3. Si está comparando (solo cuando aplica)
+    vehicleArgAnnotations,     // 4. Argumentos por vehículo
+    lastBotSection,            // 5. No repetir lo último dicho
+    policySection,             // 6. Política interna activa
+    noStockSection,            // 7. Sin stock exacto
+  ].filter(Boolean).join('\n');
+
+  const extraSections = intelligenceSections;
+
   const systemPrompt = isClosingStage
     ? buildClosingSystemPrompt(dealershipName, extracted)
-    : buildAgentSystemPrompt(dealershipName, extracted, loopData, dynamicExamples, learningSection + '\n' + salesCoachSection);
+    : buildAgentSystemPrompt(dealershipName, extracted, loopData, dynamicExamples, learningSection + '\n' + salesCoachSection + extraSections);
 
   // Serialize catalog items into a compact text block for the GPT context.
   // Limit to 80 items to avoid hitting token limits.
@@ -515,13 +608,28 @@ export async function decideAgentAction(params: any & { loopData?: AgentLoopData
     systemPrompt,
     userMessage: String(userMessage ?? ''),
     context: catalogContext,
-    history: Array.isArray(history) ? history.slice(-8) : [],  // extended from 6 to 8 turns
+    history: historyArr.slice(-8),  // 8 turns of context
     model,
     maxTokens: 1100,
     temperature: 0.32
   });
 
   if (!result || typeof result !== 'object') return null;
+
+  // ── Audit response quality (non-blocking, logging only) ───────────────────
+  try {
+    const reply = String(result?.suggestedReply ?? '');
+    if (reply) {
+      const warnings = auditBotResponse(reply);
+      if (warnings.length) {
+        console.warn(`[agent] response quality warnings (${warnings.length}):`);
+        warnings.forEach((w) => console.warn(`  ⚠️  ${w}`));
+      }
+    }
+  } catch {
+    // never block on audit
+  }
+
   return result;
 }
 

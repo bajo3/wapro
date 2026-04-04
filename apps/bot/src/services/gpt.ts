@@ -47,29 +47,56 @@ export async function askGPT(params: GptParams): Promise<string | null> {
     { role: 'user', content: params.userMessage }
   ];
 
-  try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages }),
-      // 15 segundos de timeout para no trabar el flujo principal
-      signal: AbortSignal.timeout?.(15_000) as any
-    });
+  // Retry on transient errors (rate limit 429, server errors 5xx) — max 2 attempts
+  const MAX_ATTEMPTS = 2;
+  let lastErr: unknown;
 
-    if (!res.ok) {
-      console.error('[gpt] OpenAI API error:', res.status, await res.text().catch(() => ''));
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages }),
+        // 15 segundos de timeout para no trabar el flujo principal
+        signal: AbortSignal.timeout?.(15_000) as any
+      });
+
+      // Transient errors: retry with backoff
+      if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+        const errText = await res.text().catch(() => '');
+        console.warn(`[gpt] OpenAI transient error ${res.status} (attempt ${attempt}/${MAX_ATTEMPTS}): ${errText.slice(0, 200)}`);
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise(r => setTimeout(r, 1000 * attempt)); // 1s, 2s backoff
+          continue;
+        }
+        return null;
+      }
+
+      if (!res.ok) {
+        console.error('[gpt] OpenAI API error:', res.status, await res.text().catch(() => ''));
+        return null;
+      }
+
+      const data: any = await res.json();
+      return (data?.choices?.[0]?.message?.content ?? '').trim() || null;
+    } catch (err) {
+      lastErr = err;
+      const isTimeout = String((err as any)?.name).includes('Abort') || String((err as any)?.name).includes('Timeout');
+      if (attempt < MAX_ATTEMPTS && !isTimeout) {
+        console.warn(`[gpt] fetch error attempt ${attempt}/${MAX_ATTEMPTS}:`, err);
+        await new Promise(r => setTimeout(r, 800 * attempt));
+        continue;
+      }
+      console.error('[gpt] fetch error (final):', err);
       return null;
     }
-
-    const data: any = await res.json();
-    return (data?.choices?.[0]?.message?.content ?? '').trim() || null;
-  } catch (err) {
-    console.error('[gpt] fetch error:', err);
-    return null;
   }
+
+  console.error('[gpt] all attempts failed:', lastErr);
+  return null;
 }
 
 /**

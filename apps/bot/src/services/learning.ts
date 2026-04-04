@@ -146,9 +146,17 @@ function computeAutoScore(capture: ConversationCapture): number {
     score += 0.05;
   }
 
-  // Penalización por respuesta muy corta (menos de 30 chars = probablemente filler)
-  if (capture.botResponse.trim().length < 30) {
+  // Penalización por respuesta muy corta — solo si no es una confirmación legítima.
+  // Exento: respuestas de confirmación (sí/no), cierres cálidos, acks cortos válidos.
+  const shortResp = capture.botResponse.trim();
+  const isLegitimateShort = /^(sí|si|no|dale|genial|perfecto|claro|ok|entendido|buenísimo|listo|anotado)/i.test(shortResp)
+    || shortResp.includes('asesor')
+    || shortResp.includes('éxitos')
+    || shortResp.includes('👍');
+  if (shortResp.length < 20 && !isLegitimateShort) {
     score -= 0.15;
+  } else if (shortResp.length < 30 && !isLegitimateShort) {
+    score -= 0.05; // penalización menor para respuestas entre 20-30 chars
   }
 
   // Penalización por respuestas genéricas de fallback

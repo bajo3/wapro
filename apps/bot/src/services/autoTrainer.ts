@@ -246,10 +246,12 @@ export async function learnFromConversation(
         if (!question || !answer || answer.length < 15) continue;
         if (triggers.length < 1) continue;
 
-        // Don't create FAQs that contain likely invented data
-        const forbiddenPatterns = /\$[0-9]|\d{4,}[./]\d{2}|ARS\s+\d|USD\s+\d/;
+        // Don't create FAQs with SPECIFIC prices/rates (inventados) but allow general price context.
+        // Allows: "hasta ARS 30 millones", "financiamos hasta el 50%"
+        // Blocks: "la cuota es ARS 45.000", "$12.500.000", exact decimal rates
+        const forbiddenPatterns = /\$\s*\d{4,}|\d{4,}[.,]\d{3}|\bARS\s+\d{4,}|\bUSD\s+\d{3,}|tasa\s+(?:del\s+)?\d+[,.]\d{2}/i;
         if (forbiddenPatterns.test(answer)) {
-          console.log(`[autoTrainer] skipping FAQ with likely price data: "${question}"`);
+          console.log(`[autoTrainer] skipping FAQ with specific price/rate data: "${question}"`);
           continue;
         }
 
