@@ -314,7 +314,30 @@ export async function learnFromConversation(
     }
 
     // ── 8. Promote high-quality captures to examples ───────────────────────
-    if (analysis.best_response && typeof analysis.best_response === 'string' && base.qualityScore && base.qualityScore >= 0.70) {
+    // Quality gate (multi-criteria) — all must pass before promoting:
+    //   a) GPT quality score >= 0.72 (raised from 0.70 to reduce noise)
+    //   b) GPT judged the conversation as answered (was_answered=true)
+    //   c) Lead outcome shows real intent (not 'no_advance' or 'closed_lost')
+    //   d) No hallucination signals (best_response must not contain specific prices)
+    const PROMOTE_SCORE_THRESHOLD = 0.72;
+    const PROMOTE_FORBIDDEN_OUTCOME = new Set(['no_advance', 'closed_lost']);
+    const hallucPriceRe = /\$\s*\d{5,}|\d{5,}[.,]\d{3}|\bARS\s+\d{5,}|\bUSD\s+\d{3,}/i;
+    const canPromote =
+      base.qualityScore !== null &&
+      base.qualityScore >= PROMOTE_SCORE_THRESHOLD &&
+      analysis.was_answered === true &&
+      !PROMOTE_FORBIDDEN_OUTCOME.has(String(analysis.lead_outcome ?? '')) &&
+      analysis.best_response &&
+      !hallucPriceRe.test(String(analysis.best_response ?? ''));
+
+    if (!canPromote && base.qualityScore !== null) {
+      console.log(
+        `[autoTrainer] skipping promotion for ${remoteJid.split('@')[0]}: ` +
+        `score=${base.qualityScore?.toFixed(2)} answered=${analysis.was_answered} outcome=${analysis.lead_outcome}`
+      );
+    }
+
+    if (canPromote && analysis.best_response && typeof analysis.best_response === 'string') {
       try {
         // Find the capture whose bot_response most closely matches the best_response
         const matchResult = await pool.query(
@@ -336,7 +359,7 @@ export async function learnFromConversation(
             const promoteResult = await promoteToExample(row.id, undefined, 'autoTrainer');
             if (promoteResult.ok) {
               base.promoted++;
-              console.log(`[autoTrainer] promoted capture #${row.id} to example`);
+              console.log(`[autoTrainer] promoted capture #${row.id} to example (score=${base.qualityScore?.toFixed(2)})`);
             }
             break;
           }

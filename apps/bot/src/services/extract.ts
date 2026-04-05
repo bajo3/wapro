@@ -82,9 +82,28 @@ function parseKm(text: string): number | null {
  * - contexto de presupuesto: "tengo 30" → 30 millones
  * - "800" suelto con contexto vehicular → 800.000 (ARS miles) o 800 (USD)
  */
-export function parseMoney(text: string): { amount: number; currency: 'ARS' | 'USD' } | null {
+/**
+ * parseMoneyResult — extends parseMoney with an `ambiguousCurrency` flag.
+ *
+ * `ambiguousCurrency=true` is set when:
+ *  - The number is small (< 1000) with no explicit currency marker.
+ *  - This could be USD (e.g. "tengo 20 mil" = USD 20.000) or ARS (meaningless amount).
+ *
+ * The agent uses this flag to ask for clarification before filtering the catalog,
+ * preventing "no hay stock" false negatives when USD is misread as ARS.
+ */
+export type ParseMoneyResult = {
+  amount: number;
+  currency: 'ARS' | 'USD';
+  ambiguousCurrency?: boolean;
+};
+
+export function parseMoney(text: string): ParseMoneyResult | null {
   const t = norm(text);
   const isUSD = /\b(?:dolares?|usd|u\$s|u\$d|\$u|verdes?|dolar)\b/.test(t);
+  const isARS = /\b(?:pesos?|ars|peso\s*argentino)\b/.test(t) || /\$(?!\s*u)/.test(text);
+  // Currency is explicit only if there's a clear marker
+  const hasCurrencyMarker = isUSD || isARS;
   const currency: 'ARS' | 'USD' = isUSD ? 'USD' : 'ARS';
 
   // Rango: "entre X y Y millones" → usar el mayor como techo
@@ -129,12 +148,22 @@ export function parseMoney(text: string): { amount: number; currency: 'ARS' | 'U
   if (big) return { amount: Number(big[1]), currency };
 
   // Número suelto con contexto de presupuesto → asumir millones
+  // Valores pequeños sin marcador de moneda (< 1000) se marcan como ambiguos.
+  // Ej: "tengo 20 mil" → puede ser ARS 20.000 (casi nada) o USD 20.000 (presupuesto alto).
   const budgetCtx = /\b(?:presupuesto|plata|guita|hasta|maximo?|dispongo|tengo|cuento\s+con)\b/i.test(t);
   if (budgetCtx) {
     const loose = t.match(/\b(\d{1,4})\b/);
     if (loose) {
       const n = Number(loose[1]);
-      if (n >= 5 && n <= 9999) return { amount: n * 1_000_000, currency };
+      if (n >= 5 && n <= 9999) {
+        // Ambiguous when the number could reasonably be USD (< 200 = likely USD budget range)
+        const likelyUsdRange = n >= 5 && n <= 200 && !hasCurrencyMarker;
+        return {
+          amount: n * 1_000_000,
+          currency,
+          ambiguousCurrency: likelyUsdRange,
+        };
+      }
     }
   }
 
@@ -147,7 +176,11 @@ export function parseMoney(text: string): { amount: number; currency: 'ARS' | 'U
       if (n >= 100 && n <= 9999) {
         // USD: dejar el número tal cual (800 USD = 800)
         // ARS: interpretar como miles (800 ARS → 800.000)
-        return { amount: isUSD ? n : n * 1_000, currency };
+        return {
+          amount: isUSD ? n : n * 1_000,
+          currency,
+          ambiguousCurrency: !hasCurrencyMarker,
+        };
       }
     }
   }
@@ -475,10 +508,14 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
   if (km !== null) out.km = km;
 
   // Budget — v3: maxPrice se setea con cualquier monto si no había uno previo
+  // v5: propaga ambiguousCurrency al contexto extraído para que el agente
+  //     pueda pedir aclaración antes de filtrar el catálogo con ARS vs USD.
   const money = parseMoney(t);
   if (money) {
     out.amount = money.amount;
     if (!out.currency) out.currency = money.currency;
+    // Flag ambiguous currency only when newly detected (don't carry over from prev turn)
+    out.ambiguousCurrency = money.ambiguousCurrency ?? false;
 
     const isExplicitCap = /\b(?:hasta|m[áa]ximo?|no\s+m[áa]s|tope|limite?)\b/i.test(t);
     if (isExplicitCap) {
@@ -488,6 +525,9 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
       // Implícito: solo si no había maxPrice
       out.maxPrice = money.amount;
     }
+  } else {
+    // No money detected in this turn — clear the flag from previous turns
+    out.ambiguousCurrency = false;
   }
 
   // Financing
@@ -853,7 +893,10 @@ export function shouldShowResults(ctx: Extracted): boolean {
  * IMPORTANT: patrones intencionalmente conservadores para evitar falsos positivos.
  */
 export function detectTopicChange(text: string): boolean {
-  return /\b(otra\s+cosa|cambio\s+de\s+tema|ahora\s+(busco|quiero|me\s+interesa|necesito)\b|algo\s+distinto|olvid[aá](te|lo|me)(\s+de\s+(eso|todo|lo\s+anterior))?|empez[ao]r\s+de\s+(cero|nuevo)|en\s+realidad\s+(busco|quiero|me\s+interesa)\b|cambi[eé]\s+de\s+idea|ya\s+no\s+me\s+interesa|no\s+lo\s+de\s+antes|busco\s+otra\s+(cosa|opci[oó]n)|quiero\s+ver\s+otra\s+cosa)\b/i.test(text);
+  // Extended pattern set — covers more natural Argentine reset phrases while
+  // staying conservative to avoid false positives on normal conversation.
+  // Note: JS regex does not support the x (verbose) flag; pattern kept on one line.
+  return /\b(otra\s+cosa|cambio\s+de\s+tema|ahora\s+(busco|quiero|me\s+interesa|necesito)|algo\s+distinto|olvid[aá](te|lo|me)(\s+de\s+(eso|todo|lo\s+anterior|la\s+camioneta|el\s+auto))?|empez[ao]r\s+de\s+(cero|nuevo)|en\s+realidad\s+(busco|quiero|me\s+interesa|necesito)|en\s+realidad[\s,]+olvid[aá]te|cambi[eé]\s+de\s+idea|ya\s+no\s+me\s+interesa|no\s+lo\s+de\s+antes|busco\s+otra\s+(cosa|opci[oó]n)|quiero\s+ver\s+otra\s+cosa|mejor\s+(busco|quiero|veo)\s+(algo|un|una)|no[\s,]+(mejor|espera|en\s+realidad)[\s,]+quiero|cambi[eé]\s+de\s+opini[oó]n|me\s+decid[ií]\s+por\s+otro|nada[\s,]+mejor\s+(busco|veo|quiero)|dejame\s+ver\s+otra\s+cosa)\b/i.test(text);
 }
 
 /**

@@ -293,7 +293,17 @@ export default function ImprovedTicketChat({
               onChange={async (e) => {
                 const next = e.target.value;
                 try {
-                  await api.put(`/tickets/${ticket.id}/bot-mode`, { botMode: next });
+                  const { data } = await api.put(`/tickets/${ticket.id}/bot-mode`, { botMode: next });
+                  // Warn operator if bot service did not acknowledge the mode change.
+                  // Panel DB is updated but bot may still be in old mode.
+                  if (data?._botSyncOk === false) {
+                    toastError(
+                      new Error(
+                        "⚠️ El modo se guardó en el panel pero el bot no confirmó el cambio. " +
+                        "Verificá la conexión con el bot antes de continuar."
+                      )
+                    );
+                  }
                 } catch (err) {
                   toastError(err);
                 }

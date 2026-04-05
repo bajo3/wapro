@@ -20,6 +20,7 @@
  */
 
 import { pool } from './db.js';
+import { env } from '../lib/env.js';
 
 export interface AgentDecision {
   intent?: string;
@@ -93,6 +94,12 @@ export function buildAgentSystemPrompt(
   if (ctx.rangeExpansion) intentFlags.push('EXPANDIR_RANGO: el cliente quiere ver opciones un poco más caras (+15-20% sobre el presupuesto actual)');
   if (ctx.isClosure) intentFlags.push('CIERRE_CONVERSACION: el cliente se despidió o agradeció');
   if (ctx.closingIntent) intentFlags.push('INTENCION_COMPRA: el cliente quiere avanzar — derivar a humano');
+  // FIX-05: Flag for ambiguous currency — agent must ask for clarification before filtering catalog
+  if (ctx.ambiguousCurrency) intentFlags.push(
+    'MONEDA_AMBIGUA: el cliente mencionó un monto sin especificar si son pesos o dólares. ' +
+    'ANTES de mostrar resultados, preguntá "¿Me decís si son pesos o dólares? Así te muestro las opciones correctas." ' +
+    'NO filtres el catálogo hasta recibir la aclaración.'
+  );
 
   const knownSection = knownFields.length
     ? `\nDATA YA CONOCIDA (NO VOLVER A PREGUNTAR ESTOS CAMPOS):\n${knownFields.map((f) => `  • ${f}`).join('\n')}`
@@ -104,6 +111,11 @@ export function buildAgentSystemPrompt(
 
   const loopSection = repeatedFields.length
     ? `\nCAMPOS QUE NO DEBÉS VOLVER A PEDIR (ya se preguntaron y el cliente no respondió):\n${repeatedFields.map((f) => `  • ${f}`).join('\n')}\n  → Avanzá con lo que tenés o usá rangos amplios.`
+    : '';
+
+  // FIX-09: Cold-lead fallback — after 4+ turns with zero data, show top catalog highlights
+  const coldLeadNote = turns >= 4 && !ctx.brand && !ctx.model && !ctx.maxPrice && !ctx.bodywork && !ctx.useCase
+    ? '\nLEAD FRÍO SIN DATOS (4+ turnos): No le hagas más preguntas. Mostrá los 3 autos más baratos o más populares del catálogo con su precio y año. Esto activa FOMO y le da algo concreto para reaccionar.'
     : '';
 
   const toneNote = turns > 6
@@ -182,15 +194,21 @@ export function buildAgentSystemPrompt(
     '  → Siempre cerrá con algo positivo: alternativas cercanas si existen, o la oferta de notificación.',
     '',
     '── FINANCIACIÓN Y CRÉDITO ──',
-    'Si el cliente pregunta por cuotas, crédito o financiación:',
-    '  1. NUNCA inventes montos de cuota ni tasas.',
-    '  2. Siempre se suma $200.000 de gastos administrativos al total.',
-    '  3. Se financia hasta el 50% del precio del vehículo como máximo.',
-    '  4. Si el cliente tiene un auto para entregar, el monto a financiar es: (precio - entrega + $200.000).',
-    '  5. Si sabés el precio y la entrega, hacé las cuentas y decile:',
-    '     "El monto a financiar sería $X (precio $Y - tu entrega $Z + $200.000 de gastos). Las cuotas exactas las saco cuando me confirmes."',
-    '  6. Para cuotas exactas: action=OFFER_FINANCING, pedí anticipo y plazo deseado.',
-    '  7. El año del vehículo afecta las cuotas (se usa para calcular con el cotizador).',
+    (() => {
+      const fee = env.financingAdminFee;
+      const feeStr = fee.toLocaleString('es-AR');
+      return [
+        'Si el cliente pregunta por cuotas, crédito o financiación:',
+        '  1. NUNCA inventes montos de cuota ni tasas.',
+        `  2. Siempre se suma $${feeStr} de gastos administrativos al total.`,
+        '  3. Se financia hasta el 50% del precio del vehículo como máximo.',
+        `  4. Si el cliente tiene un auto para entregar, el monto a financiar es: (precio - entrega + $${feeStr}).`,
+        '  5. Si sabés el precio y la entrega, hacé las cuentas y decile:',
+        `     "El monto a financiar sería $X (precio $Y - tu entrega $Z + $${feeStr} de gastos). Las cuotas exactas las saco cuando me confirmes."`,
+        '  6. Para cuotas exactas: action=OFFER_FINANCING, pedí anticipo y plazo deseado.',
+        '  7. El año del vehículo afecta las cuotas (se usa para calcular con el cotizador).',
+      ].join('\n');
+    })(),
     '',
     '── PREGUNTAS FRECUENTES (FAQ) ──',
     '• "¿Tienen financiación?" → "Sí, financiamos hasta el 50% del valor. ¿Tenés idea de cuánto podés poner de anticipo?"',
@@ -375,9 +393,17 @@ export function buildAgentSystemPrompt(
     // ── Patrones aprendidos: objeciones frecuentes, gaps de FAQ, caminos de cierre ──
     learningContextSection || '',
     '',
+    '',
+    '── VALIDACIÓN MARCA/MODELO (FIX-08) ──',
+    'Si el cliente combina una marca con un modelo que no le corresponde (ej: "Renault Hilux", "Ford Tracker", "Chevrolet Amarok", "Fiat Amarok"):',
+    '  → Corregí amablemente: "El [Modelo] es de [Marca correcta]. ¿Te referís a ese o querés ver los [Marca mencionada] que tenemos?"',
+    '  → Nunca busques ese par inválido en el catálogo.',
+    '  → Ofrecé: (a) el modelo con su marca correcta, (b) los modelos reales de la marca mencionada.',
+    '',
     knownSection,
     intentSection,
     loopSection,
+    coldLeadNote,
     toneNote,
     '',
     '── JSON ESPERADO (sin markdown, sin texto extra) ──',
@@ -615,6 +641,23 @@ export async function decideAgentAction(params: any & {
   });
 
   if (!result || typeof result !== 'object') return null;
+
+  // ── Sanitize vehicleIds: remove any ID that GPT invented and isn't in the real catalog ──
+  // This prevents data corruption in lead profiles and panel historial.
+  try {
+    const rawIds: unknown[] = Array.isArray(result.vehicleIds) ? result.vehicleIds : [];
+    if (rawIds.length > 0 && Array.isArray(catalog) && catalog.length > 0) {
+      const validIdSet = new Set(catalog.map((v: any) => String(v.id)));
+      const sanitized = rawIds.map(String).filter((id) => validIdSet.has(id));
+      if (sanitized.length !== rawIds.length) {
+        const invalid = rawIds.map(String).filter((id) => !validIdSet.has(id));
+        console.warn(`[agent] GPT returned ${invalid.length} invalid vehicleId(s) — removed:`, invalid);
+      }
+      result.vehicleIds = sanitized;
+    }
+  } catch {
+    // never block on sanitization errors
+  }
 
   // ── Audit response quality (non-blocking, logging only) ───────────────────
   try {

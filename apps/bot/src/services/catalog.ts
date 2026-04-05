@@ -16,6 +16,12 @@ const preferDbCatalog = process.env.CATALOG_PREFER_DB !== 'false';
  * Falling back to Railway can silently return an outdated/empty public.vehicles table
  * and make stock "disappear" intermittently.
  */
+
+// Track whether the current catalog load used a Supabase→Railway fallback.
+// Reset per getCatalog() call so stale flags don't persist across cache refreshes.
+let _catalogFallbackUsed = false;
+let _catalogAlertThrottleAt = 0;
+
 async function resilientCatalogQuery(sql: string, params?: any[]): Promise<{ rows: any[] }> {
   if (preferSupabaseForCatalog && supabasePool) {
     return supabasePool.query(sql, params);
@@ -24,10 +30,48 @@ async function resilientCatalogQuery(sql: string, params?: any[]): Promise<{ row
     try {
       return await supabasePool.query(sql, params);
     } catch (err: any) {
+      _catalogFallbackUsed = true;
       console.warn(`[catalog] supabasePool query failed (${err?.code ?? 'UNKNOWN'}: ${err?.message ?? err}), falling back to main pool`);
     }
   }
   return pool.query(sql, params);
+}
+
+/**
+ * Emit a throttled ops-level alert when the catalog is empty after a Supabase failure.
+ * Throttled to once per 5 minutes to avoid log spam during sustained outages.
+ */
+function emitCatalogEmptyAlert(context: string): void {
+  const now = Date.now();
+  if (now - _catalogAlertThrottleAt < 5 * 60 * 1000) return;
+  _catalogAlertThrottleAt = now;
+  console.error(
+    `[CATALOG ALERT] ⚠️  Catalog is EMPTY after DB load (${context}). ` +
+    'If Supabase is configured and unreachable, the bot will tell clients there is no stock. ' +
+    'Investigate DB connectivity immediately.'
+  );
+}
+
+// ─── Fuel normalizer ─────────────────────────────────────────────────────────
+
+/**
+ * normalizeFuel — normalizes raw fuel/combustible values from DB to a
+ * consistent canonical form used throughout the bot's catalog filters.
+ *
+ * Without this, values like "Nafta/GNC", "gas natural", "GAS" all fail
+ * to match the agent's filter for "gnc", causing false "no stock" answers.
+ */
+export function normalizeFuel(raw: string | undefined | null): string | undefined {
+  if (!raw) return undefined;
+  const t = raw.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+  if (/\b(gnc|gas\s*natural|gas\s*natural\s*comprimido)\b/.test(t) || t.includes('gnc')) return 'gnc';
+  if (/\b(diesel|gasoil|gas\s*oil|turbo\s*diesel|tdi|gasoilero)\b/.test(t)) return 'diesel';
+  if (/\b(electr[io]|ev|bev|zero\s*emission)\b/.test(t)) return 'electrico';
+  if (/\b(hibrido|hybrid|hev|phev)\b/.test(t)) return 'hibrido';
+  if (/\b(nafta|gasolina|naftero|naft)\b/.test(t)) return 'nafta';
+  // Mixed fuels with GNC take priority
+  if (t.includes('gnc') || t.includes('gas')) return 'gnc';
+  return raw.trim() || undefined;
 }
 
 export type CatalogItem = {
@@ -331,7 +375,9 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       const isNew: boolean = km === 0 || /\b(0\s*km|nuevo|new)\b/.test(statusStr) || /\b(0\s*km|nuevo|new)\b/.test((title || '').toLowerCase());
       const transmission = (row.transmission ?? undefined)?.toString().trim();
       const engine = (row.engine ?? undefined)?.toString().trim();
-      const fuel = (row.fuel ?? undefined)?.toString().trim();
+      // Normalize fuel to canonical form (gnc/diesel/nafta/electrico/hibrido)
+      // so agent filters work regardless of how the DB stores the value.
+      const fuel = normalizeFuel((row.fuel ?? undefined)?.toString());
       const color = (row.color ?? undefined)?.toString().trim();
       const bodywork = inferBodyworkFromRow(title, model, version, null);
       const priceNumber = coerceMoneyNumber(row.price);
@@ -624,12 +670,22 @@ export async function getCatalog(): Promise<CatalogItem[]> {
   // masking real Supabase/Railway stock.
   if (!env.catalogJsonUrl || preferDbCatalog) {
     if (cached && now - cachedAt < ttlMs) return cached;
+
+    // Reset fallback flag before each fresh load attempt
+    _catalogFallbackUsed = false;
+
     try {
       const items = await loadVehiclesFromDb(timeoutMs);
       if (items.length) {
         cached = items;
         cachedAt = now;
         return items;
+      }
+      // 0 items: check if a Supabase fallback happened (could be silent stock loss)
+      if (_catalogFallbackUsed) {
+        emitCatalogEmptyAlert('loadVehiclesFromDb — Supabase failed, Railway returned 0 rows');
+      } else {
+        console.warn('[catalog] fresh DB read returned 0 vehicles — DB table may be empty');
       }
       if (cached?.length) {
         console.warn('[catalog] fresh DB read returned 0 vehicles, reusing last good cache');
@@ -674,6 +730,7 @@ export async function getCatalog(): Promise<CatalogItem[]> {
     // than returning gaming demo products unrelated to automotive.
     const local = await tryLoadLocalCatalog();
     if (!local) {
+      emitCatalogEmptyAlert('all sources exhausted — no vehicles in DB, no local catalog.json');
       console.warn("[CATALOG] No vehicles in DB and no local catalog.json found. Returning empty catalog.");
       return EMPTY_CATALOG;
     }

@@ -1,6 +1,15 @@
 import fetch from 'node-fetch';
 import { createHash } from 'node:crypto';
+import { promises as fsp } from 'node:fs';
+import path from 'node:path';
 import { evolutionSendImage, evolutionSendText } from './evolution.js';
+
+// ─── Retry & dead-letter config ───────────────────────────────────────────────
+const PERSIST_MAX_RETRIES = 3;
+const PERSIST_RETRY_BASE_MS = 1000; // 1s, 3s, 9s (exponential backoff base 3)
+const DEAD_LETTER_FILE = process.env.PERSIST_DEAD_LETTER_FILE || '/tmp/wapro_failed_messages.jsonl';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function hashString(str: string): string {
   return createHash('sha1').update(str).digest('hex');
@@ -16,6 +25,132 @@ function extractNumber(remoteJidOrNumber: string): string {
   return normalizeRemoteJid(remoteJidOrNumber).split('@')[0] || '';
 }
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Append a failed message to the dead-letter file for later inspection or replay.
+ * Best-effort: if the write fails we log but never throw.
+ */
+async function writeToDeadLetter(payload: object, reason: string): Promise<void> {
+  const entry = JSON.stringify({
+    ts: new Date().toISOString(),
+    reason,
+    payload,
+  });
+  try {
+    await fsp.appendFile(DEAD_LETTER_FILE, entry + '\n');
+    console.error(
+      `[PERSIST_FAILED] Lead message written to dead-letter queue (${DEAD_LETTER_FILE}).`,
+      { reason }
+    );
+  } catch (writeErr) {
+    // File write failed — still log so there's an observable trace
+    console.error(
+      '[PERSIST_FAILED] Could not write to dead-letter file. Message is lost.',
+      { reason, writeErr }
+    );
+  }
+  // Emit ops-level alert so monitoring can pick it up
+  console.error('[PERSIST_FAILED] ⚠️  A bot message failed to reach the panel after all retries. ' +
+    'Check panel connectivity and BOT_ADMIN_TOKEN. Details:', { reason });
+}
+
+// ─── Core persist function (with retry) ──────────────────────────────────────
+
+interface PersistPayload {
+  syntheticId: string;
+  instance: string;
+  remoteJid: string;
+  text: string;
+  mediaUrl?: string | null;
+  mediaType?: string | null;
+  fromMe: boolean;
+  ack: number;
+  read: boolean;
+  ticketStatus: string | null;
+  botMode: string | null;
+  handoff: boolean;
+}
+
+/**
+ * Single fetch attempt. Returns `true` on HTTP 2xx, throws on network error.
+ */
+async function attemptPersist(backendUrl: string, adminToken: string, body: PersistPayload): Promise<boolean> {
+  const response = await fetch(`${backendUrl}/webhooks/bot/messages`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-admin-token': adminToken,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (response.ok) return true;
+
+  const responseBody = await response.text().catch(() => '');
+  console.error('[panelPersistence] HTTP error persisting bot message', {
+    status: response.status,
+    statusText: response.statusText,
+    body: responseBody.slice(0, 300),
+    instance: body.instance,
+    remoteJid: body.remoteJid,
+  });
+  // Treat 4xx as non-retriable (misconfiguration), 5xx as retriable
+  if (response.status >= 400 && response.status < 500) {
+    throw Object.assign(new Error(`HTTP ${response.status} — not retrying`), { fatal: true });
+  }
+  // 5xx — return false so caller retries
+  return false;
+}
+
+/**
+ * Persist with retry and dead-letter fallback.
+ * - Up to PERSIST_MAX_RETRIES attempts with exponential backoff (1s, 3s, 9s)
+ * - On final failure: write to dead-letter file and emit ops alert
+ */
+async function persistWithRetry(
+  backendUrl: string,
+  adminToken: string,
+  body: PersistPayload
+): Promise<void> {
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= PERSIST_MAX_RETRIES; attempt++) {
+    try {
+      const ok = await attemptPersist(backendUrl, adminToken, body);
+      if (ok) {
+        if (attempt > 1) {
+          console.log(`[panelPersistence] message persisted on attempt ${attempt}`);
+        }
+        return;
+      }
+      // Non-2xx but retriable — wait then retry
+      if (attempt < PERSIST_MAX_RETRIES) {
+        const delayMs = PERSIST_RETRY_BASE_MS * Math.pow(3, attempt - 1);
+        console.warn(`[panelPersistence] attempt ${attempt} failed (non-2xx), retrying in ${delayMs}ms…`);
+        await sleep(delayMs);
+      }
+    } catch (err: any) {
+      lastError = err;
+      if (err?.fatal) {
+        // 4xx fatal: no point retrying
+        await writeToDeadLetter(body, String(err.message));
+        return;
+      }
+      if (attempt < PERSIST_MAX_RETRIES) {
+        const delayMs = PERSIST_RETRY_BASE_MS * Math.pow(3, attempt - 1);
+        console.warn(`[panelPersistence] attempt ${attempt} network error, retrying in ${delayMs}ms…`, err);
+        await sleep(delayMs);
+      }
+    }
+  }
+
+  // All retries exhausted
+  await writeToDeadLetter(body, lastError ? String((lastError as any).message ?? lastError) : 'all_retries_exhausted');
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 export async function persistBotOutboundMessage(params: {
   instance: string;
   remoteJid: string;
@@ -27,7 +162,7 @@ export async function persistBotOutboundMessage(params: {
   ticketStatus?: 'pending' | 'open' | 'closed';
   botMode?: 'ON' | 'OFF' | 'HUMAN_ONLY';
   handoff?: boolean;
-}) {
+}): Promise<void> {
   const backendUrl = String(process.env.BACKEND_URL || '').replace(/\/$/, '');
   const adminToken = String(process.env.BOT_ADMIN_TOKEN || '').trim();
   const remoteJid = normalizeRemoteJid(params.remoteJid);
@@ -40,42 +175,22 @@ export async function persistBotOutboundMessage(params: {
 
   const syntheticId = `bot-${params.instance}-${number}-${Date.now()}-${hashString(`${text}|${imageUrl || ''}`)}`;
 
-  try {
-    const response = await fetch(`${backendUrl}/webhooks/bot/messages`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-admin-token': adminToken
-      },
-      body: JSON.stringify({
-        id: syntheticId,
-        instance: params.instance,
-        remoteJid,
-        text,
-        mediaUrl: imageUrl || null,
-        mediaType: params.mediaType ?? (imageUrl ? 'image' : null),
-        fromMe: true,
-        ack: Number.isFinite(Number(params.ack)) ? Number(params.ack) : 1,
-        read: params.read !== false,
-        ticketStatus: params.ticketStatus ?? null,
-        botMode: params.botMode ?? null,
-        handoff: Boolean(params.handoff)
-      })
-    });
+  const body: PersistPayload = {
+    syntheticId,
+    instance: params.instance,
+    remoteJid,
+    text,
+    mediaUrl: imageUrl || null,
+    mediaType: params.mediaType ?? (imageUrl ? 'image' : null),
+    fromMe: true,
+    ack: Number.isFinite(Number(params.ack)) ? Number(params.ack) : 1,
+    read: params.read !== false,
+    ticketStatus: params.ticketStatus ?? null,
+    botMode: params.botMode ?? null,
+    handoff: Boolean(params.handoff),
+  };
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      console.error('Failed to persist bot outbound message', {
-        status: response.status,
-        statusText: response.statusText,
-        body,
-        instance: params.instance,
-        remoteJid
-      });
-    }
-  } catch (err) {
-    console.error('Failed to persist bot outbound message', err);
-  }
+  await persistWithRetry(backendUrl, adminToken, body);
 }
 
 export async function sendTextAndPersist(
@@ -87,7 +202,7 @@ export async function sendTextAndPersist(
     botMode?: 'ON' | 'OFF' | 'HUMAN_ONLY';
     handoff?: boolean;
   }
-) {
+): Promise<void> {
   const remoteJid = normalizeRemoteJid(remoteJidOrNumber);
   const number = extractNumber(remoteJid);
   const body = String(text || '').trim();
@@ -100,7 +215,7 @@ export async function sendTextAndPersist(
     mediaType: null,
     ticketStatus: options?.ticketStatus,
     botMode: options?.botMode,
-    handoff: options?.handoff
+    handoff: options?.handoff,
   });
 }
 
@@ -114,7 +229,7 @@ export async function sendImageAndPersist(
     botMode?: 'ON' | 'OFF' | 'HUMAN_ONLY';
     handoff?: boolean;
   }
-) {
+): Promise<void> {
   const remoteJid = normalizeRemoteJid(remoteJidOrNumber);
   const number = extractNumber(remoteJid);
   const url = String(imageUrl || '').trim();
@@ -129,6 +244,6 @@ export async function sendImageAndPersist(
     mediaType: 'image',
     ticketStatus: options?.ticketStatus,
     botMode: options?.botMode,
-    handoff: options?.handoff
+    handoff: options?.handoff,
   });
 }

@@ -52,6 +52,7 @@ import {
   type SourceType
 } from '../services/learning.js';
 import { applyGuardrail, validateReply } from '../services/guardrails.js';
+import { detectStagnation } from '../services/conversationAnalyzer.js';
 
 export const webhookRouter = Router();
 
@@ -1724,6 +1725,28 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               noStockContext: !!(newState as any)._noStockContext,
               memoryBlock: memoryBlock || undefined,
             });
+
+            // ── FIX-10: Stagnation check — force handoff if conversation is stuck ──────
+            if (agentDecision && !agentDecision.handoffRecommended) {
+              try {
+                const prevExtracted = (state as any)?.extracted_prev ?? undefined;
+                const stagnation = detectStagnation({
+                  history: history.slice(-10),
+                  extracted: mergedExtracted,
+                  prevExtracted,
+                  intent: { primaryIntent: agentDecision.intent as any, subIntent: null, confidence: agentDecision.confidence ?? 0.5, signals: [], nextBestAction: 'CONTINUE_AGENT', requiresHuman: false },
+                  leadScore: Number(state.leadScore ?? 0),
+                  userTurnCount: Number(state.user_msg_count ?? 0),
+                });
+                if (stagnation.isStagnant) {
+                  agentDecision.handoffRecommended = true;
+                  agentDecision.internalReason = `[stagnation] ${stagnation.reason}`;
+                  console.warn(`[webhooks] stagnation detected for ${remoteJid.slice(0, 12)} — forcing handoff. Reason: ${stagnation.reason}`);
+                }
+              } catch {
+                // never block agent on stagnation errors
+              }
+            }
 
             if (agentDecision?.suggestedReply) {
               // Apply guardrail to agent response before using it

@@ -230,23 +230,35 @@ export const updateBotMode = async (
   let next: "ON" | "OFF" | "HUMAN_ONLY" = "ON";
   if (raw === "OFF" || raw === "HUMAN_ONLY" || raw === "ON") next = raw as any;
 
+  // Track whether the bot service acknowledged the mode change.
+  // If it didn't, we still persist in the panel DB but warn the caller.
+  let botSyncOk = true;
+  let botSyncError: string | undefined;
+
   try {
     if (instance && remoteJid) {
       if (next === "ON") {
+        // Deletion is best-effort (removing the override rule)
         void botDeleteConversationRule({ instance, remoteJid });
       } else {
-        void botSetConversationMode({
+        const modeResult = await botSetConversationMode({
           instance,
           remoteJid,
           botMode: next,
           notes: "panel_toggle"
         });
+        if (!modeResult.ok) {
+          botSyncOk = false;
+          botSyncError = modeResult.error;
+        }
       }
     }
-  } catch {
-    // best-effort
+  } catch (err: any) {
+    botSyncOk = false;
+    botSyncError = String(err?.message ?? err);
   }
 
+  // Always persist the intent in the panel DB regardless of bot sync result.
   await ticket.update({ botMode: next });
 
   const io = getIO();
@@ -255,7 +267,13 @@ export const updateBotMode = async (
     ticket
   });
 
-  return res.status(200).json(ticket);
+  // Return 200 with the ticket, but include a warning flag if bot sync failed.
+  // Frontend can display a warning toast to alert the operator.
+  return res.status(200).json({
+    ...ticket.get({ plain: true }),
+    _botSyncOk: botSyncOk,
+    _botSyncError: botSyncOk ? undefined : botSyncError,
+  });
 };
 
 export const remove = async (

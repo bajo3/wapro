@@ -75,6 +75,13 @@ export const env = (() => {
       .split(',')
       .map((s) => s.trim())
       .filter((s) => s.length > 0),
+    // ── Financing ─────────────────────────────────────────────────────────────
+    // Administrative fee added to every financed amount (ARS).
+    // Keep in sync with the actual agency policy — incorrect value causes wrong
+    // financing estimates in bot conversations.
+    // Default: 200_000 ARS. Override via FINANCING_ADMIN_FEE_ARS in Railway env.
+    financingAdminFee: Number(process.env.FINANCING_ADMIN_FEE_ARS ?? '200000'),
+
     // Debug logs
     debugWebhooks: boolFromString(process.env.DEBUG_WEBHOOKS, false),
     // Optionally split long multi-line replies into two messages

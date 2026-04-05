@@ -33,13 +33,27 @@ export async function botForwardEvolutionWebhook(payload: any): Promise<void> {
   }
 }
 
+export interface BotModeResult {
+  ok: boolean;
+  status: number;
+  error?: string;
+}
+
+/**
+ * Sets the conversation mode on the bot service.
+ * Returns { ok, status, error } so callers can detect failure and show feedback to operators.
+ * A failed call means the panel and bot are out of sync — the operator must be informed.
+ */
 export async function botSetConversationMode(params: {
   instance: string;
   remoteJid: string;
   botMode: "ON" | "OFF" | "HUMAN_ONLY";
   notes?: string;
-}): Promise<void> {
-  if (!isConfigured() || !BOT_ADMIN_TOKEN) return;
+}): Promise<BotModeResult> {
+  if (!isConfigured() || !BOT_ADMIN_TOKEN) {
+    // Bot not configured — treat as soft success (no bot to change mode on)
+    return { ok: true, status: 0 };
+  }
 
   try {
     const url = `${BOT_URL}/admin/conversation-rules`;
@@ -60,9 +74,13 @@ export async function botSetConversationMode(params: {
     if (!r.ok) {
       const text = await r.text().catch(() => "");
       logger.warn({ status: r.status, text }, "botSetConversationMode failed");
+      return { ok: false, status: r.status, error: `HTTP ${r.status}: ${text.slice(0, 200)}` };
     }
+    return { ok: true, status: r.status };
   } catch (err: any) {
-    logger.warn({ err: String(err?.message ?? err) }, "botSetConversationMode error");
+    const msg = String(err?.message ?? err);
+    logger.warn({ err: msg }, "botSetConversationMode error");
+    return { ok: false, status: 0, error: msg };
   }
 }
 

@@ -469,6 +469,93 @@ export function buildConversationContext(params: {
   };
 }
 
+// ─── Stagnation Detector ─────────────────────────────────────────────────────
+
+export interface StagnationResult {
+  /** True if the conversation has stalled without meaningful progress */
+  isStagnant: boolean;
+  /** How many consecutive turns had no new useful data extracted */
+  stagnantTurns: number;
+  /** True if the extracted context has not changed across the last N user turns */
+  extractedUnchanged: boolean;
+  /** True if the same intent appeared 3+ times without action */
+  intentLoop: boolean;
+  /** Reason string for logging / agent context */
+  reason: string;
+}
+
+/**
+ * detectStagnation — detects conversations where the bot and client are going
+ * in circles without progressing toward a sale.
+ *
+ * Triggers escalation when:
+ *  - The extracted context has not changed across 3+ consecutive user turns, OR
+ *  - The same intent was repeated 3+ times, OR
+ *  - There have been 9+ total turns without a closing action.
+ *
+ * Used by the webhook handler to force handoffRecommended=true and log a
+ * stagnation event visible to operators in the panel.
+ */
+export function detectStagnation(params: {
+  history: Array<{ role: string; content: string }>;
+  extracted: Record<string, any>;
+  /** Snapshot of extracted from N turns ago — used to detect unchanged context */
+  prevExtracted?: Record<string, any>;
+  intent: IntentAnalysis;
+  leadScore: number;
+  userTurnCount: number;
+}): StagnationResult {
+  const { history, extracted, prevExtracted, intent, leadScore, userTurnCount } = params;
+
+  const base: StagnationResult = {
+    isStagnant: false,
+    stagnantTurns: 0,
+    extractedUnchanged: false,
+    intentLoop: false,
+    reason: '',
+  };
+
+  // Don't flag stagnation if lead is hot or already escalating
+  if (leadScore >= 60 || intent.requiresHuman || intent.primaryIntent === 'closing') {
+    return base;
+  }
+
+  // ── Check 1: Extracted context unchanged for 3+ turns ────────────────────
+  // Compare current extracted against snapshot from 3 turns ago.
+  // If the key vehicle-search fields are identical → no progress.
+  const trackFields = ['brand', 'model', 'maxPrice', 'bodywork', 'fuel', 'transmission', 'condition', 'useCase'];
+  let extractedUnchanged = false;
+  if (prevExtracted && userTurnCount >= 3) {
+    const current = trackFields.map((f) => String(extracted?.[f] ?? '')).join('|');
+    const prev = trackFields.map((f) => String(prevExtracted?.[f] ?? '')).join('|');
+    extractedUnchanged = current === prev && current !== '||||||';
+  }
+
+  // ── Check 2: Intent loop — same intent 3+ consecutive user turns ─────────
+  const userMessages = history.filter((h) => h.role === 'user').slice(-4);
+  const intentLoop = userMessages.length >= 3 &&
+    ['greeting', 'general_inquiry'].includes(intent.primaryIntent) &&
+    userTurnCount >= 4;
+
+  // ── Check 3: Total turns threshold — long conv without close ─────────────
+  const tooManyTurns = userTurnCount >= 9 && leadScore < 50;
+
+  const isStagnant = extractedUnchanged || intentLoop || tooManyTurns;
+
+  let reason = '';
+  if (tooManyTurns) reason = `${userTurnCount} turnos sin cierre (score=${leadScore})`;
+  else if (intentLoop) reason = `intent loop: ${intent.primaryIntent} repetido sin avance`;
+  else if (extractedUnchanged) reason = 'contexto de búsqueda sin cambios en últimos 3 turnos';
+
+  return {
+    isStagnant,
+    stagnantTurns: extractedUnchanged ? 3 : 0,
+    extractedUnchanged,
+    intentLoop,
+    reason,
+  };
+}
+
 // ─── Decision Logger Helper ───────────────────────────────────────────────────
 
 /**
