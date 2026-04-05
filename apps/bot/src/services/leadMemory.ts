@@ -138,18 +138,39 @@ export async function loadLeadMemory(
 /**
  * Funde la memoria de la DB con el `extracted` de la sesión actual.
  *
- * REGLA: la sesión activa tiene prioridad. La DB solo completa campos vacíos.
- * Esto garantiza que datos nuevos del mensaje actual no sean pisados por datos viejos.
+ * REGLA: la sesión activa siempre tiene prioridad. La DB solo completa campos vacíos.
+ *
+ * Cuando `topicChanged = true` (el usuario indicó querer buscar algo distinto):
+ *  - NO se inyectan campos de vehículo (brand, model, bodywork, fuel, etc.)
+ *  - SÍ se mantiene el presupuesto como piso débil (puede seguir siendo válido)
+ *  - SÍ se mantiene ciudad/nombre (datos personales no ligados al vehículo)
+ *
+ * Esto evita que la memoria previa pise la intención actual cuando el cliente
+ * explícitamente cambió de tema ("otra cosa", "ahora busco", etc.).
  */
 export function mergeMemoryIntoExtracted(
   sessionExtracted: Record<string, any>,
-  memory: LeadMemory | null
+  memory: LeadMemory | null,
+  options?: { topicChanged?: boolean }
 ): Record<string, any> {
   if (!memory) return sessionExtracted;
 
+  const topicChanged = options?.topicChanged ?? false;
   const merged: Record<string, any> = { ...sessionExtracted };
 
-  // Completar solo lo que la sesión NO tiene
+  if (topicChanged) {
+    // Topic change: solo inyectar presupuesto (contexto débil) y datos personales.
+    // NUNCA inyectar brand/model/vehicle-specific — el cliente quiere algo distinto.
+    if (!merged.maxPrice && !merged.amount) {
+      if (memory.budgetMax) merged.maxPrice = memory.budgetMax;
+      if (memory.budgetAmount) merged.amount = memory.budgetAmount;
+      if (!merged.currency && memory.currency) merged.currency = memory.currency;
+    }
+    if (!merged.city && memory.city) merged.city = memory.city;
+    return merged;
+  }
+
+  // Flujo normal: completar solo lo que la sesión NO tiene
   if (!merged.brand && memory.preferredBrand) merged.brand = memory.preferredBrand;
   if (!merged.model && memory.preferredModel) merged.model = memory.preferredModel;
   if (!merged.maxPrice && memory.budgetMax) merged.maxPrice = memory.budgetMax;

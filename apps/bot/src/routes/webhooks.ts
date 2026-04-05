@@ -39,6 +39,9 @@ import {
   detectVisitInterest,
   mergeShownVehicleIds,
   extractShownVehicleIdsFromHistory,
+  detectTopicChange,
+  clearVehicleContext,
+  sanitizeBrandModel,
 } from '../services/leadProfile.js';
 import { rankVehiclesForLead } from '../services/vehicleRanker.js';
 import { auditTurnQuality, logTurnAudit, accumulateAuditMetrics } from '../services/commercialAudit.js';
@@ -286,8 +289,21 @@ function isTruckishName(name: string): boolean {
   return /(camion\b|truck\b|furgon|utilitario|pickup|pick\s*up|hilux|amarok|ranger|s10|frontier|sprinter|ducato|master)/.test(n);
 }
 
-function mergeSearchContext(prev: any, extracted: any) {
-  const next = { ...(prev || {}) };
+function mergeSearchContext(prev: any, extracted: any, topicChanged = false) {
+  // Topic change: reset vehicle context, keep only budget + personal data
+  const base = topicChanged
+    ? {
+        // Presupuesto previo como piso débil (puede seguir siendo válido)
+        ...(prev?.maxPrice !== undefined ? { maxPrice: prev.maxPrice } : {}),
+        ...(prev?.amount !== undefined ? { amount: prev.amount } : {}),
+        ...(prev?.currency ? { currency: prev.currency } : {}),
+        // Datos personales no ligados al vehículo
+        ...(prev?.name ? { name: prev.name } : {}),
+        ...(prev?.city ? { city: prev.city } : {}),
+      }
+    : { ...(prev || {}) };
+
+  const next = { ...base };
   if (extracted?.brand) next.brand = extracted.brand;
   if (extracted?.model) next.model = extracted.model;
   if (extracted?.minYear) next.minYear = extracted.minYear;
@@ -814,8 +830,19 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         : {})
     };
 
+    // ── Topic change detection (before extracting, affects prev context used) ──
+    const topicChanged = detectTopicChange(rawText);
+
     // Merge extracted fields across turns.
-    const extracted = extractLeadFields(rawText, (state as any)?.extracted ?? (state as any)?.lead ?? {});
+    // On topic change: pass cleared prev to avoid contaminating new search with old vehicle data.
+    const prevForExtract = topicChanged
+      ? clearVehicleContext((state as any)?.extracted ?? (state as any)?.lead ?? {})
+      : ((state as any)?.extracted ?? (state as any)?.lead ?? {});
+    const extracted = extractLeadFields(rawText, prevForExtract);
+
+    if (topicChanged) {
+      console.log(`[webhooks] topic change detected for ${remoteJid.slice(0, 12)} — resetting vehicle context`);
+    }
 
     // ── Resolve lead memory and merge into extracted ──────────────────────────
     const leadMemory = await memoryPromise;
@@ -826,9 +853,10 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       (state as any)?.search_context?.maxPrice
     );
     const isRecontactTurn = isRecontact(leadMemory, sessionHadContext && !contextExpired);
-    // When context expired or first visit with DB memory: fill gaps from persistent profile
+    // When context expired or first visit with DB memory: fill gaps from persistent profile.
+    // On topic change: skip vehicle-specific fields from memory (user wants something different).
     if (leadMemory && (contextExpired || !sessionHadContext)) {
-      const enriched = mergeMemoryIntoExtracted(extracted, leadMemory);
+      const enriched = mergeMemoryIntoExtracted(extracted, leadMemory, { topicChanged });
       Object.assign(extracted, enriched);
     }
 
@@ -838,7 +866,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     state.last_user_at = nowIso;
 
     // Accumulate search context across turns.
-    const nextSearchCtx = mergeSearchContext(state.search_context, extracted);
+    // On topic change: reset vehicle fields from prev context, keep budget/personal data.
+    const nextSearchCtx = mergeSearchContext(state.search_context, extracted, topicChanged);
     state.search_context = nextSearchCtx;
     state.search_context_at = nowIso;
 
@@ -979,8 +1008,10 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             mainObjection: (nextState as any)?._mainObjection ?? null,
             lastCtaOffered: extractedCta,
             visitInterest: hasVisitInterest || null,
-            shownVehicleIds: newShownIds.length ? newShownIds : null,
-            incrementRecontact: isRecontactTurn,
+            // On topic change: reset shown vehicle IDs (new search, don't block any vehicle)
+            shownVehicleIds: topicChanged ? [] : (newShownIds.length ? newShownIds : null),
+            // Don't count topic-change turns as recontact (it's not a warm resume, it's a new search)
+            incrementRecontact: isRecontactTurn && !topicChanged,
           });
 
           const sock = getSocket();
@@ -1599,15 +1630,26 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             const turns = (state as any).gpt_history ?? [];
             for (const t of turns.slice(-6)) history.push({ role: t.role, content: t.content });
 
-            // Merge search_context + extracted + lead memory para que el agente tenga el contexto completo acumulado
-            const mergedExtracted = mergeMemoryIntoExtracted(
+            // Merge search_context + extracted + lead memory para que el agente tenga el contexto completo acumulado.
+            // On topic change: mergeMemoryIntoExtracted skips vehicle fields from DB memory.
+            const mergedExtractedRaw = mergeMemoryIntoExtracted(
               { ...(state.search_context ?? {}), ...extracted },
-              leadMemory
+              leadMemory,
+              { topicChanged }
             );
+            // Guardrail final: eliminar pares brand+model semánticamente inválidos (ej: "ford+strada")
+            const mergedExtracted = sanitizeBrandModel(mergedExtractedRaw);
+
+            if (mergedExtractedRaw.brand !== mergedExtracted.brand || mergedExtractedRaw.model !== mergedExtracted.model) {
+              console.warn(`[webhooks] sanitizeBrandModel corrected context: ${mergedExtractedRaw.brand}+${mergedExtractedRaw.model} → ${mergedExtracted.brand}+${mergedExtracted.model ?? '(sin modelo)'}`);
+            }
 
             // ── Shown vehicles: combinar DB + historial de sesión ────────────────
+            // On topic change: no reutilizar shown_vehicle_ids anteriores (nueva búsqueda)
             const historyShownIds = extractShownVehicleIdsFromHistory(history);
-            const allShownIds = mergeShownVehicleIds(leadMemory?.shownVehicleIds, historyShownIds);
+            const allShownIds = topicChanged
+              ? []  // reset: new topic → show fresh vehicles
+              : mergeShownVehicleIds(leadMemory?.shownVehicleIds, historyShownIds);
 
             // ── Ranking comercial del catálogo (priorizá relevancia para este lead) ──
             let rankedCatalog: any[] = catalog;
@@ -1627,11 +1669,15 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             }
 
             // ── Memoria comercial: bloque para inyectar al agente ────────────────
+            // On topic change: don't inject a "returning customer" block — it's misleading
+            // when the user already signaled they want something completely different.
             let memoryBlock = '';
             try {
-              memoryBlock = buildMemorySummaryBlock(leadMemory, isRecontactTurn, { skipIfEmpty: true });
-              if (isRecontactTurn) {
-                console.log(`[leadMemory] recontact detected for ${remoteJid.slice(0, 12)} (count=${leadMemory?.recontactCount ?? 0})`);
+              if (!topicChanged) {
+                memoryBlock = buildMemorySummaryBlock(leadMemory, isRecontactTurn, { skipIfEmpty: true });
+                if (isRecontactTurn) {
+                  console.log(`[leadMemory] recontact detected for ${remoteJid.slice(0, 12)} (count=${leadMemory?.recontactCount ?? 0})`);
+                }
               }
             } catch { /* non-blocking */ }
 

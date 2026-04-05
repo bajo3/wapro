@@ -14,6 +14,9 @@ export {
 } from './leadMemory.js';
 export type { LeadMemory } from './leadMemory.js';
 
+// Re-export topic change + brand-model validator from extract.ts
+export { detectTopicChange, clearVehicleContext, sanitizeBrandModel } from './extract.js';
+
 export async function upsertLeadProfile(input: {
   instance: string;
   remoteJid: string;

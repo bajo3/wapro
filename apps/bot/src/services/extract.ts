@@ -496,9 +496,30 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
   const cuotas = parseCuotas(t);
   if (cuotas) out.cuotas = cuotas;
 
-  // Brand / model
+  // Brand / model — v4: respect semantic link between brand+model detected together
+  // and handle brand switches cleanly (changing brand must clear model from old brand).
   const bm = detectBrandModel(t);
-  if (bm.brand && !out.brand) out.brand = bm.brand;
+  if (bm.brand && bm.model) {
+    // Both detected in this message — they're semantically linked, always override.
+    // Prevents accumulating brand from memory + model from current message → invalid pair.
+    out.brand = bm.brand;
+    out.model = bm.model;
+  } else if (bm.brand) {
+    const normalizedNew = norm(bm.brand);
+    const normalizedPrev = norm(out.brand ?? '');
+    if (!out.brand || normalizedNew === normalizedPrev) {
+      // No previous brand or same brand: update normally
+      out.brand = bm.brand;
+    } else {
+      // Brand changed → update brand AND clear model if it belonged to the old brand
+      const oldBrandModels: string[] = (BRAND_MODELS as any)[normalizedPrev] ?? [];
+      const prevModel = norm(out.model ?? '');
+      if (prevModel && oldBrandModels.includes(prevModel)) {
+        delete out.model; // model from old brand is now semantically invalid
+      }
+      out.brand = bm.brand;
+    }
+  }
   if (bm.model && !out.model) out.model = bm.model;
 
   // Vehicle attributes
@@ -818,6 +839,66 @@ export function shouldShowResults(ctx: Extracted): boolean {
   if (ctx?.cheapestRequest) return true;
   const hasFilter = !!(ctx?.brand || ctx?.model || ctx?.maxPrice || ctx?.amount || ctx?.bodywork || ctx?.condition || ctx?.useCase || ctx?.fuel || ctx?.transmission);
   return hasFilter;
+}
+
+// ─── Topic Change Detection ───────────────────────────────────────────────────
+
+/**
+ * detectTopicChange — detecta cuando el usuario indica explícitamente que quiere
+ * buscar algo distinto a lo anterior ("otra cosa", "cambio de tema", "ahora busco").
+ *
+ * Cuando esto ocurre, el contexto de vehículo acumulado debe resetearse para
+ * no contaminar la nueva búsqueda con datos de la búsqueda anterior.
+ *
+ * IMPORTANT: patrones intencionalmente conservadores para evitar falsos positivos.
+ */
+export function detectTopicChange(text: string): boolean {
+  return /\b(otra\s+cosa|cambio\s+de\s+tema|ahora\s+(busco|quiero|me\s+interesa|necesito)\b|algo\s+distinto|olvid[aá](te|lo|me)(\s+de\s+(eso|todo|lo\s+anterior))?|empez[ao]r\s+de\s+(cero|nuevo)|en\s+realidad\s+(busco|quiero|me\s+interesa)\b|cambi[eé]\s+de\s+idea|ya\s+no\s+me\s+interesa|no\s+lo\s+de\s+antes|busco\s+otra\s+(cosa|opci[oó]n)|quiero\s+ver\s+otra\s+cosa)\b/i.test(text);
+}
+
+/**
+ * clearVehicleContext — elimina campos específicos de vehículo del contexto acumulado.
+ * Retiene: presupuesto, nombre, ciudad (datos personales no atados al vehículo buscado).
+ * Usar en topic change para hacer soft-reset del contexto de búsqueda.
+ */
+export function clearVehicleContext(ctx: Record<string, any>): Record<string, any> {
+  const {
+    brand, model, bodywork, transmission, fuel, year, minYear, maxYear,
+    condition, color, gnc, implicitFuelHint, implicitBodyHint,
+    showIntent, closingIntent, rangeExpansion, cheapestRequest,
+    // keep: maxPrice, amount, currency, name, city, useCase, hasTradeIn, wantsFinancing
+    ...rest
+  } = ctx;
+  return rest;
+}
+
+// ─── Brand-Model Semantic Validator ──────────────────────────────────────────
+
+/**
+ * sanitizeBrandModel — valida que brand y model sean semánticamente coherentes.
+ *
+ * Problema real: si se acumula brand de memoria + model del mensaje actual,
+ * pueden combinarse marcas y modelos de distintas marcas (ej: "ford strada").
+ * Este guardrail detecta el par inválido y limpia el model, manteniendo el brand
+ * (que suele ser más fiable por ser más reciente o explícito).
+ *
+ * Si el brand no está en BRAND_MODELS (marca desconocida), no valida (pasa todo).
+ */
+export function sanitizeBrandModel(extracted: Record<string, any>): Record<string, any> {
+  const brand = norm(extracted.brand ?? '');
+  const model = norm(extracted.model ?? '');
+  if (!brand || !model) return extracted; // nada que validar
+
+  const validModels: string[] | undefined = BRAND_MODELS[brand];
+  if (!validModels) return extracted; // marca desconocida — no podemos validar
+
+  if (!validModels.includes(model)) {
+    // Par inválido — limpiar model, mantener brand
+    console.warn(`[extract] invalid brand-model pair detected: ${brand}+${model} → model cleared`);
+    const { model: _dropped, ...rest } = extracted;
+    return rest;
+  }
+  return extracted;
 }
 
 /**
