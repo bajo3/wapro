@@ -18,7 +18,11 @@ create index if not exists idx_bot_lead_profiles_city on bot_lead_profiles(insta
   where city is not null;
 
 -- 4. Vista útil para el panel de operadores: leads con mayor score + contexto
-create or replace view v_hot_leads as
+-- DROP + CREATE en vez de CREATE OR REPLACE para evitar error 42P16 cuando
+-- migrate() re-ejecuta este archivo con una view de estructura distinta ya existente.
+-- 016_commercial_memory.sql la vuelve a recrear con el set completo de columnas.
+drop view if exists v_hot_leads;
+create view v_hot_leads as
 select
   blp.instance,
   blp.remote_jid,
