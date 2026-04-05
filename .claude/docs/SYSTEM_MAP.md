@@ -1,47 +1,58 @@
-# System Map — Quién hace qué
+# System Map — `.claude` x WaPro
 
-## Capa 1: Orquestación
-### chief-of-staff-orchestrator
-- entrypoint principal
+## Capa 1 — Orquestación
+
+### `chief-of-staff-orchestrator`
+- entiende el pedido real
 - decide si resolver directo o delegar
-- consolida salida final
+- arma el orden de intervención
+- consolida y recorta ruido
 
-## Capa 2: Especialistas de ejecución
-### backend-fixer
-API, persistencia, contratos, DB, webhooks, encoding.
+## Capa 2 — Núcleo bot/comercial
 
-### frontend-ui-ux
-React, tickets, pipeline, cotizaciones, ergonomía y bugs de estado.
+### `bot-sales-brain`
+- intención comercial
+- siguiente mejor acción
+- tono vendedor
+- manejo de contexto
+- estrategia de follow-up
 
-### debug-deploy-ops
-Railway, builds, envs, CI/CD, runtime y drift local/prod.
+### `catalog-truth-guardian`
+- evita inventar stock, precio, financiación y disponibilidad
+- fuerza claridad ante datos incompletos
+- frena respuestas comercialmente riesgosas
 
-### data-sync-catalog
-catálogo, mapeos, syncs, calidad de datos, moneda/precio/modelo.
+### `conversation-judge`
+- score final
+- rechazo por fallos graves
+- corrección mínima necesaria
 
-### bot-sales-brain
-criterio vendedor, contexto, extracción de intención, objeciones.
+### `prompt-training-manager`
+- convierte errores repetidos en entrenamiento
+- mantiene prompts, policies, FAQs, playbooks y evaluaciones
 
-### prompt-training-manager
-prompts, ejemplos, FAQs, policies, playbooks, eval continua.
+## Capa 3 — Especialistas de ejecución
 
-### crm-product-owner
-priorización, UX funcional, roadmap y ROI del producto.
+### `backend-fixer`
+API, persistencia, webhooks, contratos y DB.
 
-### test-qa-guard
-casos de prueba, regresión y validación final.
+### `data-sync-catalog`
+fuentes de catálogo, normalización, currency y representación usable.
 
-## Capa 3: Guardrails
-### catalog-truth-guardian
-protege verdad comercial y calidad de catálogo.
+### `debug-deploy-ops`
+Railway, CI/CD, build, runtime, envs y logs.
 
-### revenue-commander
-fuerza siguiente mejor acción comercial.
+### `frontend-ui-ux`
+panel React, tickets, pipeline, cotizaciones y fricción de uso.
 
-### conversation-judge
-audita calidad final y detecta regresiones.
+### `crm-product-owner`
+priorización funcional, alcance y ROI operativo/comercial.
+
+### `test-qa-guard`
+riesgo, checks mínimos y readiness.
 
 ## Regla de composición
-- simple: orquestador + 1 especialista
-- medio: orquestador + 2 especialistas + 1 guardrail
-- alto impacto: orquestador + 2/3 especialistas + judge final
+
+- simple: 1 especialista
+- medio: 1 especialista + 1 guardrail
+- alto impacto: orquestador + 1/2 especialistas + judge

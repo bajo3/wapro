@@ -1,40 +1,34 @@
-# WaPro Elite Agents — Start Here
+# Start Here — WaPro
 
-Este pack ya viene fusionado con:
-- tus agentes especialistas existentes
-- capa de orquestación
-- guardrails comerciales
-- juez final de calidad
-- contrato de handoff
-- política de memoria
-- scorecard de evaluación
+## Orden recomendado
 
-## Orden de activación recomendado
 1. `shared/AGENT_OPERATING_SYSTEM.md`
-2. `agents/chief-of-staff-orchestrator.md`
-3. `shared/HANDOFF_CONTRACT.md`
-4. tus especialistas actuales
-5. `agents/catalog-truth-guardian.md`
-6. `agents/revenue-commander.md`
-7. `agents/conversation-judge.md`
-8. `shared/EVAL_SCORECARD.md`
+2. `docs/AGENT_MATRIX.md`
+3. `docs/RUNTIME_MAP.md`
+4. `agents/README.md`
+5. `prompts/master-orchestrator.md`
 
-## Agentes actuales incluidos
-- backend-fixer
-- bot-sales-brain
-- crm-product-owner
-- data-sync-catalog
-- debug-deploy-ops
-- frontend-ui-ux
-- prompt-training-manager
-- test-qa-guard
+## Ruta rápida según tarea
 
-## Nuevos agentes core
-- chief-of-staff-orchestrator
-- revenue-commander
-- catalog-truth-guardian
-- conversation-judge
+### Inteligencia del bot
+`bot-sales-brain` → `catalog-truth-guardian` → `prompt-training-manager` → `conversation-judge`
 
-## Principio clave
-No usar multiagente porque “suena pro”.
-Usarlo sólo cuando baja riesgo o mejora precisión.
+### Bug backend / contrato
+`backend-fixer` → `test-qa-guard` → `conversation-judge`
+
+### Catálogo / sync / moneda / precio
+`data-sync-catalog` → `catalog-truth-guardian` → `test-qa-guard`
+
+### UI / UX / panel
+`frontend-ui-ux` → `crm-product-owner` → `test-qa-guard`
+
+### Railway / logs / deploy
+`debug-deploy-ops` → `backend-fixer` si aparece causa de app → `test-qa-guard`
+
+### Tarea grande o ambigua
+`chief-of-staff-orchestrator`
+
+## Regla operativa
+
+Si el problema es simple, **no orquestes**.
+Si el problema es mixto o tiene riesgo alto, usá orquestación.

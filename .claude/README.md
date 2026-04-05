@@ -1,29 +1,56 @@
-# WaPro Elite Agents Pack
+# WaPro `.claude` — Optimizado para este proyecto
 
-Este ZIP fusiona tu pack original con una capa multiagente más seria.
+Esta carpeta está pensada para **Claude Code / Cowork aplicado a WaPro**, no como un pack genérico de agentes.
 
-## Qué trae
-- 8 especialistas originales
-- 4 nuevos agentes core
-- sistema operativo común
-- contrato de handoff
-- scorecard de eval
-- política de memoria
-- política de respuesta del bot
-- mapa del sistema y notas de implementación
+## Objetivo
 
-## Mejoras aplicadas
-- se agregó orquestación real
-- se agregaron guardrails comerciales y de verdad del catálogo
-- se agregó juez final de calidad
-- se corrigió la descripción inconsistente de `data-sync-catalog`
-- se dejó una estructura de arranque y operación más clara
+Ayudar a Claude a trabajar mejor sobre cuatro frentes reales del proyecto:
+
+1. **inteligencia comercial del bot**
+2. **verdad de catálogo y calidad de datos**
+3. **UI/UX y operación del panel**
+4. **bugs, deploy y regresiones**
+
+## Qué cambió en esta optimización
+
+- se eliminó `revenue-commander` porque duplicaba el criterio comercial de `bot-sales-brain`
+- se removió `settings.local.json` porque era **local, sensible y atado a una PC específica**
+- se estandarizaron agentes con **scope, inputs, outputs y anti-solapamiento**
+- se alineó la documentación con el runtime real de WaPro
+- se completó la carpeta `skills/` con las capacidades comerciales base
+- se completó `evaluations/` con pruebas mínimas útiles
+- se agregó una matriz clara de ruteo y ownership
 
 ## Estructura
-- `agents/`
-- `agent-memory/`
-- `shared/`
-- `docs/`
 
-## Resultado
-Pasás de “buenos agentes sueltos” a un **sistema multiagente utilizable en WaPro**.
+- `agents/` → especialistas y orquestación
+- `agent-memory/` → contexto persistente por agente
+- `skills/` → capacidades comerciales reutilizables
+- `evaluations/` → casos para romper y auditar el bot
+- `shared/` → reglas comunes del sistema
+- `docs/` → mapa, ruteo y notas de operación
+- `prompts/` → prompt maestro del orquestador
+
+## Núcleo recomendado
+
+### Core
+- `chief-of-staff-orchestrator`
+- `bot-sales-brain`
+- `catalog-truth-guardian`
+- `conversation-judge`
+
+### Support
+- `backend-fixer`
+- `debug-deploy-ops`
+- `data-sync-catalog`
+- `frontend-ui-ux`
+- `crm-product-owner`
+- `prompt-training-manager`
+- `test-qa-guard`
+
+## Principio clave
+
+**No sumar agentes por estética.**
+Si un especialista puede resolver bien, no montar flujo multiagente.
+
+Empezá por `docs/START_HERE.md`.

@@ -1,29 +1,39 @@
-# WaPro Elite Agents Pack
+# Agents — WaPro
 
-Este ZIP fusiona tu pack original con una capa multiagente más seria.
+## Cómo usar esta carpeta
 
-## Qué trae
-- 8 especialistas originales
-- 4 nuevos agentes core
-- sistema operativo común
-- contrato de handoff
-- scorecard de eval
-- política de memoria
-- política de respuesta del bot
-- mapa del sistema y notas de implementación
+### 1. Elegí el dueño principal del problema
+No arranques por tres agentes. Elegí uno.
 
-## Mejoras aplicadas
-- se agregó orquestación real
-- se agregaron guardrails comerciales y de verdad del catálogo
-- se agregó juez final de calidad
-- se corrigió la descripción inconsistente de `data-sync-catalog`
-- se dejó una estructura de arranque y operación más clara
+### 2. Sumá guardrails solo si agregan valor
+- `catalog-truth-guardian` si el tema toca stock, precio, moneda, versión o disponibilidad
+- `conversation-judge` si querés auditoría final o el cambio es sensible
 
-## Estructura
-- `agents/`
-- `agent-memory/`
-- `shared/`
-- `docs/`
+### 3. Escalá a orquestación solo cuando haga falta
+`chief-of-staff-orchestrator` es útil cuando el caso toca varias capas o hay contradicción entre especialistas.
 
-## Resultado
-Pasás de “buenos agentes sueltos” a un **sistema multiagente utilizable en WaPro**.
+## Core agents
+
+| Agente | Dueño de | Cuándo usar |
+|---|---|---|
+| `chief-of-staff-orchestrator` | estrategia, ruteo y síntesis | tareas mixtas, ambiguas o de alto impacto |
+| `bot-sales-brain` | inteligencia comercial del bot | intención, respuestas, seguimiento, escalado comercial |
+| `catalog-truth-guardian` | verdad comercial | stock, precio, moneda, catálogo, riesgo de invención |
+| `conversation-judge` | auditoría final | validar calidad antes de aprobar |
+
+## Support agents
+
+| Agente | Dueño de | Cuándo usar |
+|---|---|---|
+| `backend-fixer` | backend/API/contratos/persistencia | bugs de backend, 200 OK sin persistencia, validaciones |
+| `debug-deploy-ops` | Railway/build/runtime/env | fallos de deploy, logs, CORS, assets, drift local/prod |
+| `data-sync-catalog` | syncs y calidad del catálogo | Supabase/Railway/ML, mapeos, currency, modelo/version |
+| `frontend-ui-ux` | panel React y ergonomía | tickets, pipeline, cotizaciones, estados visuales |
+| `crm-product-owner` | prioridad funcional y ROI | decidir qué conviene hacer primero |
+| `prompt-training-manager` | entrenamiento del bot | prompts, playbooks, FAQs, ejemplos, tests |
+| `test-qa-guard` | riesgo y regresión | checklist de release, edge cases, cobertura mínima |
+
+## Regla de ownership
+
+Cada tarea debe tener **un solo dueño principal**.
+Los demás agentes acompañan, validan o bloquean.

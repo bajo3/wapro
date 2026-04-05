@@ -1,8 +1,6 @@
-# Handoff Contract — WaPro Elite Agents
+# Handoff Contract — WaPro
 
-Todo handoff entre agentes debe respetar este contrato.
-
-## Input obligatorio
+## Input mínimo
 ```json
 {
   "task_id": "string",
@@ -10,14 +8,13 @@ Todo handoff entre agentes debe respetar este contrato.
   "user_request": "string",
   "context_summary": "string",
   "confirmed_facts": ["string"],
-  "open_questions": ["string"],
   "constraints": ["string"],
   "requested_output": "string",
   "success_criteria": ["string"]
 }
 ```
 
-## Output obligatorio
+## Output mínimo
 ```json
 {
   "task_id": "string",
@@ -34,14 +31,23 @@ Todo handoff entre agentes debe respetar este contrato.
 ```
 
 ## Reglas
-- `confidence` no debe usarse como maquillaje. Si falta evidencia, bajar score.
-- `status=done` sólo si el entregable pedido quedó resuelto.
-- `status=partial` si hay avance útil pero falta algo.
-- `status=blocked` si falta acceso o dato crítico.
-- Nunca pasar contexto crudo enorme si alcanza con resumen + hechos confirmados.
+- `done` solo si el entregable quedó resuelto
+- `partial` si hay avance útil pero falta algo
+- `blocked` si falta acceso o dato crítico
+- bajar `confidence` si falta evidencia
+- no pasar contexto enorme si alcanza resumen + hechos confirmados
+- cada handoff debe tener **un dueño claro**
 
-## Qué gana WaPro con esto
-- menos pérdida de contexto
-- menos contradicción entre agentes
-- menos tokens inútiles
-- mejor trazabilidad de decisiones
+## Buen handoff
+Pasa:
+- objetivo concreto
+- hechos duros
+- restricción principal
+- formato esperado
+
+## Mal handoff
+Pasa:
+- contexto crudo eterno
+- dudas sin priorizar
+- tres objetivos juntos
+- ningún criterio de éxito
