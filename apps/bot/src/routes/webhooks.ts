@@ -46,6 +46,7 @@ import {
 } from '../services/leadProfile.js';
 import { rankVehiclesForLead } from '../services/vehicleRanker.js';
 import { auditTurnQuality, logTurnAudit, accumulateAuditMetrics } from '../services/commercialAudit.js';
+import { runCommercialPipeline } from '../services/commercialPipeline.js';
 import {
   captureConversationTurn,
   selectDynamicExamples,
@@ -983,6 +984,19 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     const leadBreakdown = computeLeadScoreBreakdown({ ...state, last_query: rawText }, extracted, now);
     state.leadScore = leadBreakdown.total;
 
+    // ── Fase 4: Pipeline comercial inteligente ────────────────────────────────
+    // Ejecuta clasificación de intención, scoring semántico, next best action,
+    // prioridad de conversación y sugerencias al vendedor.
+    // Async en persistencia — nunca bloquea la respuesta principal.
+    const commercialResult = runCommercialPipeline(
+      rawText,
+      extracted,
+      remoteJid,
+      instance,
+      remoteJid,
+      typeof state.leadScore === 'number' ? state.leadScore : undefined
+    );
+
     const aggEntry = aggregators.get(key);
     const cleanup = () => {
       const e = aggregators.get(key);
@@ -1194,7 +1208,12 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     const CLOSING_INTENT_RE = /(comprar|reservar|reserva|se[ñn]a(?:r|rl|lo)?|pagar|quiero\s*ya|transferencia|me\s+lo\s+llevo|cerramos|quiero\s+verlo|quiero\s+ese|vamos\s+con|agendar|coordinar|puedo\s+ir|voy\s+ma[nñ]ana|me\s+interesa\s+ese|visita|ver\s+el\s+auto|probarlo|test\s*drive|parte\s+de\s+pago|permuta|entrego\s+mi\s+auto|hablar\s+con\s+alguien|hablar\s+con\s+una\s+persona|hablar\s+con\s+un\s+asesor|quiero\s+hablar\s+con|me\s+comunic[ao]s?\s+con|dame\s+un\s+contacto|me\s+dan\s+un\s+contacto|est[áa]\s+furioso|estoy\s+furioso|me\s+mandaron\s+mal|recl[ao]m[ao]|quiero\s+quejarme|muy\s+enojado|harto|quiero\s+ir\s+a\s+verlo|quisiera\s+ir|puedo\s+pasar|cu[aá]ndo\s+puedo\s+(?:ir|pasar|verlo)|me\s+dan\s+(?:un\s+)?turno)/i;
     const hasClosingIntent = CLOSING_INTENT_RE.test(rawText);
-    const wantsHandoff = hasClosingIntent || hasTemporalUrgency;
+    // Fase 4: el pipeline comercial puede forzar handoff si la prioridad es urgente
+    const commercialForcesHandoff = commercialResult.priority.shouldNotifyHuman
+      && commercialResult.nextAction.forHuman
+      && commercialResult.nextAction.priority >= 4;
+
+    const wantsHandoff = hasClosingIntent || hasTemporalUrgency || commercialForcesHandoff;
 
     // Log de HANDOFF_SKIP para urgencia adjetival (ej: "urgente quiero algo barato")
     // Esto permite monitorear en Railway si el bot correctamente NO escaló.

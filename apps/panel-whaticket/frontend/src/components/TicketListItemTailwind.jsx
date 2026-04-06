@@ -4,6 +4,36 @@ import { MessageCircleMore } from "lucide-react";
 
 const cn = (...classes) => classes.filter(Boolean).join(" ");
 
+// ── Helpers de temperatura / scoring (Fase 4) ─────────────────────────────────
+const TEMP_CONFIG = {
+  hot:  { label: "HOT",  bg: "bg-red-500/15",    border: "border-red-500/30",    text: "text-red-400",    dot: "bg-red-500"    },
+  warm: { label: "TIBIO",bg: "bg-amber-500/15",  border: "border-amber-500/30",  text: "text-amber-400",  dot: "bg-amber-500"  },
+  cold: { label: "FRÍO", bg: "bg-slate-500/10",  border: "border-slate-500/20",  text: "text-slate-400",  dot: "bg-slate-500"  },
+};
+
+const PRIORITY_DOT = {
+  5: "bg-red-500",
+  4: "bg-orange-400",
+  3: "bg-amber-400",
+  2: "bg-blue-400",
+  1: "bg-slate-500",
+};
+
+const INTENT_LABEL = {
+  buy_intent:          "Compra",
+  visit_intent:        "Visita",
+  financing_intent:    "Financiación",
+  trade_in_intent:     "Permuta",
+  urgent_purchase:     "Urgente",
+  follow_up_reengaged: "Retomó",
+  compare_vehicles:    "Comparando",
+  price_check:         "Precio",
+  availability_check:  "Stock",
+  just_browsing:       "Mirando",
+  objection:           "Objeción",
+  reclamo:             "Reclamo",
+};
+
 export default function TicketListItemTailwind({ ticket, isSelected, onSelect, onAccept }) {
   const lastAt = ticket?.updatedAt ? parseISO(ticket.updatedAt) : null;
   const lastLabel = lastAt
@@ -23,6 +53,18 @@ export default function TicketListItemTailwind({ ticket, isSelected, onSelect, o
   const assignedTo = ticket?.user?.name || null;
   const lastMessage = String(ticket?.lastMessage || "").trim() || "Sin mensajes todavía";
   const initials = (ticket?.contact?.name || "?").trim().slice(0, 2).toUpperCase();
+
+  // ── Datos comerciales Fase 4 ──────────────────────────────────────────────
+  const cd = ticket?.commercialData || null;
+  const temperature = cd?.lead_temperature || null;
+  const leadScore = cd?.lead_score != null ? Number(cd.lead_score) : null;
+  const primaryIntent = cd?.primary_intent || null;
+  const commercialPriority = cd?.commercial_priority != null ? Number(cd.commercial_priority) : null;
+  const shouldNotify = Boolean(cd?.should_notify_human);
+  const nextActionLabel = cd?.next_best_action
+    ? String(cd.next_best_action).replace(/_/g, " ")
+    : null;
+  const tempCfg = temperature ? TEMP_CONFIG[temperature] : null;
 
   return (
     <article
@@ -117,6 +159,37 @@ export default function TicketListItemTailwind({ ticket, isSelected, onSelect, o
                 {ticket?.queue?.name ? (
                   <span className="rounded-full border border-auto-border bg-auto-surface px-2 py-0.5 text-[10px] text-auto-hint">
                     {ticket.queue.name}
+                  </span>
+                ) : null}
+
+                {/* ── Fase 4: temperatura + score ───────────────────────────── */}
+                {tempCfg ? (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                      tempCfg.bg, tempCfg.border, tempCfg.text
+                    )}
+                    title={`Score: ${leadScore ?? "?"}/100`}
+                  >
+                    <span className={cn("h-1.5 w-1.5 rounded-full", tempCfg.dot)} />
+                    {tempCfg.label}
+                    {leadScore != null ? (
+                      <span className="opacity-70 font-normal">{leadScore}</span>
+                    ) : null}
+                  </span>
+                ) : null}
+
+                {/* ── Fase 4: intención ─────────────────────────────────────── */}
+                {primaryIntent && INTENT_LABEL[primaryIntent] ? (
+                  <span className="rounded-full border border-purple-500/20 bg-purple-500/10 px-2 py-0.5 text-[10px] text-purple-400">
+                    {INTENT_LABEL[primaryIntent]}
+                  </span>
+                ) : null}
+
+                {/* ── Fase 4: alerta de notificación humana ────────────────── */}
+                {shouldNotify ? (
+                  <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-bold text-red-400">
+                    ACCION
                   </span>
                 ) : null}
               </div>

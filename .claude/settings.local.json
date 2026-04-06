@@ -17,7 +17,19 @@
       "Bash(node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json)",
       "Bash(node -e \":*)",
       "Bash(node node_modules/typescript/bin/tsc -p tsconfig.json)",
-      "Bash(node --input-type=module:*)"
+      "Bash(node --input-type=module:*)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(node node_modules/typescript/bin/tsc --noEmit)",
+      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps' -name *.tsx -path */ticket* -o -name *.tsx -path */conversation*)",
+      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps' -name *.tsx)",
+      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps' -name *.ts -path */frontend*)",
+      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps' -name *.ts -path */web*)",
+      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket' -name *.tsx)",
+      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/frontend/src' -name *.jsx -o -name *.tsx)",
+      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend' -name *.js)",
+      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend/src' -name *.ts)",
+      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend/src' -name *Ticket*)",
+      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend/src/services/TicketServices' -name List* -o -name Index*)"
     ]
   }
 }

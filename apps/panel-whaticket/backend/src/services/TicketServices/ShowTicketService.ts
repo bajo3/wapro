@@ -69,6 +69,33 @@ const ShowTicketService = async (id: string | number): Promise<Ticket> => {
           extracted: state?.extracted || null
         });
       }
+
+      // ── Fase 4: datos comerciales calculados (lead_commercial_data) ──────────
+      try {
+        const cdRows = await sequelize.query(
+          `select
+             lead_score, lead_temperature, score_reason, score_confidence,
+             primary_intent, secondary_intent, intent_confidence, intent_evidence,
+             sales_signals,
+             next_best_action, next_action_reason, next_action_priority,
+             next_action_for_human, next_action_for_bot, next_suggested_message,
+             commercial_priority, priority_label, priority_reason,
+             should_notify_human, estimated_value_signal,
+             suggested_action, suggested_reply_strategy,
+             human_handoff_reason, suggestion_urgency, script_hint,
+             last_scored_at
+           from lead_commercial_data
+          where conversation_id = $1
+          limit 1`,
+          { bind: [remoteJid], type: QueryTypes.SELECT }
+        );
+        const cd = (cdRows as any[])?.[0] || null;
+        if (cd) {
+          (ticket as any).setDataValue("commercialData", cd);
+        }
+      } catch {
+        // tabla puede no existir aún (pre-migración 017) — best effort
+      }
     }
   } catch {
     // best effort

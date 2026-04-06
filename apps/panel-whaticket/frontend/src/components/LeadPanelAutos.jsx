@@ -423,6 +423,145 @@ export default function LeadPanelAutos({ ticketId, initialSection = "commercial"
             </div>
           </Card>
 
+          {/* ── Fase 4: Inteligencia comercial ───────────────────────────────── */}
+          {ticket?.commercialData ? (() => {
+            const cd = ticket.commercialData;
+            const temp = cd.lead_temperature || null;
+            const score = cd.lead_score != null ? Number(cd.lead_score) : null;
+            const intent = cd.primary_intent || null;
+            const secondIntent = cd.secondary_intent || null;
+            const prio = cd.commercial_priority != null ? Number(cd.commercial_priority) : null;
+            const notify = Boolean(cd.should_notify_human);
+            const nextAct = cd.next_best_action ? String(cd.next_best_action).replace(/_/g, " ") : null;
+            const nextReason = cd.next_action_reason || null;
+            const suggestion = cd.suggested_action || null;
+            const replyStrategy = cd.suggested_reply_strategy || null;
+            const handoffReason = cd.human_handoff_reason || null;
+            const scriptHint = cd.script_hint || null;
+
+            const TEMP_COLORS = {
+              hot:  { bar: "bg-red-500",    label: "text-red-400",    bg: "bg-red-500/10",    border: "border-red-500/25"   },
+              warm: { bar: "bg-amber-400",  label: "text-amber-400",  bg: "bg-amber-500/10",  border: "border-amber-500/25" },
+              cold: { bar: "bg-slate-500",  label: "text-slate-400",  bg: "bg-slate-500/10",  border: "border-slate-500/20" },
+            };
+            const tc = TEMP_COLORS[temp] || TEMP_COLORS.cold;
+
+            const INTENT_LABELS = {
+              buy_intent:          "Intención de compra",
+              visit_intent:        "Quiere visitar",
+              financing_intent:    "Consulta financiación",
+              trade_in_intent:     "Permuta / toma usado",
+              urgent_purchase:     "Compra urgente",
+              follow_up_reengaged: "Retomó contacto",
+              compare_vehicles:    "Comparando opciones",
+              price_check:         "Consulta precio",
+              availability_check:  "Consulta stock",
+              just_browsing:       "Solo mirando",
+              objection:           "Objeción",
+              reclamo:             "Reclamo activo",
+            };
+
+            return (
+              <Card className="scroll-mt-3" ref={(node) => { sectionRefs.current.intelligence = node; }}>
+                <SectionLabel>Inteligencia comercial</SectionLabel>
+
+                {/* Score + temperatura */}
+                <div className={`flex items-center justify-between rounded-lg border px-3 py-2.5 mb-3 ${tc.bg} ${tc.border}`}>
+                  <div>
+                    <div className={`text-[11px] font-bold uppercase tracking-wide ${tc.label}`}>
+                      {temp === "hot" ? "CALIENTE" : temp === "warm" ? "TIBIO" : "FRÍO"}
+                    </div>
+                    {intent && (
+                      <div className="text-[12px] text-white/60 mt-0.5">
+                        {INTENT_LABELS[intent] || intent}
+                        {secondIntent && secondIntent !== intent ? (
+                          <span className="text-white/30"> · {INTENT_LABELS[secondIntent] || secondIntent}</span>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <div className={`text-[22px] font-black tabular-nums leading-none ${tc.label}`}>
+                      {score != null ? score : "—"}
+                    </div>
+                    <div className="text-[9px] text-white/30 uppercase tracking-wide">/ 100</div>
+                  </div>
+                </div>
+
+                {/* Barra de score */}
+                {score != null ? (
+                  <div className="h-1.5 w-full rounded-full bg-white/[0.06] mb-3 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${tc.bar}`}
+                      style={{ width: `${Math.min(100, score)}%` }}
+                    />
+                  </div>
+                ) : null}
+
+                {/* Prioridad + notificación */}
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {prio != null ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-auto-border bg-auto-surface px-2 py-0.5 text-[10px] text-auto-muted">
+                      <span className="font-semibold text-white/60">Prioridad</span>
+                      <span className="font-bold text-white/80">{prio}/5</span>
+                    </span>
+                  ) : null}
+                  {notify ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-bold text-red-400">
+                      ● Requiere asesor ahora
+                    </span>
+                  ) : null}
+                </div>
+
+                {/* Próximo mejor paso */}
+                {nextAct ? (
+                  <div className="mb-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-white/30 mb-1">
+                      Próxima acción
+                    </div>
+                    <div className="text-[12px] font-semibold text-white/80 capitalize">{nextAct}</div>
+                    {nextReason ? (
+                      <div className="text-[11px] text-white/35 mt-0.5">{nextReason}</div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* Sugerencia al vendedor */}
+                {suggestion ? (
+                  <div className="rounded-md border border-auto-border bg-auto-surface px-3 py-2 mb-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-white/30 mb-1">
+                      Sugerencia para el asesor
+                    </div>
+                    <div className="text-[12px] text-white/70">{suggestion}</div>
+                    {replyStrategy ? (
+                      <div className="mt-1.5 text-[11px] text-white/40 italic">{replyStrategy}</div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* Script hint */}
+                {scriptHint ? (
+                  <div className="rounded-md border border-purple-500/20 bg-purple-500/5 px-3 py-2 mb-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-purple-400/60 mb-1">
+                      Idea de mensaje
+                    </div>
+                    <div className="text-[11px] text-purple-300/70 italic">{scriptHint}</div>
+                  </div>
+                ) : null}
+
+                {/* Razón de handoff */}
+                {handoffReason ? (
+                  <div className="rounded-md border border-orange-500/20 bg-orange-500/5 px-3 py-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-orange-400/60 mb-1">
+                      Por qué escalar
+                    </div>
+                    <div className="text-[11px] text-orange-300/70">{handoffReason}</div>
+                  </div>
+                ) : null}
+              </Card>
+            );
+          })() : null}
+
           {/* Estado comercial */}
           <Card className="scroll-mt-3" ref={(node) => { sectionRefs.current.commercial = node; }}>
             <SectionLabel>Estado comercial</SectionLabel>
