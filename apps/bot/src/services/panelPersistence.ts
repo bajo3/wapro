@@ -4,6 +4,62 @@ import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { evolutionSendImage, evolutionSendText } from './evolution.js';
 
+// ─── BOT_ADMIN_TOKEN guard ────────────────────────────────────────────────────
+// Reads directly from process.env (not env.ts) so this assertion is meaningful
+// even if env.ts validation is bypassed (e.g. tests, partial boot).
+// Throws loudly — no silent fallback, no default value.
+function assertBotAdminToken(): string {
+  const token = process.env.BOT_ADMIN_TOKEN;
+  if (!token) {
+    console.error(JSON.stringify({
+      level: 'critical',
+      message: 'BOT_ADMIN_TOKEN missing',
+      service: 'bot-control',
+      timestamp: new Date().toISOString(),
+    }));
+    throw new Error('BOT_ADMIN_TOKEN not configured');
+  }
+  return token;
+}
+
+/**
+ * Last-resort fallback when BOT_ADMIN_TOKEN is unavailable.
+ *
+ * At the persistence layer we have no conversation context (instance/remoteJid)
+ * so we cannot call setConversationRule() for a real handoff — that must happen
+ * upstream in webhooks.ts when a missing token is detected before a send.
+ *
+ * What this function CAN do:
+ *  - Preserve the payload in the dead-letter file for manual replay / ops audit
+ *  - Emit a warning so ops monitoring sees the event
+ *
+ * TODO: If this function is ever called with conversation context available,
+ *       import setConversationRule from rules.ts and call:
+ *       await setConversationRule(instance, remoteJid, 'HUMAN_ONLY')
+ */
+async function safeFallbackToHuman({
+  reason,
+  payload,
+}: {
+  reason: string;
+  payload?: object;
+}): Promise<void> {
+  try {
+    if (payload) {
+      // Reuse existing dead-letter mechanism — preserves record for ops replay
+      await writeToDeadLetter(payload, reason);
+    }
+    // TODO: wire real handoff here when conversation context is available upstream
+  } catch (fallbackError) {
+    console.error(JSON.stringify({
+      level: 'critical',
+      message: 'Fallback to human failed',
+      timestamp: new Date().toISOString(),
+      error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+    }));
+  }
+}
+
 // ─── Retry & dead-letter config ───────────────────────────────────────────────
 const PERSIST_MAX_RETRIES = 3;
 const PERSIST_RETRY_BASE_MS = 1000; // 1s, 3s, 9s (exponential backoff base 3)
@@ -163,12 +219,35 @@ export async function persistBotOutboundMessage(params: {
   botMode?: 'ON' | 'OFF' | 'HUMAN_ONLY';
   handoff?: boolean;
 }): Promise<void> {
+  // ── TASK 1: controlled fallback — never drop silently ─────────────────────
+  let BOT_ADMIN_TOKEN: string;
+  try {
+    BOT_ADMIN_TOKEN = assertBotAdminToken();
+  } catch (error) {
+    console.error(JSON.stringify({
+      level: 'critical',
+      message: 'BOT_ADMIN_TOKEN failure - fallback triggered',
+      service: 'bot-control',
+      timestamp: new Date().toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    // TASK 3: metric event — countable in Railway logs / external log tools
+    console.log(JSON.stringify({
+      type: 'metric',
+      metric: 'bot_admin_token_failure',
+      value: 1,
+      timestamp: new Date().toISOString(),
+    }));
+    // TASK 2: preserve payload for ops replay; emit ops-visible warning
+    await safeFallbackToHuman({ reason: 'bot_admin_token_missing', payload: params });
+    return; // stop normal execution safely — WhatsApp msg already sent by caller
+  }
+
   const backendUrl = String(process.env.BACKEND_URL || '').replace(/\/$/, '');
-  const adminToken = String(process.env.BOT_ADMIN_TOKEN || '').trim();
   const remoteJid = normalizeRemoteJid(params.remoteJid);
   const text = String(params.text || '').trim();
   const imageUrl = typeof params.imageUrl === 'string' && params.imageUrl.trim() ? params.imageUrl.trim() : undefined;
-  if (!backendUrl || !adminToken || !remoteJid || (!text && !imageUrl)) return;
+  if (!backendUrl || !remoteJid || (!text && !imageUrl)) return;
 
   const number = extractNumber(remoteJid);
   if (!number) return;
@@ -190,7 +269,7 @@ export async function persistBotOutboundMessage(params: {
     handoff: Boolean(params.handoff),
   };
 
-  await persistWithRetry(backendUrl, adminToken, body);
+  await persistWithRetry(backendUrl, BOT_ADMIN_TOKEN, body);
 }
 
 export async function sendTextAndPersist(

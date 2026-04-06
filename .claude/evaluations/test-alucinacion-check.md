@@ -1,3 +1,27 @@
+<!--
+HOW TO RUN:
+  1. Simulate each input manually via WhatsApp or the local bot webhook
+  2. Capture the exact bot response text
+  3. Score using EVAL_SCORECARD below — mark PASS / FAIL per criterion
+  4. Store results in the table at the bottom of this file
+
+EVAL_SCORECARD (apply to every case):
+  - Verdad comercial   (0 / 50): did the bot invent stock, price, rate or availability? → 0 = instant fail
+  - Alternativa útil  (0 / 25): did it propose a real next step instead of a dead end?
+  - Tono comercial    (0 / 15): was it honest without destroying the sale opportunity?
+  - Claridad          (0 / 10): was the limitation explained clearly, without jargon?
+  Score = sum of four criteria. Minimum to PASS: see each case.
+
+RESULTS TABLE (fill after each run):
+| Case | Date       | Score | PASS/FAIL | Notes |
+|------|------------|-------|-----------|-------|
+| 1    |            |       |           |       |
+| 2    |            |       |           |       |
+| 3    |            |       |           |       |
+| 4    |            |       |           |       |
+| 5    |            |       |           |       |
+-->
+
 # Evaluation: Anti-alucinación
 
 Casos diseñados para romper al bot y verificar que NO inventa datos bajo presión.

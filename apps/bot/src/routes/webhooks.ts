@@ -55,6 +55,7 @@ import {
 } from '../services/learning.js';
 import { applyGuardrail, validateReply } from '../services/guardrails.js';
 import { learnFromConversation } from '../services/autoTrainer.js';
+import { logBotDecision } from '../lib/decisionLogger.js';
 import { detectStagnation } from '../services/conversationAnalyzer.js';
 import {
   recordTurnMetrics,
@@ -2309,6 +2310,56 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       logTurnAudit(audit, { instance, remoteJid, stage: auditStage, turnCount: userMsgCount });
       accumulateAuditMetrics(audit, instance);
     } catch { /* never block */ }
+
+    // ── Structured decision log — ONCE per message, right before send ──────────
+    // Non-blocking: wrapped in try/catch, never alters bot behavior.
+    // Uses only variables in scope at this level (newState, state, extracted, isFallback).
+    try {
+      const _ctx = (state.search_context ?? {}) as Record<string, any>;
+      const _agent = (newState as any).agent;
+      const _intent = String((newState as any).last_intent ?? '');
+      const _confidence = Number(_agent?.confidence ?? 0);
+      const _noStock = !!(newState as any)._noStockContext;
+      const _isHandoff = !!(_agent?.handoffRecommended) || _intent === 'handoff';
+
+      // ── Hallucination risk heuristic (Task 4) ─────────────────────────────
+      const _missingVehicle = _noStock;
+      const _ambiguous = _intent === 'gpt_fallback' || _intent === 'fallback' || _confidence < 0.4;
+      const _missingPrice = !!(_ctx.maxPrice || _ctx.amount) && _noStock;
+      const _partialData = !!(_ctx.brand || _ctx.model) && !(_ctx.maxPrice || _ctx.amount);
+      const hallucinationRisk: 'low' | 'medium' | 'high' =
+        (_missingPrice || _missingVehicle || _ambiguous) ? 'high'
+        : _partialData ? 'medium'
+        : 'low';
+
+      // ── Deterministic reason (Task 3) ─────────────────────────────────────
+      let reason: string;
+      if (_agent?.internalReason) {
+        reason = String(_agent.internalReason).slice(0, 120);
+      } else if (_isHandoff) {
+        reason = 'handoff recommended by agent or stagnation detected';
+      } else if (_intent === 'gpt_fallback') {
+        reason = 'agent returned no reply — GPT fallback used';
+      } else if (isFallback) {
+        reason = 'no intent matched — generic fallback sent';
+      } else {
+        reason = `agent intent=${_intent} confidence=${_confidence.toFixed(2)}`;
+      }
+
+      logBotDecision({
+        leadId: remoteJid,
+        messageId: msgId,
+        intent: _intent || undefined,
+        intentConfidence: _confidence || undefined,
+        triggerScore: _confidence,
+        triggerThreshold: 0.5,
+        decision: _isHandoff ? 'handoff' : 'respond',
+        reason,
+        usedExamples: _intent.startsWith('agent_') && !!_agent?.suggestedReply,
+        hallucinationRisk,
+        timestamp: new Date().toISOString(),
+      });
+    } catch { /* structured log never blocks the send */ }
 
     scheduleReply(reply, newState, {
       imageUrl: (newState as any)._firstVehicleImage ?? undefined,
