@@ -54,7 +54,18 @@ import {
 } from '../services/learning.js';
 import { applyGuardrail, validateReply } from '../services/guardrails.js';
 import { detectStagnation } from '../services/conversationAnalyzer.js';
-import { recordTurnMetrics, buildIndecisiveContextBlock, buildObjectionContextBlock } from '../services/botMemory.js';
+import {
+  recordTurnMetrics,
+  buildIndecisiveContextBlock,
+  buildObjectionContextBlock,
+  evaluateResponseOutcome,
+  calculateOutcomeScore,
+  classifyMemoryEntry,
+  selfEvaluateResponse,
+  saveMemoryToDB,
+  selectFewShotExamples,
+  formatFewShotBlock,
+} from '../services/botMemory.js';
 
 export const webhookRouter = Router();
 
@@ -916,6 +927,47 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       Object.assign(extracted, enriched);
     }
 
+    // ── Fase 3: Evaluar outcome del turno anterior ────────────────────────────
+    // Cuando llega el turno N+1, evaluamos si la respuesta N fue buena
+    // usando el comportamiento real del usuario como señal.
+    // Este bloque es async y nunca bloquea el flujo principal.
+    const prevBotReply: string | undefined = (state as any)?.agent?.suggestedReply?.trim()
+      ?? ((state as any).gpt_history ?? []).slice().reverse().find((h: any) => h.role === 'assistant')?.content?.trim()
+      ?? undefined;
+    const prevExtractedContext: Record<string, any> = (state as any)?.extracted ?? (state as any)?.search_context ?? {};
+
+    if (prevBotReply && prevBotReply.length > 10) {
+      // Evaluar en background — no bloquea
+      void (async () => {
+        try {
+          const currentContextForEval = { ...prevForExtract, ...extracted };
+          const outcome = evaluateResponseOutcome(prevBotReply, rawText, prevExtractedContext, currentContextForEval);
+          const score = calculateOutcomeScore(outcome);
+          const classification = classifyMemoryEntry(prevBotReply, score, outcome, {
+            ...prevExtractedContext,
+            _lastUserMessage: rawText,
+          });
+
+          if (classification.shouldSave) {
+            await saveMemoryToDB({
+              conversationId: remoteJid,
+              instanceName: instance,
+              userMessage: rawText,
+              botReply: prevBotReply,
+              extractedContext: prevExtractedContext,
+              memoryType: classification.memoryType,
+              qualityScore: score,
+              outcomeSignals: outcome,
+              safeToReuse: classification.safeToReuse,
+              rejectionReason: classification.rejectionReason,
+            });
+          }
+        } catch {
+          // nunca fallar por autoaprendizaje
+        }
+      })();
+    }
+
     // Update message counters & last user timestamp.
     const userMsgCount = Math.max(0, Number(state.user_msg_count ?? 0)) + 1;
     state.user_msg_count = userMsgCount;
@@ -1050,6 +1102,15 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 timestamp: new Date().toISOString(),
               });
             } catch { /* nunca fallar por métricas */ }
+
+            // ── Fase 3: Autoevaluación del turno generado ─────────────────────
+            // Se ejecuta justo después de enviar la respuesta.
+            // El resultado queda en los logs y se adjunta a la entrada de DB
+            // cuando el siguiente mensaje evalúe el outcome real.
+            try {
+              const evalContext = nextState?.extracted ?? nextState?.search_context ?? {};
+              selfEvaluateResponse(rawText, reply, evalContext);
+            } catch { /* nunca fallar por autoevaluación */ }
           }
 
           // ── Extract commercial fields from this turn for persistent memory ──
@@ -1845,22 +1906,34 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               }
             } catch { /* no bloquear el flujo principal */ }
 
-            // ── Contexto de botMemory (Fase 2) ───────────────────────────────
-            // Inyectar preguntas efectivas para clientes indecisos y manejo de objeciones.
+            // ── Contexto de botMemory (Fase 2 + 3) ──────────────────────────
+            // Fase 2: preguntas efectivas y manejo de objeciones (RAM/JSON).
+            // Fase 3: few-shot desde Postgres (patrones con score real).
             // Solo como "ejemplos de conversaciones reales", nunca como reglas de catálogo.
             let botMemoryContextBlock: string | undefined;
             try {
               const isIndecisiveNow = Boolean(mergedExtracted?.isIndecisive);
               const hasObjection = /\b(?:est[aá]\s+caro|muy\s+caro|es\s+caro|lo\s+pienso|no\s+me\s+convence|muy\s+lejos|no\s+tengo\s+tanta\s+plata)\b/i.test(rawText);
-              if (isIndecisiveNow) {
-                const block = buildIndecisiveContextBlock();
-                if (block) botMemoryContextBlock = block;
-              } else if (hasObjection) {
-                const objType = /\bcar[oa]\b/i.test(rawText) ? 'caro'
-                  : /\bpienso\b/i.test(rawText) ? 'lo pienso'
-                  : 'no me convence';
-                const block = buildObjectionContextBlock(objType);
-                if (block) botMemoryContextBlock = block;
+
+              // Fase 3: few-shot dinámico desde DB (máximo 3 ejemplos)
+              const phase3Examples = await selectFewShotExamples(mergedExtracted ?? {}, 3);
+              if (phase3Examples.length > 0) {
+                const phase3Block = formatFewShotBlock(phase3Examples);
+                if (phase3Block) botMemoryContextBlock = phase3Block;
+              }
+
+              // Fase 2 (fallback RAM): solo si no hay ejemplos DB o para complementar
+              if (!botMemoryContextBlock) {
+                if (isIndecisiveNow) {
+                  const block = buildIndecisiveContextBlock();
+                  if (block) botMemoryContextBlock = block;
+                } else if (hasObjection) {
+                  const objType = /\bcar[oa]\b/i.test(rawText) ? 'caro'
+                    : /\bpienso\b/i.test(rawText) ? 'lo pienso'
+                    : 'no me convence';
+                  const block = buildObjectionContextBlock(objType);
+                  if (block) botMemoryContextBlock = block;
+                }
               }
             } catch { /* nunca bloquear por memoria */ }
 
