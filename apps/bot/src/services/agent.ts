@@ -72,11 +72,12 @@ export function buildAgentSystemPrompt(
     const cur = ctx.currency ?? 'ARS';
     knownFields.push(`presupuesto: ${cur} ${Number(amt).toLocaleString('es-AR')}`);
   }
-  if (ctx.transmission) knownFields.push(`caja: ${ctx.transmission}`);
-  if (ctx.fuel) knownFields.push(`combustible: ${ctx.fuel}`);
+  if (ctx.transmission || ctx.transmissionPreference) knownFields.push(`caja: ${ctx.transmission ?? ctx.transmissionPreference}`);
+  if (ctx.fuel || ctx.fuelPreference) knownFields.push(`combustible: ${ctx.fuel ?? ctx.fuelPreference}`);
   if (ctx.implicitFuelHint) knownFields.push(`preferencia implícita de combustible: ${ctx.implicitFuelHint} (mencionarlo como sugerencia)`);
   if (ctx.bodywork) knownFields.push(`tipo de carrocería: ${ctx.bodywork}`);
-  if (ctx.useCase) knownFields.push(`uso: ${ctx.useCase}`);
+  if (ctx.useCase || ctx.primaryUse) knownFields.push(`uso: ${ctx.useCase ?? ctx.primaryUse}`);
+  if (ctx.seatCount) knownFields.push(`asientos requeridos: ${ctx.seatCount}`);
   if (ctx.city) knownFields.push(`ciudad: ${ctx.city}`);
   if (ctx.hasTradeIn) knownFields.push('tiene permuta (pedir año y km si no se saben)');
   if (ctx.gnc !== undefined) knownFields.push(`GNC: ${ctx.gnc ? 'sí' : 'no'}`);
@@ -102,18 +103,56 @@ export function buildAgentSystemPrompt(
   );
   // v7: Nuevos flags de intención
   if (ctx.highUrgency) intentFlags.push(
-    'ALTA_URGENCIA: el cliente necesita el vehículo urgente (esta semana, ya, rápido). ' +
-    'Priorizar acción concreta: opciones disponibles AHORA + handoffRecommended=true para coordinar rápido.'
+    'ALTA_URGENCIA: el cliente necesita el vehículo con urgencia temporal (esta semana, mañana, ya). ' +
+    'Priorizar acción concreta: opciones disponibles AHORA + handoffRecommended=true para coordinar rápido. ' +
+    'IMPORTANTE: Si el cliente dijo "urgente" como adjetivo de la búsqueda (ej: "quiero algo urgente que sea barato") ' +
+    'NO escalar — ese "urgente" describe calidad, no fecha. Este flag solo se activa para urgencia con fecha o tiempo concreto.'
   );
   if (ctx.multipleVehicleTypes) intentFlags.push(
-    'MULTIPLES_TIPOS_VEHICULO: el cliente mencionó más de un tipo (auto + moto + camioneta, etc.). ' +
-    'NO intentar responder todo a la vez. Preguntá cuál es prioritario: "¿Por cuál arrancamos? ¿El auto, la moto o la camioneta?"'
+    'MULTIPLES_TIPOS_VEHICULO: el cliente mencionó más de un tipo de vehículo. ' +
+    'Estrategia según cantidad: ' +
+    '• Si son 2 tipos (ej: auto o SUV): presentar como alternativas claras con 1 pregunta de uso. ' +
+    '  Ejemplo: "Podemos ver las dos opciones. ¿Lo usarías más para ciudad o para campo/carga?" ' +
+    '• Si son 3+ tipos (ej: auto + moto + camioneta): pedir priorización directa. ' +
+    '  Ejemplo: "Buenísimo. ¿Por cuál arrancamos — el auto, la moto o la camioneta?" ' +
+    '• Si hay multi-intención (compra + permuta + financiación): responder en orden. Primero compra.'
   );
-  if (ctx.isIndecisive) intentFlags.push(
-    'CLIENTE_INDECISO: no tiene claro qué busca. ' +
-    'NO mostrar catálogo genérico ni hacer preguntas en cadena. ' +
-    'Hacé UNA sola pregunta de filtro: uso (ciudad/ruta/familia/trabajo) + presupuesto. Con eso armás 2 opciones concretas.'
-  );
+  if (ctx.isIndecisive) {
+    // Calcular qué preguntas del flujo guiado ya fueron respondidas
+    const hasUse = !!(ctx.primaryUse || ctx.useCase);
+    const hasBudget = !!(ctx.maxPrice || ctx.amount);
+    const hasBodywork = !!(ctx.bodywork || ctx.brand);
+    const hasTx = !!(ctx.transmissionPreference || ctx.transmission);
+    const answeredCount = [hasUse, hasBudget, hasBodywork, hasTx].filter(Boolean).length;
+
+    if (answeredCount >= 3) {
+      intentFlags.push(
+        'CLIENTE_INDECISO_CON_DATOS: ya respondió 3+ preguntas del flujo guiado. ' +
+        'NO seguir preguntando. Con los datos que tenés, armá 2 opciones concretas del catálogo y presentalas. ' +
+        'Terminá con "¿Cuál de estas se acerca más a lo que buscás?"'
+      );
+    } else {
+      // Determinar la SIGUIENTE pregunta del flujo guiado (solo 1 por turno)
+      let nextQuestion = '';
+      if (!hasUse) {
+        nextQuestion = '¿Para qué lo usarías principalmente — ciudad, ruta, campo o trabajo/familia?';
+      } else if (!hasBudget) {
+        nextQuestion = '¿Tenés un presupuesto en mente o un rango de precio?';
+      } else if (!hasBodywork) {
+        nextQuestion = '¿Preferís algo chico y económico, un sedán cómodo o una SUV/camioneta con más espacio?';
+      } else if (!hasTx) {
+        nextQuestion = '¿Automático o manual te da lo mismo, o tenés preferencia?';
+      } else {
+        nextQuestion = '¿Hay algo puntual que busques — bajo consumo, espacio, seguridad, precio?';
+      }
+      intentFlags.push(
+        `CLIENTE_INDECISO_FLUJO_GUIADO: no tiene claro qué busca (${answeredCount}/4 datos obtenidos). ` +
+        'NO mostrar catálogo genérico. NO hacer más de UNA pregunta. ' +
+        `Próxima pregunta del flujo: "${nextQuestion}" ` +
+        'Tono consultivo, no de formulario. Ejemplo: no decir "necesito saber X", decir "para recomendarte bien — ¿X?"'
+      );
+    }
+  }
 
   const knownSection = knownFields.length
     ? `\nDATA YA CONOCIDA (NO VOLVER A PREGUNTAR ESTOS CAMPOS):\n${knownFields.map((f) => `  • ${f}`).join('\n')}`
@@ -128,11 +167,11 @@ export function buildAgentSystemPrompt(
     : '';
 
   // FIX-09: Cold-lead fallback — after 4+ turns with zero data, show top catalog highlights
-  // v7: también para cliente indeciso desde el turno 1
-  const coldLeadNote = (turns >= 4 && !ctx.brand && !ctx.model && !ctx.maxPrice && !ctx.bodywork && !ctx.useCase)
+  // v8: flujo guiado para indecisos, cold-lead después de 4 turnos sin datos
+  const coldLeadNote = (turns >= 4 && !ctx.brand && !ctx.model && !ctx.maxPrice && !ctx.bodywork && !ctx.useCase && !ctx.primaryUse)
     ? '\nLEAD FRÍO SIN DATOS (4+ turnos): No le hagas más preguntas. Mostrá los 3 autos más baratos o más populares del catálogo con su precio y año. Esto activa FOMO y le da algo concreto para reaccionar.'
-    : (ctx.isIndecisive && turns <= 1)
-      ? '\nCLIENTE INDECISO (inicio): UNA pregunta cálida y concreta: "Para recomendarte bien — ¿para qué lo usarías más: ciudad, ruta, familia o trabajo? Y ¿tenés presupuesto en mente?" Con esas dos respuestas te doy 2 opciones concretas y no perdemos tiempo.'
+    : (ctx.isIndecisive && turns <= 1 && !ctx.primaryUse && !ctx.useCase)
+      ? '\nCLIENTE INDECISO (inicio): UNA pregunta cálida y concreta. Tono vendedor, no de encuesta: "Para recomendarte bien — ¿para qué lo usarías más: ciudad, ruta, familia o trabajo? ¿Y tenés presupuesto en mente?" Con esas dos respuestas te doy opciones concretas.'
       : '';
 
   const toneNote = turns > 6
@@ -504,9 +543,11 @@ export async function decideAgentAction(params: any & {
   noStockContext?: boolean;
   /** Persistent commercial memory block for returning leads — injected as first intelligence section */
   memoryBlock?: string;
+  /** Contexto de botMemory: preguntas efectivas o manejo de objeciones (Fase 2) */
+  botMemoryContext?: string;
 }): Promise<any | null> {
   const { loopData, leadScore, dealershipName, extracted, userMessage, history, catalog, dynamicExamples, state,
-          lastBotReply, policyContext, noStockContext, memoryBlock } = params;
+          lastBotReply, policyContext, noStockContext, memoryBlock, botMemoryContext } = params;
 
   const { askGPTJson } = await import('./gpt.js');
   const { buildSalesCoachContext, buildSalesCoachSection } = await import('./salesCoach.js');
@@ -626,6 +667,11 @@ export async function decideAgentAction(params: any & {
     ? `\n── SIN STOCK EXACTO ──\nLa búsqueda en catálogo no encontró coincidencias exactas. Opciones:\n  1. Ofrecé alternativas cercanas disponibles en el catálogo.\n  2. Proponé registrar la demanda: "Te aviso cuando entre stock de eso."\n  3. Si hay opciones cercanas, recomendá con criterio por qué sirven.\n  4. action=CAPTURE_LEAD si no hay nada cercano.`
     : '';
 
+  // botMemory context section (Fase 2)
+  const botMemorySection = botMemoryContext?.trim()
+    ? `\n${botMemoryContext.trim()}`
+    : '';
+
   // Combine all intelligence sections — order matters for prompt priority
   const intelligenceSections = [
     memoryBlock,               // 0. Memoria persistente del lead (recontacto / datos previos)
@@ -636,6 +682,7 @@ export async function decideAgentAction(params: any & {
     lastBotSection,            // 5. No repetir lo último dicho
     policySection,             // 6. Política interna activa
     noStockSection,            // 7. Sin stock exacto
+    botMemorySection,          // 8. Preguntas/objeciones efectivas de botMemory (Fase 2)
   ].filter(Boolean).join('\n');
 
   const extraSections = intelligenceSections;

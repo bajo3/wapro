@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { env } from '../lib/env.js';
 import { pool } from '../services/db.js';
+import { getUsdToArs } from '../services/exchangeRate.js';
 import { evolutionSendPresence } from '../services/evolution.js';
 import { getCatalog, searchCatalog, formatItemLine } from '../services/catalog.js';
 import { getState, setState, seenDedupe, markDedupe } from '../services/state.js';
@@ -53,6 +54,7 @@ import {
 } from '../services/learning.js';
 import { applyGuardrail, validateReply } from '../services/guardrails.js';
 import { detectStagnation } from '../services/conversationAnalyzer.js';
+import { recordTurnMetrics, buildIndecisiveContextBlock, buildObjectionContextBlock } from '../services/botMemory.js';
 
 export const webhookRouter = Router();
 
@@ -375,24 +377,22 @@ function inferBodyworkFromItem(it: any): string {
 
 /**
  * Normalize a price to ARS for comparison purposes.
- * Uses a rough conversion rate when currencies differ.
- * The rate is intentionally conservative (high) so we don't filter out
- * valid USD-priced vehicles when the client has an ARS budget.
+ * Usa el tipo de cambio real pasado como parámetro (no hardcodeado).
+ * El rate viene de getUsdToArs() — dinámico con fallback conservador.
  */
-function normalizePriceToARS(priceNumber: number, itemCurrency: string, ctxCurrency: string): number {
+function normalizePriceToARS(priceNumber: number, itemCurrency: string, ctxCurrency: string, usdToArsRate: number): number {
   const iCur = normalize(String(itemCurrency || 'ARS'));
   const cCur = normalize(String(ctxCurrency || 'ARS'));
-  // Both in same currency — no conversion needed
+  // Misma moneda — no necesita conversión
   if (iCur === cCur) return priceNumber;
-  // Item is USD, context is ARS: convert item price to ARS equivalent
-  // We use a conservative rate (1 USD ~ 1500 ARS) — agent will clarify exact numbers
-  if (iCur === 'usd' && cCur === 'ars') return priceNumber * 1500;
-  // Item is ARS, context is USD: convert item price to USD equivalent
-  if (iCur === 'ars' && cCur === 'usd') return priceNumber / 1500;
+  // Item en USD, presupuesto en ARS: convertir item a ARS
+  if (iCur === 'usd' && cCur === 'ars') return priceNumber * usdToArsRate;
+  // Item en ARS, presupuesto en USD: convertir item a USD
+  if (iCur === 'ars' && cCur === 'usd') return priceNumber / usdToArsRate;
   return priceNumber;
 }
 
-function filterCatalogByContext(catalog: any[], ctx: any): any[] {
+async function filterCatalogByContext(catalog: any[], ctx: any): Promise<any[]> {
   const brand = ctx?.brand ? normalize(String(ctx.brand)) : '';
   const model = ctx?.model ? normalize(String(ctx.model)) : '';
   const minYear = Number(ctx?.minYear ?? 0) || undefined;
@@ -405,6 +405,13 @@ function filterCatalogByContext(catalog: any[], ctx: any): any[] {
   const maxPrice = Number(ctx?.maxPrice ?? ctx?.amount ?? 0) || undefined;
   // v4: moneda del presupuesto para comparar correctamente contra precios del catálogo
   const ctxCurrency = String(ctx?.currency ?? 'ARS');
+
+  // Obtener tipo de cambio dinámico solo si hay precios en distintas monedas
+  let usdToArsRate = 1200; // fallback conservador
+  if (maxPrice) {
+    const rateResult = await getUsdToArs();
+    usdToArsRate = rateResult.rate;
+  }
 
   return (catalog || [])
     .filter((it) => isVehicleItem(it))
@@ -423,10 +430,10 @@ function filterCatalogByContext(catalog: any[], ctx: any): any[] {
       if (wantsGnc && itemFuel && itemFuel !== 'gnc') return false;
       if (bodywork && itemBodywork && itemBodywork !== bodywork) return false;
       if (maxPrice && Number(it?.priceNumber || 0)) {
-        // v4: normalize to same currency before comparing
+        // v5: usa rate dinámico en vez de hardcode 1500
         const itemCurrency = String(it?.currency ?? 'ARS');
-        const normalizedItemPrice = normalizePriceToARS(Number(it.priceNumber), itemCurrency, ctxCurrency);
-        const normalizedMaxPrice = normalizePriceToARS(maxPrice, ctxCurrency, ctxCurrency); // identity
+        const normalizedItemPrice = normalizePriceToARS(Number(it.priceNumber), itemCurrency, ctxCurrency, usdToArsRate);
+        const normalizedMaxPrice = normalizePriceToARS(maxPrice, ctxCurrency, ctxCurrency, usdToArsRate); // identity
         if (normalizedItemPrice > normalizedMaxPrice) return false;
       }
       return true;
@@ -470,10 +477,10 @@ function sortVehiclesForContext(items: any[], ctx: any): any[] {
   });
 }
 
-function getCatalogHitsWithContext(catalog: any[], rawText: string, ctx: any, limit = 3): any[] {
+async function getCatalogHitsWithContext(catalog: any[], rawText: string, ctx: any, limit = 3): Promise<any[]> {
   const cleanedText = normalize(rawText || '');
   const filtered = hasUsefulSearchContext(ctx)
-    ? sortVehiclesForContext(filterCatalogByContext(catalog, ctx), ctx)
+    ? sortVehiclesForContext(await filterCatalogByContext(catalog, ctx), ctx)
     : [];
 
   const searchedFiltered = filtered.length ? searchCatalog(filtered, rawText, limit) : [];
@@ -610,14 +617,14 @@ function scoreVehicleForContext(it: any, ctx: any, rawText: string): number {
   return score;
 }
 
-function getVehicleMatches(catalog: any[], rawText: string, ctx: any, limit = 3): {
+async function getVehicleMatches(catalog: any[], rawText: string, ctx: any, limit = 3): Promise<{
   hits: any[];
   nearby: any[];
   usedBudgetFallback: boolean;
   hasBudget: boolean;
-} {
-  const baseFiltered = filterCatalogByContext(catalog, { ...ctx, maxPrice: undefined });
-  const strictFiltered = filterCatalogByContext(catalog, ctx);
+}> {
+  const baseFiltered = await filterCatalogByContext(catalog, { ...ctx, maxPrice: undefined });
+  const strictFiltered = await filterCatalogByContext(catalog, ctx);
   const hasBudget = Boolean(Number(ctx?.maxPrice ?? 0));
 
   const withScore = (items: any[]) =>
@@ -760,10 +767,10 @@ Si querés, avanzamos con visita, financiación o te paso una alternativa pareci
   return '';
 }
 
-function findReferencedVehicle(catalog: any[], rawText: string, ctx: any): any | null {
+async function findReferencedVehicle(catalog: any[], rawText: string, ctx: any): Promise<any | null> {
   const normText = normalize(rawText);
-  const candidates = getVehicleMatches(catalog, rawText, { ...ctx, maxPrice: undefined }, 3).hits;
-  if (candidates.length) return candidates[0];
+  const matches = await getVehicleMatches(catalog, rawText, { ...ctx, maxPrice: undefined }, 3);
+  if (matches.hits.length) return matches.hits[0];
   return catalog.find((it) => normalize(getItemText(it)).includes(normText)) || null;
 }
 
@@ -1003,6 +1010,23 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               extractedContext: nextState?.extracted ?? nextState?.search_context ?? {},
               leadScore: typeof nextState?.leadScore === 'number' ? nextState.leadScore : undefined
             }).catch(() => {});
+
+            // ── Autoevaluación del turno (Fase 2 — botMemory) ──────────────────
+            // Registrar métricas sin bloquear. Solo datos conversacionales, nunca de catálogo.
+            try {
+              const questionCount = (reply.match(/\?/g) || []).length;
+              const extractedFields = Object.keys(nextState?.extracted ?? nextState?.search_context ?? {})
+                .filter((k) => !['instance', 'remoteJid', 'timestamp'].includes(k)).length;
+              recordTurnMetrics({
+                conversationId: remoteJid,
+                turnIndex: Number((nextState as any)?.turn_count ?? 0),
+                responseLength: reply.length,
+                questionsAsked: questionCount,
+                dataExtracted: extractedFields,
+                followUp: false, // se actualizará en el próximo mensaje del usuario
+                timestamp: new Date().toISOString(),
+              });
+            } catch { /* nunca fallar por métricas */ }
           }
 
           // ── Extract commercial fields from this turn for persistent memory ──
@@ -1070,16 +1094,39 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     const catalog = await getCatalog();
 
     // ── Handoff detection ───────────────────────────────────────────────────
-    // v2: expanded to cover "hablar con alguien", temporal urgency, complaints/anger
-    const wantsHandoff = /(comprar|reservar|reserva|se[ñn]a(?:r|rl|lo)?|pagar|quiero\s*ya|transferencia|me\s+lo\s+llevo|cerramos|quiero\s+verlo|quiero\s+ese|vamos\s+con|agendar|coordinar|puedo\s+ir|voy\s+ma[nñ]ana|me\s+interesa\s+ese|visita|ver\s+el\s+auto|probarlo|test\s*drive|parte\s+de\s+pago|permuta|entrego\s+mi\s+auto|hablar\s+con\s+alguien|hablar\s+con\s+una\s+persona|hablar\s+con\s+un\s+asesor|quiero\s+hablar\s+con|me\s+comunic[ao]s?\s+con|dame\s+un\s+contacto|me\s+dan\s+un\s+contacto|para\s+la\s+semana\s+que\s+viene|lo\s+necesito\s+(?:esta\s+semana|ya|urgente|r[aá]pido)|urgente|lo\s+quiero\s+ya|est[áa]\s+furioso|estoy\s+furioso|me\s+mandaron\s+mal|recl[ao]m[ao]|quiero\s+quejarme|muy\s+enojado|harto|quiero\s+ir\s+a\s+verlo|quisiera\s+ir|puedo\s+pasar|cu[aá]ndo\s+puedo\s+(?:ir|pasar|verlo)|me\s+dan\s+(?:un\s+)?turno)/i.test(rawText);
+    // v3: urgencia temporal distinguida de urgencia adjetival.
+    // "urgente" suelto NO escala si es adjetivo de búsqueda (ej: "quiero algo urgente barato").
+    // Solo escala cuando hay contexto temporal explícito (esta semana, mañana, ya mismo).
+    const hasTemporalUrgency = /\b(?:esta\s+semana|la\s+semana\s+que\s+viene|para\s+ma[nñ]ana|lo\s+necesito\s+(?:ya|urgente|r[aá]pido)|lo\s+quiero\s+ya|ya\s+mismo|cuanto\s+antes)\b/i.test(rawText);
+    const wantsHandoff = /(comprar|reservar|reserva|se[ñn]a(?:r|rl|lo)?|pagar|quiero\s*ya|transferencia|me\s+lo\s+llevo|cerramos|quiero\s+verlo|quiero\s+ese|vamos\s+con|agendar|coordinar|puedo\s+ir|voy\s+ma[nñ]ana|me\s+interesa\s+ese|visita|ver\s+el\s+auto|probarlo|test\s*drive|parte\s+de\s+pago|permuta|entrego\s+mi\s+auto|hablar\s+con\s+alguien|hablar\s+con\s+una\s+persona|hablar\s+con\s+un\s+asesor|quiero\s+hablar\s+con|me\s+comunic[ao]s?\s+con|dame\s+un\s+contacto|me\s+dan\s+un\s+contacto|est[áa]\s+furioso|estoy\s+furioso|me\s+mandaron\s+mal|recl[ao]m[ao]|quiero\s+quejarme|muy\s+enojado|harto|quiero\s+ir\s+a\s+verlo|quisiera\s+ir|puedo\s+pasar|cu[aá]ndo\s+puedo\s+(?:ir|pasar|verlo)|me\s+dan\s+(?:un\s+)?turno)/i.test(rawText)
+      || hasTemporalUrgency;
+
     if (wantsHandoff) {
-      const selectedVehicle = findReferencedVehicle(catalog, rawText, state.search_context);
+      const selectedVehicle = await findReferencedVehicle(catalog, rawText, state.search_context);
       const tradeInSummary = describeTradeIn(extracted);
 
       // Classify handoff type to tailor the reply: complaint, urgency, or standard closing
       const isComplaint = /(furioso|enojado|harto|mandaron\s+mal|reclam[ao]|quejarme)/i.test(rawText);
-      const isUrgent = /(urgente|esta\s+semana|lo\s+necesito\s+ya|lo\s+quiero\s+ya|para\s+la\s+semana)/i.test(rawText);
+      const isUrgent = hasTemporalUrgency;
       const wantsPerson = /(hablar\s+con\s+alguien|hablar\s+con\s+una\s+persona|hablar\s+con\s+un\s+asesor|quiero\s+hablar\s+con|dame\s+un\s+contacto)/i.test(rawText);
+
+      // Log estructurado de handoff para monitoreo de falsos positivos
+      const handoffMatchedPatterns: string[] = [];
+      if (isComplaint) handoffMatchedPatterns.push('complaint');
+      if (isUrgent) handoffMatchedPatterns.push('temporal_urgency');
+      if (wantsPerson) handoffMatchedPatterns.push('wants_person');
+      if (!isComplaint && !isUrgent && !wantsPerson) handoffMatchedPatterns.push('closing_intent');
+      console.info('[HANDOFF_TRIGGER]', JSON.stringify({
+        reason: handoffMatchedPatterns.join('+'),
+        input: rawText.substring(0, 100),
+        flags: {
+          highUrgency: Boolean(extracted?.highUrgency),
+          wantsHandoff: true,
+          multipleVehicleTypes: Boolean(extracted?.multipleVehicleTypes),
+          hasTemporalUrgency,
+        },
+        timestamp: new Date().toISOString(),
+      }));
 
       try {
         await setConversationRule(instance, remoteJid, 'HUMAN_ONLY');
@@ -1313,7 +1360,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       && /\b(20\d{2}|19\d{2}|manual|autom[aá]t|cvt|dsg|nafta|diesel|gasoil|gnc|suv|pickup|hatch|sedan|hasta|m[aá]ximo|palos|mil|usd|dolares?)\b/i.test(rawText);
 
     if ((prevIntent === 'product_results' || prevIntent === 'product_results_single') && hasSearchCtx && looksLikeRefineOnly) {
-      const refined = filterCatalogByContext(catalog, state.search_context);
+      const refined = await filterCatalogByContext(catalog, state.search_context);
       const baseHits = refined.length > 0
         ? refined.slice(0, 3)
         : searchCatalog(catalog, rawText, 3);
@@ -1399,7 +1446,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // ── Awaiting query from previous turn ───────────────────────────────────
     if (state.stage === 'awaiting_query') {
-      const rawMatches = getVehicleMatches(catalog, rawText, state.search_context, 3);
+      const rawMatches = await getVehicleMatches(catalog, rawText, state.search_context, 3);
       const guarded = applyVehicleGuardrails(rawText, rawMatches.hits);
       const matches = { ...rawMatches, hits: guarded.hits };
       if (matches.hits.length || matches.usedBudgetFallback) {
@@ -1587,7 +1634,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         newState.last_intent = 'price_request';
 
       } else if (shouldSearch) {
-        const rawMatches = getVehicleMatches(catalog, rawText, state.search_context, 3);
+        const rawMatches = await getVehicleMatches(catalog, rawText, state.search_context, 3);
         const guarded = applyVehicleGuardrails(rawText, rawMatches.hits);
         const matches = { ...rawMatches, hits: guarded.hits };
         if (matches.hits.length || matches.usedBudgetFallback) {
@@ -1747,6 +1794,25 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               }
             } catch { /* no bloquear el flujo principal */ }
 
+            // ── Contexto de botMemory (Fase 2) ───────────────────────────────
+            // Inyectar preguntas efectivas para clientes indecisos y manejo de objeciones.
+            // Solo como "ejemplos de conversaciones reales", nunca como reglas de catálogo.
+            let botMemoryContextBlock: string | undefined;
+            try {
+              const isIndecisiveNow = Boolean(mergedExtracted?.isIndecisive);
+              const hasObjection = /\b(?:est[aá]\s+caro|muy\s+caro|es\s+caro|lo\s+pienso|no\s+me\s+convence|muy\s+lejos|no\s+tengo\s+tanta\s+plata)\b/i.test(rawText);
+              if (isIndecisiveNow) {
+                const block = buildIndecisiveContextBlock();
+                if (block) botMemoryContextBlock = block;
+              } else if (hasObjection) {
+                const objType = /\bcar[oa]\b/i.test(rawText) ? 'caro'
+                  : /\bpienso\b/i.test(rawText) ? 'lo pienso'
+                  : 'no me convence';
+                const block = buildObjectionContextBlock(objType);
+                if (block) botMemoryContextBlock = block;
+              }
+            } catch { /* nunca bloquear por memoria */ }
+
             // ── loopData: anti-loop + contexto para el agente v5 ──────────────
             const repeatedMissingFields = detectRepeatedMissingFields(state);
             const agentLoopData = {
@@ -1777,6 +1843,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               policyContext,
               noStockContext: !!(newState as any)._noStockContext,
               memoryBlock: memoryBlock || undefined,
+              botMemoryContext: botMemoryContextBlock,
             });
 
             // ── FIX-10: Stagnation check — force handoff if conversation is stuck ──────

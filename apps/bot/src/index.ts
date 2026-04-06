@@ -52,9 +52,17 @@ import { getContactRule } from "./services/contacts.js";
 import { scanRecentVehiclesForDemandMatches, runRecontactJob } from "./services/demands.js";
 import { sendTextAndPersist } from "./services/panelPersistence.js";
 import { runAutoTrainerScan } from "./services/autoTrainer.js";
+import { loadBotMemory } from "./services/botMemory.js";
 
 async function main() {
   await migrate();
+
+  // Carga la memoria conversacional del bot al arrancar (sin bloquear)
+  try {
+    loadBotMemory();
+  } catch (e) {
+    console.warn('[botMemory] Error en carga inicial — se continúa sin memoria:', e);
+  }
 
   const app = express();
   app.disable("x-powered-by");

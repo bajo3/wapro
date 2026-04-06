@@ -663,8 +663,11 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
   }
 
   // ── High urgency flag (v5) ─────────────────────────────────────────────────
-  // Detecta cuando el cliente necesita el vehículo con urgencia real
-  if (/\b(?:urgente|esta\s+semana|la\s+semana\s+que\s+viene|lo\s+necesito\s+(?:ya|r[aá]pido)|para\s+ma[nñ]ana|necesito\s+si\s+o\s+si|ya\s+mismo|cuanto\s+antes)\b/i.test(t)) {
+  // Detecta cuando el cliente necesita el vehículo con urgencia TEMPORAL (no adjetival).
+  // "quiero algo urgente que sea barato" NO escala — el contexto no es temporal.
+  // "lo necesito para mañana" / "esta semana" SÍ escala — urgencia con fecha.
+  const urgencyTemporalMatch = /\b(?:esta\s+semana|la\s+semana\s+que\s+viene|para\s+ma[nñ]ana|para\s+el\s+(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)|necesito\s+si\s+o\s+si|ya\s+mismo|cuanto\s+antes|lo\s+necesito\s+(?:ya|r[aá]pido|hoy)|urgente\s+(?:porque|para|que\s+lo\s+necesito|lo\s+necesito))\b/i.test(t);
+  if (urgencyTemporalMatch) {
     out.highUrgency = true;
   }
 
@@ -688,7 +691,91 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
     out.isIndecisive = true;
   }
 
+  // ── Campos estructurados nuevos (v6 — Fase 2) ────────────────────────────
+
+  // seatCount: "7 asientos", "para 7 personas", "7 plazas"
+  const seatMatch = t.match(/\b(\d)\s*(?:asientos?|plazas?|personas?|pasajeros?)\b/i);
+  if (seatMatch) {
+    const seats = Number(seatMatch[1]);
+    if (seats >= 2 && seats <= 9) out.seatCount = seats;
+  }
+
+  // primaryUse: detecta uso principal del vehículo
+  // "para la ciudad" / "ciudad" → city | "ruta" / "autopista" → highway
+  // "campo" / "off-road" → field | "mixto" / "de todo" → mixed
+  if (!out.primaryUse) {
+    if (/\b(?:para\s+la\s+ciudad|uso\s+ciudad|calle|urbano|para\s+manejar\s+en\s+ciudad)\b/i.test(t)) {
+      out.primaryUse = 'city';
+    } else if (/\b(?:para\s+ruta|viajes?\s+(?:largos?|de\s+ruta)|autopista|carretera|larga\s+distancia)\b/i.test(t)) {
+      out.primaryUse = 'highway';
+    } else if (/\b(?:para\s+el\s+campo|uso\s+campo|off\s*road|todo\s+terreno|caminos?\s+de\s+tierra)\b/i.test(t)) {
+      out.primaryUse = 'field';
+    } else if (/\b(?:mixto|de\s+todo|ciudad\s+y\s+ruta|ruta\s+y\s+ciudad|para\s+todo)\b/i.test(t)) {
+      out.primaryUse = 'mixed';
+    }
+  }
+
+  // fuelPreference: preferencia explícita de combustible (campo semántico más rico que fuel)
+  // Complementa 'fuel' con nombres más coloquiales sin reemplazarlo
+  if (!out.fuelPreference && !out.fuel) {
+    if (/\b(?:nafta|naftero|gasolina|a\s+nafta)\b/i.test(t)) out.fuelPreference = 'gasoline';
+    else if (/\b(?:diesel|gasoil|gasoleo|turbodiesel|a\s+diesel|a\s+gasoil)\b/i.test(t)) out.fuelPreference = 'diesel';
+    else if (/\b(?:h[ií]brido?|hybrid|h[ií]brid[ao])\b/i.test(t)) out.fuelPreference = 'hybrid';
+    else if (/\b(?:el[eé]ctrico?|electric|ev|bev|100%\s+el[eé]ctrico?)\b/i.test(t)) out.fuelPreference = 'electric';
+  }
+
+  // transmissionPreference: automático vs manual (campo semántico complementario a transmission)
+  if (!out.transmissionPreference && !out.transmission) {
+    if (/\b(?:autom[aá]tico?|automati[sz]ada?|caja\s+autom[aá]tica?|cvt|dsg|tiptronic)\b/i.test(t)) {
+      out.transmissionPreference = 'automatic';
+    } else if (/\b(?:manual|a\s+palanca|caja\s+manual|sincr[oó]nico?)\b/i.test(t)) {
+      out.transmissionPreference = 'manual';
+    }
+  }
+
+  // ── Guided flow step (v6 — para clientes indecisos) ──────────────────────
+  // Trackea cuántas respuestas útiles dio el cliente al flujo guiado.
+  // Se incrementa en agent.ts cuando el bot procesó una pregunta del flujo.
+  // Aquí solo se preserva el valor anterior (no lo calculamos desde el texto).
+  // El agente decide cuándo avanzar al paso siguiente.
+  if (prev?.guidedFlowStep !== undefined) {
+    out.guidedFlowStep = prev.guidedFlowStep;
+  }
+
   return out;
+}
+
+/**
+ * countUsefulGuidedAnswers — v6
+ * Cuenta cuántas respuestas útiles del flujo guiado están presentes en el contexto.
+ * Se usa para decidir si el bot ya tiene suficientes datos para sugerir opciones
+ * en vez de seguir preguntando (umbral: 3 respuestas útiles).
+ *
+ * Campos que cuentan como respuesta útil al flujo guiado:
+ *  - primaryUse o useCase (uso principal)
+ *  - maxPrice o amount (presupuesto)
+ *  - bodywork o brand (tipo o marca preferida)
+ *  - transmissionPreference o transmission (caja)
+ *  - fuelPreference o fuel (combustible)
+ */
+export function countUsefulGuidedAnswers(ctx: any): number {
+  let count = 0;
+  if (ctx?.primaryUse || ctx?.useCase) count++;
+  if (ctx?.maxPrice || ctx?.amount) count++;
+  if (ctx?.bodywork || ctx?.brand) count++;
+  if (ctx?.transmissionPreference || ctx?.transmission) count++;
+  if (ctx?.fuelPreference || ctx?.fuel) count++;
+  return count;
+}
+
+/**
+ * hasEnoughDataForSuggestion — v6
+ * Devuelve true cuando el contexto tiene al menos 3 respuestas útiles del flujo guiado.
+ * En ese caso el agente debe pasar a sugerir opciones del catálogo en vez de continuar
+ * el flujo de preguntas.
+ */
+export function hasEnoughDataForSuggestion(ctx: any): boolean {
+  return countUsefulGuidedAnswers(ctx) >= 3;
 }
 
 const REQUIRED_FIELD_QUESTIONS: Record<string, string> = {
