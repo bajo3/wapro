@@ -373,6 +373,25 @@ function inferBodyworkFromItem(it: any): string {
   return '';
 }
 
+/**
+ * Normalize a price to ARS for comparison purposes.
+ * Uses a rough conversion rate when currencies differ.
+ * The rate is intentionally conservative (high) so we don't filter out
+ * valid USD-priced vehicles when the client has an ARS budget.
+ */
+function normalizePriceToARS(priceNumber: number, itemCurrency: string, ctxCurrency: string): number {
+  const iCur = normalize(String(itemCurrency || 'ARS'));
+  const cCur = normalize(String(ctxCurrency || 'ARS'));
+  // Both in same currency — no conversion needed
+  if (iCur === cCur) return priceNumber;
+  // Item is USD, context is ARS: convert item price to ARS equivalent
+  // We use a conservative rate (1 USD ~ 1500 ARS) — agent will clarify exact numbers
+  if (iCur === 'usd' && cCur === 'ars') return priceNumber * 1500;
+  // Item is ARS, context is USD: convert item price to USD equivalent
+  if (iCur === 'ars' && cCur === 'usd') return priceNumber / 1500;
+  return priceNumber;
+}
+
 function filterCatalogByContext(catalog: any[], ctx: any): any[] {
   const brand = ctx?.brand ? normalize(String(ctx.brand)) : '';
   const model = ctx?.model ? normalize(String(ctx.model)) : '';
@@ -384,6 +403,8 @@ function filterCatalogByContext(catalog: any[], ctx: any): any[] {
   const wantsGnc = ctx?.gnc === true || fuel === 'gnc';
   // v3: ctx.amount como fallback de maxPrice para filtrado
   const maxPrice = Number(ctx?.maxPrice ?? ctx?.amount ?? 0) || undefined;
+  // v4: moneda del presupuesto para comparar correctamente contra precios del catálogo
+  const ctxCurrency = String(ctx?.currency ?? 'ARS');
 
   return (catalog || [])
     .filter((it) => isVehicleItem(it))
@@ -402,7 +423,11 @@ function filterCatalogByContext(catalog: any[], ctx: any): any[] {
       if (wantsGnc && itemFuel && itemFuel !== 'gnc') return false;
       if (bodywork && itemBodywork && itemBodywork !== bodywork) return false;
       if (maxPrice && Number(it?.priceNumber || 0)) {
-        if (Number(it.priceNumber) > maxPrice) return false;
+        // v4: normalize to same currency before comparing
+        const itemCurrency = String(it?.currency ?? 'ARS');
+        const normalizedItemPrice = normalizePriceToARS(Number(it.priceNumber), itemCurrency, ctxCurrency);
+        const normalizedMaxPrice = normalizePriceToARS(maxPrice, ctxCurrency, ctxCurrency); // identity
+        if (normalizedItemPrice > normalizedMaxPrice) return false;
       }
       return true;
     });
@@ -1045,38 +1070,66 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     const catalog = await getCatalog();
 
     // ── Handoff detection ───────────────────────────────────────────────────
-    const wantsHandoff = /(comprar|reservar|reserva|se[ñn]a(?:r|rl|lo)?|pagar|quiero\s*ya|transferencia|me\s+lo\s+llevo|cerramos|quiero\s+verlo|quiero\s+ese|vamos\s+con|agendar|coordinar|puedo\s+ir|voy\s+ma[nñ]ana|me\s+interesa\s+ese|visita|ver\s+el\s+auto|probarlo|test\s*drive|parte\s+de\s+pago|permuta|entrego\s+mi\s+auto)/i.test(rawText);
+    // v2: expanded to cover "hablar con alguien", temporal urgency, complaints/anger
+    const wantsHandoff = /(comprar|reservar|reserva|se[ñn]a(?:r|rl|lo)?|pagar|quiero\s*ya|transferencia|me\s+lo\s+llevo|cerramos|quiero\s+verlo|quiero\s+ese|vamos\s+con|agendar|coordinar|puedo\s+ir|voy\s+ma[nñ]ana|me\s+interesa\s+ese|visita|ver\s+el\s+auto|probarlo|test\s*drive|parte\s+de\s+pago|permuta|entrego\s+mi\s+auto|hablar\s+con\s+alguien|hablar\s+con\s+una\s+persona|hablar\s+con\s+un\s+asesor|quiero\s+hablar\s+con|me\s+comunic[ao]s?\s+con|dame\s+un\s+contacto|me\s+dan\s+un\s+contacto|para\s+la\s+semana\s+que\s+viene|lo\s+necesito\s+(?:esta\s+semana|ya|urgente|r[aá]pido)|urgente|lo\s+quiero\s+ya|est[áa]\s+furioso|estoy\s+furioso|me\s+mandaron\s+mal|recl[ao]m[ao]|quiero\s+quejarme|muy\s+enojado|harto|quiero\s+ir\s+a\s+verlo|quisiera\s+ir|puedo\s+pasar|cu[aá]ndo\s+puedo\s+(?:ir|pasar|verlo)|me\s+dan\s+(?:un\s+)?turno)/i.test(rawText);
     if (wantsHandoff) {
       const selectedVehicle = findReferencedVehicle(catalog, rawText, state.search_context);
       const tradeInSummary = describeTradeIn(extracted);
+
+      // Classify handoff type to tailor the reply: complaint, urgency, or standard closing
+      const isComplaint = /(furioso|enojado|harto|mandaron\s+mal|reclam[ao]|quejarme)/i.test(rawText);
+      const isUrgent = /(urgente|esta\s+semana|lo\s+necesito\s+ya|lo\s+quiero\s+ya|para\s+la\s+semana)/i.test(rawText);
+      const wantsPerson = /(hablar\s+con\s+alguien|hablar\s+con\s+una\s+persona|hablar\s+con\s+un\s+asesor|quiero\s+hablar\s+con|dame\s+un\s+contacto)/i.test(rawText);
+
       try {
         await setConversationRule(instance, remoteJid, 'HUMAN_ONLY');
         const pairs = Object.entries(extracted || {})
           .filter(([_, v]) => v !== undefined && v !== null && String(v).trim() !== '')
           .slice(0, 12)
           .map(([k, v]) => `${k}=${String(v)}`);
+        const handoffReason = isComplaint ? 'reclamo' : isUrgent ? 'urgencia' : wantsPerson ? 'solicitud_persona' : 'intencion_de_cierre';
         await addConversationNote(instance, remoteJid,
-          `Handoff automático. Texto: "${rawText.slice(0, 140)}"\nDatos: ${pairs.join(' | ') || 'n/a'}`);
+          `Handoff automático [${handoffReason}]. Texto: "${rawText.slice(0, 140)}"\nDatos: ${pairs.join(' | ') || 'n/a'}`);
       } catch (err) {
         console.error('Failed to set conversation rule on handoff', err);
       }
-      const handoffVariants = [
-        [
-          selectedVehicle ? `Perfecto, ya tomo interés por el ${selectedVehicle.name}.` : 'Perfecto, ya tomo tu interés.',
-          tradeInSummary ? `También dejo anotado que entregás ${tradeInSummary}.` : '',
-          extracted?.name && extracted?.city
-            ? `Ahora te sigue un asesor para avanzar desde ${extracted.city}.`
-            : 'Te paso con un asesor para avanzar con esto ahora. Decime tu nombre y zona.'
-        ].filter(Boolean).join(' '),
-        [
-          selectedVehicle ? `Buenísimo, vamos con ${selectedVehicle.name}.` : 'Buenísimo, avanzamos con eso.',
-          tradeInSummary ? `Tu usado ${tradeInSummary} queda cargado como parte de pago.` : '',
+
+      // Build reply tailored to handoff type
+      let handoffReply: string;
+      if (isComplaint) {
+        handoffReply = extracted?.name
+          ? `Entiendo, ${extracted.name}. Lamento la situación. Te paso con un asesor ahora mismo para resolverlo.`
+          : 'Entiendo, lamento lo que pasó. Te paso con un asesor ahora para resolverlo directamente.';
+      } else if (isUrgent) {
+        handoffReply = [
+          selectedVehicle ? `Perfecto, urgencia tomada para el ${selectedVehicle.name}.` : 'Perfecto, tomo tu urgencia.',
           extracted?.name
-            ? `En un momento te escribe un asesor para seguir la operación, ${extracted.name}.`
-            : 'En un momento te escribe un asesor para seguir la operación.'
-        ].filter(Boolean).join(' ')
-      ];
-      const handoffReply = pickOne(handoffVariants);
+            ? `Te contacta un asesor en breve, ${extracted.name}.`
+            : 'En breve te escribe un asesor para coordinar rápido.'
+        ].join(' ');
+      } else if (wantsPerson) {
+        handoffReply = extracted?.name
+          ? `Dale, ${extracted.name}. En un momento te escribe un asesor directo.`
+          : 'Claro, te paso con un asesor. En un momento te contactan.';
+      } else {
+        const handoffVariants = [
+          [
+            selectedVehicle ? `Perfecto, ya tomo interés por el ${selectedVehicle.name}.` : 'Perfecto, ya tomo tu interés.',
+            tradeInSummary ? `También dejo anotado que entregás ${tradeInSummary}.` : '',
+            extracted?.name && extracted?.city
+              ? `Ahora te sigue un asesor para avanzar desde ${extracted.city}.`
+              : 'Te paso con un asesor para avanzar con esto ahora. Decime tu nombre y zona.'
+          ].filter(Boolean).join(' '),
+          [
+            selectedVehicle ? `Buenísimo, vamos con ${selectedVehicle.name}.` : 'Buenísimo, avanzamos con eso.',
+            tradeInSummary ? `Tu usado ${tradeInSummary} queda cargado como parte de pago.` : '',
+            extracted?.name
+              ? `En un momento te escribe un asesor para seguir la operación, ${extracted.name}.`
+              : 'En un momento te escribe un asesor para seguir la operación.'
+          ].filter(Boolean).join(' ')
+        ];
+        handoffReply = pickOne(handoffVariants);
+      }
       scheduleReply(handoffReply, {
         ...state,
         stage: 'idle',
@@ -1091,7 +1144,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           handoffRecommended: true,
           suggestedReply: handoffReply,
           missingFields: [],
-          internalReason: selectedVehicle ? `interes_concreto:${selectedVehicle.id}` : 'intencion_de_cierre',
+          internalReason: isComplaint ? 'reclamo_cliente' : isUrgent ? 'urgencia_temporal' : wantsPerson ? 'solicitud_persona' : selectedVehicle ? `interes_concreto:${selectedVehicle.id}` : 'intencion_de_cierre',
           updatedAt: nowIso
         }
       }, { handoff: true });

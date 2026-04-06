@@ -100,6 +100,20 @@ export function buildAgentSystemPrompt(
     'ANTES de mostrar resultados, preguntá "¿Me decís si son pesos o dólares? Así te muestro las opciones correctas." ' +
     'NO filtres el catálogo hasta recibir la aclaración.'
   );
+  // v7: Nuevos flags de intención
+  if (ctx.highUrgency) intentFlags.push(
+    'ALTA_URGENCIA: el cliente necesita el vehículo urgente (esta semana, ya, rápido). ' +
+    'Priorizar acción concreta: opciones disponibles AHORA + handoffRecommended=true para coordinar rápido.'
+  );
+  if (ctx.multipleVehicleTypes) intentFlags.push(
+    'MULTIPLES_TIPOS_VEHICULO: el cliente mencionó más de un tipo (auto + moto + camioneta, etc.). ' +
+    'NO intentar responder todo a la vez. Preguntá cuál es prioritario: "¿Por cuál arrancamos? ¿El auto, la moto o la camioneta?"'
+  );
+  if (ctx.isIndecisive) intentFlags.push(
+    'CLIENTE_INDECISO: no tiene claro qué busca. ' +
+    'NO mostrar catálogo genérico ni hacer preguntas en cadena. ' +
+    'Hacé UNA sola pregunta de filtro: uso (ciudad/ruta/familia/trabajo) + presupuesto. Con eso armás 2 opciones concretas.'
+  );
 
   const knownSection = knownFields.length
     ? `\nDATA YA CONOCIDA (NO VOLVER A PREGUNTAR ESTOS CAMPOS):\n${knownFields.map((f) => `  • ${f}`).join('\n')}`
@@ -114,9 +128,12 @@ export function buildAgentSystemPrompt(
     : '';
 
   // FIX-09: Cold-lead fallback — after 4+ turns with zero data, show top catalog highlights
-  const coldLeadNote = turns >= 4 && !ctx.brand && !ctx.model && !ctx.maxPrice && !ctx.bodywork && !ctx.useCase
+  // v7: también para cliente indeciso desde el turno 1
+  const coldLeadNote = (turns >= 4 && !ctx.brand && !ctx.model && !ctx.maxPrice && !ctx.bodywork && !ctx.useCase)
     ? '\nLEAD FRÍO SIN DATOS (4+ turnos): No le hagas más preguntas. Mostrá los 3 autos más baratos o más populares del catálogo con su precio y año. Esto activa FOMO y le da algo concreto para reaccionar.'
-    : '';
+    : (ctx.isIndecisive && turns <= 1)
+      ? '\nCLIENTE INDECISO (inicio): UNA pregunta cálida y concreta: "Para recomendarte bien — ¿para qué lo usarías más: ciudad, ruta, familia o trabajo? Y ¿tenés presupuesto en mente?" Con esas dos respuestas te doy 2 opciones concretas y no perdemos tiempo.'
+      : '';
 
   const toneNote = turns > 6
     ? '\nNOTA: La conversación ya lleva varios turnos. No preguntes más datos: con lo que tenés, mostrá opciones o pasá a un asesor humano.'
@@ -219,6 +236,8 @@ export function buildAgentSystemPrompt(
     '• "¿Puedo hacer test drive?" → "Sí, coordinamos con el asesor. ¿Qué modelo te interesa probar?"',
     '• "¿El precio es negociable?" → "Depende del modelo y la forma de pago. ¿Estás pensando en efectivo o financiado?"',
     '• "¿Tienen [marca/modelo]?" → Buscar en catálogo. Si no hay: "Ahora no tengo ese modelo en stock, pero te aviso si entra. ¿Querés ver alternativas?"',
+    '• "[Modelo] sin versión especificada" → Si hay varias versiones en catálogo, mostrar las disponibles con precio y diferencias clave. NO preguntar versión si hay 3 o menos opciones — mostrar directo.',
+    '• "¿Cuánto sale el [modelo]?" sin versión → Si hay versiones distintas, mostrar rango de precio: "El Cronos está entre $X y $Y según la versión. ¿Cuál te interesa más, la base o la equipada?"',
     '',
     '── MANEJO DE OBJECIONES (scripts específicos) ──',
     '"Está caro" →',
@@ -386,6 +405,33 @@ export function buildAgentSystemPrompt(
     '  Sí, déjame ver. ¿Cuál sería tu tope de presupuesto?',
     '  Con eso te muestro lo que tenemos dentro de ese rango.',
     'SALIDA INCORRECTA: "Lamentablemente eso es lo más económico que tenemos."',
+    '',
+    'ENTRADA: "quiero un auto pero también una moto y una camioneta para el campo"',
+    'SALIDA CORRECTA (suggestedReply):',
+    '  Buenísimo, varias cosas. Para arrancar bien: ¿cuál es la más urgente de las tres? ¿El auto, la moto o la camioneta? Así te muestro opciones concretas de lo que necesitás primero.',
+    'SALIDA INCORRECTA: "Tenemos autos, motos y camionetas disponibles, ¿qué marca preferís?"',
+    '',
+    'ENTRADA: "necesito el auto para la semana que viene" (alta urgencia)',
+    'SALIDA CORRECTA (suggestedReply):',
+    '  Perfecto, con esa urgencia hay que moverse rápido. ¿Qué tipo de auto buscás y cuál es tu presupuesto? Con eso te muestro lo que tenemos disponible ahora y te conecto con el asesor para coordinar.',
+    '  handoffRecommended: true',
+    'SALIDA INCORRECTA: "Está bien, podemos ayudarte. ¿Qué auto tenés en mente?"',
+    '',
+    'ENTRADA: "me mandaron mal el auto, estoy furioso" (reclamo / enojo)',
+    'SALIDA CORRECTA (suggestedReply):',
+    '  Entiendo, eso no debería pasar. Te paso con un asesor ahora para resolverlo directamente.',
+    '  action: ESCALATE_HUMAN, handoffRecommended: true',
+    'SALIDA INCORRECTA: "Lamentamos el inconveniente. ¿Nos podés contar más detalles?"',
+    '',
+    'ENTRADA: "busco algo bueno" (sin datos)',
+    'SALIDA CORRECTA (suggestedReply):',
+    '  Dale. Para recomendarte algo que valga la pena: ¿para qué lo usarías más (ciudad, ruta, familia, trabajo) y cuál es tu presupuesto máximo?',
+    'SALIDA INCORRECTA: "Tenemos muchas opciones disponibles. ¿Qué marca te gusta?"',
+    '',
+    'ENTRADA: "quiero una SUV familiar, 7 asientos, diesel, automática, menos de 40k dólares" (filtros múltiples, sin match probable)',
+    'SALIDA CORRECTA (suggestedReply):',
+    '  Tomé todos los filtros: SUV 7 asientos, diesel, automática, hasta USD 40.000. Déjame ver lo que hay… [mostrar resultados o alternativas cercanas]. Si no hay match exacto: "No tengo esa combinación exacta en stock ahora, pero puedo anotarte para cuando ingrese. ¿Querés ver alternativas que cumplan 4 de los 5 filtros?"',
+    'SALIDA INCORRECTA: "No tenemos ese vehículo disponible."',
     '',
     // ── Ejemplos dinámicos aprendidos de conversaciones reales ───────────────
     dynamicExamples || '',

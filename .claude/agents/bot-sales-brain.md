@@ -15,6 +15,7 @@ Mejorar cómo el bot entiende, decide y responde para vender mejor sin inventar.
 - falla detección de intención o captura de presupuesto
 - hay que mejorar seguimiento, escalado o recomendación
 - hay que diseñar reglas conversacionales o playbooks
+- el bot no maneja bien objeciones, indecisión o leads fríos
 
 ## No usar cuando
 - el problema central es un bug de persistencia, deploy o UI
@@ -27,6 +28,15 @@ Mejorar cómo el bot entiende, decide y responde para vender mejor sin inventar.
 - `apps/bot/src/services/salesCoach.ts`
 - `apps/bot/src/services/learning.ts`
 - `apps/bot/src/services/leadMemory.ts`
+
+## Skills de referencia obligatoria
+Antes de proponer cambios en comportamiento del bot, revisar:
+- `skills/vendedor-consultivo.md` — reglas de conversación y cierre
+- `skills/manejar-objeciones.md` — los 5 patrones de objeción
+- `skills/seguimiento-lead-frio.md` — ventanas y mensajes de re-engagement
+- `skills/escalar-a-humano.md` — cuándo y cómo derivar
+- `skills/detectar-intencion-comercial.md` — intenciones permitidas
+- `skills/moneda-dual-ars-usd.md` — reglas de doble moneda
 
 ## Inputs esperados
 - mensaje del lead o conversación
@@ -48,3 +58,4 @@ Mejorar cómo el bot entiende, decide y responde para vender mejor sin inventar.
 - priorizar siguiente mejor paso comercial
 - respetar restricciones explícitas
 - si falta evidencia sensible, coordinar con `catalog-truth-guardian`
+- si hay objeción no resuelta en 2 turnos, coordinar con `escalar-a-humano`

@@ -121,7 +121,9 @@ export function parseMoney(text: string): ParseMoneyResult | null {
   if (palos) return { amount: Math.round(Number(palos[1].replace(',', '.')) * 1_000_000), currency: 'ARS' };
 
   // "13 millones" / "13 mill" / "0.8 millones" (con espacio)
-  const mill = t.match(/\b(\d+(?:[.,]\d+)?)\s*(?:mill?(?:ones?)?|millon(?:es)?)\b/);
+  // v5: regex más preciso — "mill" requiere doble l para no capturar "mil" (miles)
+  // Acepta: "millones", "millon", "mill" (abreviatura con doble l) pero NO "mil" solo
+  const mill = t.match(/\b(\d+(?:[.,]\d+)?)\s*(?:mill(?:ones?)?|millon(?:es)?)\b/);
   if (mill) return { amount: Math.round(Number(mill[1].replace(',', '.')) * 1_000_000), currency };
 
   // "13m" shorthand pegado: solo si la m está pegada al número sin espacio
@@ -132,12 +134,34 @@ export function parseMoney(text: string): ParseMoneyResult | null {
   }
 
   // "800 mil" / "1500 kilos"
-  const miles = t.match(/\b(\d{3,4})\s*(?:mil|kilos?)\b/);
-  if (miles) { const n = Number(miles[1]) * 1000; if (n > 50_000) return { amount: n, currency }; }
+  // v5: si hay marcador USD explícito ("20 mil dolares"), respetar la cantidad directa sin threshold
+  const miles = t.match(/\b(\d{1,4})\s*(?:mil|kilos?)\b/);
+  if (miles) {
+    const n = Number(miles[1]) * 1000;
+    if (isUSD && n >= 1_000) return { amount: n, currency: 'USD' };
+    if (!isUSD && n > 50_000) return { amount: n, currency };
+  }
 
   // "800k" shorthand de miles (k pegado al número)
-  const kShort = t.match(/\b(\d{3,4})k\b/);
-  if (kShort) { const n = Number(kShort[1]) * 1000; if (n > 50_000) return { amount: n, currency }; }
+  // v5: umbral reducido a 1000 para capturar montos USD (ej: "40k dolares")
+  // Para USD, cualquier valor k razonable como presupuesto (1k-999k) es válido.
+  // Para ARS sin marcador, mantenemos > 50k para evitar falsos positivos con años.
+  const kShort = t.match(/\b(\d{1,4})k\b/);
+  if (kShort) {
+    const n = Number(kShort[1]) * 1000;
+    if (isUSD && n >= 1_000) return { amount: n, currency: 'USD' };
+    if (!isUSD && n > 50_000) return { amount: n, currency };
+  }
+
+  // Plain number with explicit USD marker (e.g. "40000 dolares", "menos de 50000 usd")
+  // v5: captura montos USD de 4-6 dígitos que no alcanzarían el umbral de 7 dígitos
+  if (isUSD) {
+    const usdPlain = t.match(/\b(\d{4,6})\b/);
+    if (usdPlain) {
+      const n = Number(usdPlain[1]);
+      if (n >= 1_000 && n <= 999_999) return { amount: n, currency: 'USD' };
+    }
+  }
 
   // "$ 13.800.000"
   const pesos = t.match(/\$\s*([0-9.,]+)/);
@@ -394,8 +418,8 @@ function detectCondition(text: string): 'nuevo' | 'usado' | null {
  */
 function detectFinancing(text: string): boolean {
   const t = norm(text);
-  // Extend financing detection to capture more conjugations and synonyms like "financian" or "financia".
-  return /\b(?:con\s*cuotas?|en\s*cuotas?|a\s*cuotas?|financian|financia|financiar|financiado|financiacion|financiamiento|credito|banco|prestamo|anticipo|cuota\s*fija|pago\s*mensual|a\s*plazos?|plan\s*de\s*pago|lotes?)\b/.test(t);
+  // v5: expanded to cover "financiarlo", "cuántas cuotas", "en cuotas" standalone, etc.
+  return /\b(?:con\s*cuotas?|en\s*cuotas?|a\s*cuotas?|cu[aá]ntas\s+cuotas?|cuotas?\s+me|financian|financia(?:r(?:lo|la|le)?)?|financiado|financiacion|financiamiento|credito|banco|prestamo|anticipo|cuota\s*fija|pago\s*mensual|a\s*plazos?|plan\s*de\s*pago|lotes?)\b/.test(t);
 }
 
 /**
@@ -636,6 +660,32 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
     if (tradeIn.tradeInModel) out.tradeInModel = tradeIn.tradeInModel;
     if (tradeIn.tradeInYear) out.tradeInYear = tradeIn.tradeInYear;
     if (tradeIn.tradeInKm !== undefined) out.tradeInKm = tradeIn.tradeInKm;
+  }
+
+  // ── High urgency flag (v5) ─────────────────────────────────────────────────
+  // Detecta cuando el cliente necesita el vehículo con urgencia real
+  if (/\b(?:urgente|esta\s+semana|la\s+semana\s+que\s+viene|lo\s+necesito\s+(?:ya|r[aá]pido)|para\s+ma[nñ]ana|necesito\s+si\s+o\s+si|ya\s+mismo|cuanto\s+antes)\b/i.test(t)) {
+    out.highUrgency = true;
+  }
+
+  // ── Multiple vehicle types flag (v5) ─────────────────────────────────────
+  // Detecta cuando el cliente menciona más de un tipo de vehículo (auto + moto + camioneta, etc.)
+  const vehicleTypeCount = [
+    /\bauto(?:movil)?\b/i.test(t),
+    /\bmoto(?:cicleta)?\b/i.test(t),
+    /\bcamioneta\b/i.test(t),
+    /\bcamion\b/i.test(t),
+    /\bsuv\b/i.test(t) && !/\bsuv\s+familiar\b/i.test(t), // SUV alone = one type
+    /\bpickup\b/i.test(t),
+  ].filter(Boolean).length;
+  if (vehicleTypeCount >= 2) {
+    out.multipleVehicleTypes = true;
+  }
+
+  // ── Indecision flag (v5) ─────────────────────────────────────────────────
+  // Detecta clientes que expresan no saber qué quieren
+  if (/\b(?:no\s+s[eé]\s+(?:qu[eé]\s+quiero|bien\s+qu[eé])|no\s+tengo\s+claro|no\s+me\s+decido|busco\s+algo\s+(?:bueno|lindo|lindo\s+y\s+barato)|algo\s+bueno\s+(?:y\s+barato)?|cualquier\s+(?:cosa|auto)|algo\s+que\s+sirva|ayudame\s+a\s+elegir|no\s+s[eé]\s+(?:por\s+d[oó]nde\s+empezar|por\s+d[oó]nde\s+arrancar))\b/i.test(t)) {
+    out.isIndecisive = true;
   }
 
   return out;
