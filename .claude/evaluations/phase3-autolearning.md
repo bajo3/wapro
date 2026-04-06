@@ -213,6 +213,49 @@ LIMIT 3;
 
 ---
 
+## Caso 11 — learnFromConversation se dispara en handoff
+
+**Setup:**
+- Conversación con intención de cierre detectada (`wantsPerson=true` o `closingIntent=true`)
+- El bot ejecuta el handoff path en webhooks.ts
+
+**Comportamiento esperado:**
+- `setConversationRule(instance, remoteJid, 'HUMAN_ONLY')` se llama
+- `scheduleReply(handoffReply, ...)` se llama con `{ handoff: true }`
+- `learnFromConversation(instance, remoteJid)` se dispara en fire-and-forget (línea después del scheduleReply)
+
+**Resultado esperado:**
+- En Railway logs aparece: `[autoTrainer] analyzing conversation XXXXX on INSTANCE`
+- `bot_learning_memory` recibe nuevas entradas si el GPT detecta patrones (objections, gaps, lead_patterns)
+- Si GPT falla o la conversación es muy corta, el log dice `skipped: not_enough_turns` (no rompe el flujo)
+
+**Criterio de éxito:** Después de 3 handoffs consecutivos, `SELECT COUNT(*) FROM bot_learning_memory` debe haber crecido al menos 1 fila (patrones de objeción o lead detectados). El bot no falla ni demora su respuesta de handoff.
+
+---
+
+## Caso 12 — System prompt incluye contexto de aprendizaje tras datos acumulados
+
+**Setup:**
+- `bot_learning_memory` tiene ≥ 1 fila con `pattern_type='objection'` y `status='active'`
+- Se procesa un mensaje de usuario en un conversación nueva
+
+**Comportamiento esperado:**
+- `decideAgentAction()` llama `loadLearningContext()` → retorna objections/gaps/lead_patterns
+- `buildLearningContextSection(ctx)` genera string no-vacío con:
+  - Sección `── OBJECIONES REALES MÁS FRECUENTES ──` (si hay datos)
+  - Sección `── PREGUNTAS FRECUENTES SIN BUENA RESPUESTA ──` (si hay datos)
+  - Sección `── CAMINOS EXITOSOS DETECTADOS ──` (si hay datos)
+- El string se inyecta en `buildAgentSystemPrompt(..., learningSection + '\n' + salesCoachSection + extraSections)`
+
+**Resultado esperado:**
+- El system prompt enviado a GPT contiene la sección de aprendizaje
+- El bloque no excede 500 chars (límite implícito del formateo)
+- Si `bot_learning_memory` está vacía, el prompt NO incluye la sección (retorna `''`)
+
+**Criterio de éxito:** Habilitar log temporal de system prompt en development y verificar que la sección aparece cuando hay datos en `bot_learning_memory`.
+
+---
+
 ## Checklist de validación en Railway
 
 - [ ] `SELECT COUNT(*) FROM bot_memory;` — crece con cada conversación (al menos 1 entrada por turno con score)
@@ -222,3 +265,5 @@ LIMIT 3;
 - [ ] Logs de Railway muestran `[SELF_EVAL]` en cada turno respondido
 - [ ] Logs de Railway muestran `[BOT_MEMORY_SAVE]` o `[BOT_MEMORY_SKIP]` en cada turno N+1
 - [ ] Logs de Railway muestran `[MEMORY_GUARDRAIL_VIOLATION]` si se intenta guardar dato de catálogo
+- [ ] Logs de Railway muestran `[autoTrainer] analyzing conversation` después de cada handoff
+- [ ] Logs de Railway muestran `skipped: not_enough_turns` si la conversación tiene < 2 turnos al handoff

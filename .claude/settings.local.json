@@ -29,7 +29,8 @@
       "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend' -name *.js)",
       "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend/src' -name *.ts)",
       "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend/src' -name *Ticket*)",
-      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend/src/services/TicketServices' -name List* -o -name Index*)"
+      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend/src/services/TicketServices' -name List* -o -name Index*)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

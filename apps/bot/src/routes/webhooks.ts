@@ -54,6 +54,7 @@ import {
   type SourceType
 } from '../services/learning.js';
 import { applyGuardrail, validateReply } from '../services/guardrails.js';
+import { learnFromConversation } from '../services/autoTrainer.js';
 import { detectStagnation } from '../services/conversationAnalyzer.js';
 import {
   recordTurnMetrics,
@@ -1326,6 +1327,12 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           updatedAt: nowIso
         }
       }, { handoff: true });
+
+      // Fase 3: Trigger auto-aprendizaje al detectar handoff (fire-and-forget)
+      void learnFromConversation(instance, remoteJid).catch((err) =>
+        console.warn('[autoTrainer] learnFromConversation error on handoff:', String(err).slice(0, 200))
+      );
+
       return;
     }
 
