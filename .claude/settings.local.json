@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/felip/.railway/**)",
+      "Read(//c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/$USERPROFILE/.railway/**)",
+      "Bash(TOKEN=\"hl_PHVkDCVQKW-KJuMkxmZtXbVguL3Y5_ochqQ4GfMK\")",
+      "Bash(PROJECT_ID=\"a6f7aac9-14d8-41c4-ba62-c0e053cee357\")",
+      "Bash(__NEW_LINE_5f31c7c4ff50a47d__ curl:*)",
+      "Bash(__NEW_LINE_acda6c9857436fa4__ curl:*)",
+      "Bash(railway logs:*)",
+      "Bash(SERVICE_ID=\"108b1c1c-bcee-4435-88fa-e030688a333d\")",
+      "Bash(ENV_ID=\"ef5995c6-74a9-4ecc-b8b0-034bc28e5448\")",
+      "Bash(__NEW_LINE_6c36d480e898598f__ curl:*)",
+      "Bash(npx tsc:*)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(npm run:*)",
+      "Bash(node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json)",
+      "Bash(node -e \":*)",
+      "Bash(node node_modules/typescript/bin/tsc -p tsconfig.json)",
+      "Bash(node --input-type=module:*)"
+    ]
+  }
+}
