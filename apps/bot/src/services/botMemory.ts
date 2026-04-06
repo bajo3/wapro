@@ -5,8 +5,17 @@
  * QUÉ NO guarda: precios, stock, disponibilidad, financiación, descuentos — datos del catálogo.
  *
  * Persistencia: apps/bot/data/bot-memory.json
+ * NOTA Railway: Este archivo requiere un Railway Volume montado en /app/data para persistencia
+ * entre deploys. Sin Volume, la memoria se reinicia en cada deploy (funciona, pero no aprende).
+ * Configurar en Railway: Settings → Volumes → Mount Path: /app/data
+ *
  * Máximo 100 patrones por categoría (FIFO).
  * Las escrituras son async y nunca bloquean la respuesta principal.
+ *
+ * Score de calidad antes de guardar:
+ *  - Solo se guarda si score >= 4 (ver MemoryScore / shouldSavePattern)
+ *  - Nunca guarda si la conversación se estancó
+ *  - Nunca guarda datos de catálogo (FORBIDDEN_IN_MEMORY)
  *
  * Uso en el prompt:
  *  - Cliente indeciso → inyectar top 3 preguntas más exitosas
@@ -95,6 +104,63 @@ export function isSafeToLearn(pattern: string): boolean {
   return !FORBIDDEN_IN_MEMORY.some((word) => lower.includes(word));
 }
 
+// ─── Score de calidad para guardado de patrones ───────────────────────────────
+// Solo se guarda un patrón si su score es suficientemente alto.
+// Esto evita que ruido conversacional o conversaciones estancadas contaminen la memoria.
+
+export interface MemoryScore {
+  /** El usuario proporcionó más información en el turno (+2) */
+  userGaveMoreData: boolean;
+  /** El bot avanzó la conversación (pregunta respondida, se mostraron opciones, se capturó lead) (+2) */
+  botAdvancedConversation: boolean;
+  /** La respuesta fue específica (no genérica) (+1) */
+  responseWasSpecific: boolean;
+  /** No se detectó invención de datos (precios, stock, versiones no verificadas) (+3) */
+  noInventionDetected: boolean;
+  /** La conversación se estancó (mismo mensaje repetido, sin avance, loop de preguntas) (-5) */
+  conversationStalled: boolean;
+}
+
+export function calculateMemoryScore(metrics: MemoryScore): number {
+  if (metrics.conversationStalled) return -5;
+  let score = 0;
+  if (metrics.userGaveMoreData) score += 2;
+  if (metrics.botAdvancedConversation) score += 2;
+  if (metrics.responseWasSpecific) score += 1;
+  if (metrics.noInventionDetected) score += 3;
+  return score;
+}
+
+/**
+ * Evalúa si vale la pena guardar un patrón conversacional.
+ * Criterio: score >= 4 y no estancada.
+ * Loguea la decisión para trazabilidad.
+ */
+export function shouldSavePattern(
+  patternLabel: string,
+  metrics: MemoryScore
+): boolean {
+  const score = calculateMemoryScore(metrics);
+
+  if (metrics.conversationStalled) {
+    console.info(`[BOT_MEMORY_SKIP] pattern=${patternLabel} score=${score} reason="conversationStalled"`);
+    return false;
+  }
+
+  if (score < 4) {
+    console.info(`[BOT_MEMORY_SKIP] pattern=${patternLabel} score=${score} reason="score<4"`);
+    return false;
+  }
+
+  const reasons: string[] = [];
+  if (metrics.userGaveMoreData) reasons.push('userGaveMoreData');
+  if (metrics.botAdvancedConversation) reasons.push('botAdvancedConversation');
+  if (metrics.responseWasSpecific) reasons.push('responseWasSpecific');
+  if (metrics.noInventionDetected) reasons.push('noInventionDetected');
+  console.info(`[BOT_MEMORY_SAVE] pattern=${patternLabel} score=${score} reason="${reasons.join('+')}"`);
+  return true;
+}
+
 // ─── Store en memoria (cargado una vez al inicio) ─────────────────────────────
 
 let _store: BotMemoryStore | null = null;
@@ -113,17 +179,45 @@ function emptyStore(): BotMemoryStore {
 }
 
 function ensureDataDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+  } catch (err) {
+    // En Railway sin Volume configurado, el directorio puede ser de solo lectura.
+    // El bot sigue funcionando sin persistencia — la memoria vive solo en RAM para este deploy.
+    console.warn('[botMemory] No se pudo crear el directorio de datos:', String(err));
+    console.warn('[botMemory] La memoria no se persistirá a disco en este deploy.');
+    console.warn('[botMemory] Para persistencia en Railway: configurar Volume en /app/data.');
   }
+}
+
+/**
+ * Verifica si MEMORY_ENABLED está activa. Si no está definida, loguea advertencia
+ * pero el sistema sigue funcionando (no crashea).
+ */
+function checkMemoryEnabled(): boolean {
+  const enabled = process.env.MEMORY_ENABLED;
+  if (!enabled) {
+    // Solo loguear la primera vez (flag de singleton)
+    if (!(checkMemoryEnabled as any)._warned) {
+      console.warn('[botMemory] MEMORY_ENABLED no está definida en env. La memoria funcionará pero no está explícitamente habilitada en producción.');
+      console.warn('[botMemory] Agregar MEMORY_ENABLED=true en Railway env vars para suprimir este aviso.');
+      (checkMemoryEnabled as any)._warned = true;
+    }
+  }
+  return true; // No bloquear aunque no esté definida
 }
 
 /**
  * Carga la memoria desde disco. Se llama una vez al arrancar el servicio.
  * Si el archivo no existe, crea un store vacío en memoria (sin escribir a disco todavía).
+ * Si el directorio no existe o hay error de permisos (Railway sin Volume), opera en modo RAM.
  */
 export function loadBotMemory(): BotMemoryStore {
   if (_store) return _store;
+
+  checkMemoryEnabled();
 
   try {
     ensureDataDir();
@@ -146,6 +240,7 @@ export function loadBotMemory(): BotMemoryStore {
 /**
  * Persiste el store a disco de forma debounced (no bloquea el flujo principal).
  * Se ejecuta máximo cada 10 segundos cuando hay cambios.
+ * Si falla la escritura (Railway sin Volume, permisos, disco lleno), el bot sigue funcionando.
  */
 function scheduleSave(): void {
   if (_saveTimer) return; // ya hay un save pendiente
@@ -159,7 +254,15 @@ function scheduleSave(): void {
       _dirty = false;
       console.info('[botMemory] Memoria persistida a disco.');
     } catch (err) {
-      console.warn('[botMemory] Error guardando memoria:', String(err));
+      // NO relanzar — el bot sigue funcionando aunque no pueda escribir a disco.
+      // En Railway sin Volume esto es esperado. La memoria sigue en RAM para esta sesión.
+      const errMsg = String(err);
+      if (errMsg.includes('ENOENT') || errMsg.includes('EACCES') || errMsg.includes('EROFS')) {
+        console.warn('[botMemory] No se pudo escribir a disco (probable Railway sin Volume):', errMsg.slice(0, 120));
+        console.warn('[botMemory] Operando en modo RAM. Configurar Railway Volume en /app/data para persistencia.');
+      } else {
+        console.warn('[botMemory] Error guardando memoria:', errMsg.slice(0, 120));
+      }
     }
   }, 10_000);
 }
@@ -176,15 +279,25 @@ function addWithFIFO<T>(arr: T[], item: T, max = MAX_PATTERNS_PER_CATEGORY): T[]
 
 /**
  * Registra un patrón conversacional efectivo.
- * Solo se guarda si pasa la validación de seguridad (sin datos de catálogo).
+ * Solo se guarda si:
+ *  1. Pasa la validación de seguridad (sin datos de catálogo).
+ *  2. El score de calidad del turno supera el umbral mínimo (shouldSavePattern).
+ *
+ * @param metrics — si se provee, aplica el score de calidad. Si no se provee, guarda sin score.
  */
 export function recordConversationalPattern(
   trigger: string,
   effectiveResponse: string,
-  successSignal: string
+  successSignal: string,
+  metrics?: MemoryScore
 ): void {
   if (!isSafeToLearn(trigger) || !isSafeToLearn(effectiveResponse)) {
-    console.info('[botMemory] Patrón rechazado por contener datos de catálogo.');
+    console.info('[BOT_MEMORY_SKIP] pattern=conversational_pattern score=0 reason="forbidden_word_in_pattern"');
+    return;
+  }
+
+  // Si se provee score de calidad, aplicar umbral
+  if (metrics && !shouldSavePattern('conversational_pattern', metrics)) {
     return;
   }
 

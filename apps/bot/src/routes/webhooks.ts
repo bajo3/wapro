@@ -408,12 +408,16 @@ async function filterCatalogByContext(catalog: any[], ctx: any): Promise<any[]> 
 
   // Obtener tipo de cambio dinámico solo si hay precios en distintas monedas
   let usdToArsRate = 1200; // fallback conservador
+  let rateSource: string = 'hardcoded_fallback';
   if (maxPrice) {
     const rateResult = await getUsdToArs();
     usdToArsRate = rateResult.rate;
+    rateSource = rateResult.source;
   }
 
-  return (catalog || [])
+  const vehiclesBeforeFilter = (catalog || []).filter((it) => isVehicleItem(it)).length;
+
+  const result = (catalog || [])
     .filter((it) => isVehicleItem(it))
     .filter((it) => {
       const b = it?.brand ? normalize(String(it.brand)) : normalize(String(it?.category || ''));
@@ -438,6 +442,25 @@ async function filterCatalogByContext(catalog: any[], ctx: any): Promise<any[]> 
       }
       return true;
     });
+
+  // Log estructurado para detectar en producción si el filtro devuelve lo esperado
+  console.info('[CATALOG_FILTER]', JSON.stringify({
+    rate: usdToArsRate,
+    source: rateSource,
+    vehicles_before: vehiclesBeforeFilter,
+    vehicles_after: result.length,
+    filters_applied: {
+      brand: brand || null,
+      model: model || null,
+      maxPrice: maxPrice || null,
+      currency: maxPrice ? ctxCurrency : null,
+      bodywork: bodywork || null,
+      transmission: tx || null,
+      fuel: fuel || null,
+    },
+  }));
+
+  return result;
 }
 
 function hasUsefulSearchContext(ctx: any): boolean {
@@ -1096,10 +1119,35 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     // ── Handoff detection ───────────────────────────────────────────────────
     // v3: urgencia temporal distinguida de urgencia adjetival.
     // "urgente" suelto NO escala si es adjetivo de búsqueda (ej: "quiero algo urgente barato").
-    // Solo escala cuando hay contexto temporal explícito (esta semana, mañana, ya mismo).
-    const hasTemporalUrgency = /\b(?:esta\s+semana|la\s+semana\s+que\s+viene|para\s+ma[nñ]ana|lo\s+necesito\s+(?:ya|urgente|r[aá]pido)|lo\s+quiero\s+ya|ya\s+mismo|cuanto\s+antes)\b/i.test(rawText);
-    const wantsHandoff = /(comprar|reservar|reserva|se[ñn]a(?:r|rl|lo)?|pagar|quiero\s*ya|transferencia|me\s+lo\s+llevo|cerramos|quiero\s+verlo|quiero\s+ese|vamos\s+con|agendar|coordinar|puedo\s+ir|voy\s+ma[nñ]ana|me\s+interesa\s+ese|visita|ver\s+el\s+auto|probarlo|test\s*drive|parte\s+de\s+pago|permuta|entrego\s+mi\s+auto|hablar\s+con\s+alguien|hablar\s+con\s+una\s+persona|hablar\s+con\s+un\s+asesor|quiero\s+hablar\s+con|me\s+comunic[ao]s?\s+con|dame\s+un\s+contacto|me\s+dan\s+un\s+contacto|est[áa]\s+furioso|estoy\s+furioso|me\s+mandaron\s+mal|recl[ao]m[ao]|quiero\s+quejarme|muy\s+enojado|harto|quiero\s+ir\s+a\s+verlo|quisiera\s+ir|puedo\s+pasar|cu[aá]ndo\s+puedo\s+(?:ir|pasar|verlo)|me\s+dan\s+(?:un\s+)?turno)/i.test(rawText)
-      || hasTemporalUrgency;
+    // Solo escala cuando hay contexto temporal explícito (esta semana, mañana, ya mismo, cuando antes).
+    // v4 hardening: regex ampliado con "cuando antes", "para hoy", "lo quiero hoy", "urgente lo necesito"
+    const TEMPORAL_URGENCY_RE = /\b(?:esta\s+semana|la\s+semana\s+que\s+viene|para\s+ma[nñ]ana|para\s+hoy|lo\s+quiero\s+(?:hoy|ya)|lo\s+necesito\s+(?:ya|urgente|r[aá]pido|hoy)|lo\s+quiero\s+ya|ya\s+mismo|cuanto\s+antes|cuando\s+antes|urgente\s+(?:lo\s+)?necesito|necesito\s+si\s+o\s+si(?:\s+esta\s+semana)?)\b/i;
+    const hasTemporalUrgency = TEMPORAL_URGENCY_RE.test(rawText);
+
+    // Capturar qué parte del texto matcheó la urgencia (para el log de trazabilidad)
+    let temporalUrgencyMatch: string | null = null;
+    if (hasTemporalUrgency) {
+      const m = rawText.match(TEMPORAL_URGENCY_RE);
+      temporalUrgencyMatch = m ? m[0] : null;
+    }
+
+    const CLOSING_INTENT_RE = /(comprar|reservar|reserva|se[ñn]a(?:r|rl|lo)?|pagar|quiero\s*ya|transferencia|me\s+lo\s+llevo|cerramos|quiero\s+verlo|quiero\s+ese|vamos\s+con|agendar|coordinar|puedo\s+ir|voy\s+ma[nñ]ana|me\s+interesa\s+ese|visita|ver\s+el\s+auto|probarlo|test\s*drive|parte\s+de\s+pago|permuta|entrego\s+mi\s+auto|hablar\s+con\s+alguien|hablar\s+con\s+una\s+persona|hablar\s+con\s+un\s+asesor|quiero\s+hablar\s+con|me\s+comunic[ao]s?\s+con|dame\s+un\s+contacto|me\s+dan\s+un\s+contacto|est[áa]\s+furioso|estoy\s+furioso|me\s+mandaron\s+mal|recl[ao]m[ao]|quiero\s+quejarme|muy\s+enojado|harto|quiero\s+ir\s+a\s+verlo|quisiera\s+ir|puedo\s+pasar|cu[aá]ndo\s+puedo\s+(?:ir|pasar|verlo)|me\s+dan\s+(?:un\s+)?turno)/i;
+    const hasClosingIntent = CLOSING_INTENT_RE.test(rawText);
+    const wantsHandoff = hasClosingIntent || hasTemporalUrgency;
+
+    // Log de HANDOFF_SKIP para urgencia adjetival (ej: "urgente quiero algo barato")
+    // Esto permite monitorear en Railway si el bot correctamente NO escaló.
+    const hasAdjectivalUrgency = /\burgente\b/i.test(rawText) && !hasTemporalUrgency;
+    if (hasAdjectivalUrgency && !wantsHandoff) {
+      const adjectiveMatch = rawText.match(/\b(urgente|r[aá]pido)\b/i);
+      console.info('[HANDOFF_SKIP]', JSON.stringify({
+        reason: 'adjectival_urgency',
+        matchReason: 'adjectival_urgency',
+        match: adjectiveMatch ? adjectiveMatch[0] : 'urgente',
+        input: rawText.substring(0, 100),
+        escalate: false,
+      }));
+    }
 
     if (wantsHandoff) {
       const selectedVehicle = await findReferencedVehicle(catalog, rawText, state.search_context);
@@ -1118,7 +1166,10 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       if (!isComplaint && !isUrgent && !wantsPerson) handoffMatchedPatterns.push('closing_intent');
       console.info('[HANDOFF_TRIGGER]', JSON.stringify({
         reason: handoffMatchedPatterns.join('+'),
+        matchReason: isUrgent ? 'temporal_urgency' : isComplaint ? 'complaint' : wantsPerson ? 'wants_person' : 'closing_intent',
+        matchedText: temporalUrgencyMatch ?? null,
         input: rawText.substring(0, 100),
+        escalate: true,
         flags: {
           highUrgency: Boolean(extracted?.highUrgency),
           wantsHandoff: true,

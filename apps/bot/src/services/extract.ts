@@ -662,11 +662,14 @@ export function extractLeadFields(text: string, prev: any = {}): Extracted {
     if (tradeIn.tradeInKm !== undefined) out.tradeInKm = tradeIn.tradeInKm;
   }
 
-  // ── High urgency flag (v5) ─────────────────────────────────────────────────
+  // ── High urgency flag (v5 + hardening v6) ────────────────────────────────
   // Detecta cuando el cliente necesita el vehículo con urgencia TEMPORAL (no adjetival).
-  // "quiero algo urgente que sea barato" NO escala — el contexto no es temporal.
-  // "lo necesito para mañana" / "esta semana" SÍ escala — urgencia con fecha.
-  const urgencyTemporalMatch = /\b(?:esta\s+semana|la\s+semana\s+que\s+viene|para\s+ma[nñ]ana|para\s+el\s+(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)|necesito\s+si\s+o\s+si|ya\s+mismo|cuanto\s+antes|lo\s+necesito\s+(?:ya|r[aá]pido|hoy)|urgente\s+(?:porque|para|que\s+lo\s+necesito|lo\s+necesito))\b/i.test(t);
+  // "quiero algo urgente que sea barato" → highUrgency=false (adjetival, NO escala)
+  // "lo necesito para mañana" / "esta semana" / "cuando antes" → highUrgency=true (SÍ escala)
+  // "lo quiero hoy" / "para hoy" → highUrgency=true
+  // "urgente lo necesito" / "urgente necesito el auto" → true (urgente + necesito = temporal implícito)
+  // "urgente quiero algo barato" → false (urgente modifica el tipo de búsqueda, no hay fecha)
+  const urgencyTemporalMatch = /\b(?:esta\s+semana|la\s+semana\s+que\s+viene|para\s+ma[nñ]ana|para\s+hoy|para\s+el\s+(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)|necesito\s+si\s+o\s+si|ya\s+mismo|cuanto\s+antes|cuando\s+antes|lo\s+necesito\s+(?:ya|r[aá]pido|hoy)|lo\s+quiero\s+(?:hoy|ya)|urgente\s+(?:porque|para|que\s+lo\s+necesito|lo\s+necesito|necesito))\b/i.test(t);
   if (urgencyTemporalMatch) {
     out.highUrgency = true;
   }

@@ -123,7 +123,8 @@ export function buildAgentSystemPrompt(
     const hasBudget = !!(ctx.maxPrice || ctx.amount);
     const hasBodywork = !!(ctx.bodywork || ctx.brand);
     const hasTx = !!(ctx.transmissionPreference || ctx.transmission);
-    const answeredCount = [hasUse, hasBudget, hasBodywork, hasTx].filter(Boolean).length;
+    // Orden de conteo alineado al orden de preguntas: presupuesto > uso > tipo > caja
+    const answeredCount = [hasBudget, hasUse, hasBodywork, hasTx].filter(Boolean).length;
 
     if (answeredCount >= 3) {
       intentFlags.push(
@@ -133,17 +134,19 @@ export function buildAgentSystemPrompt(
       );
     } else {
       // Determinar la SIGUIENTE pregunta del flujo guiado (solo 1 por turno)
+      // Orden por impacto comercial: presupuesto > uso > tipo > caja > detalle
+      // Copy humano: tono consultivo, no de formulario
       let nextQuestion = '';
-      if (!hasUse) {
-        nextQuestion = '¿Para qué lo usarías principalmente — ciudad, ruta, campo o trabajo/familia?';
-      } else if (!hasBudget) {
-        nextQuestion = '¿Tenés un presupuesto en mente o un rango de precio?';
+      if (!hasBudget) {
+        nextQuestion = '¿Tenés un rango de precio en mente o estamos explorando?';
+      } else if (!hasUse) {
+        nextQuestion = '¿Para qué lo usarías más — ciudad, viajes largos o algo familiar?';
       } else if (!hasBodywork) {
-        nextQuestion = '¿Preferís algo chico y económico, un sedán cómodo o una SUV/camioneta con más espacio?';
+        nextQuestion = '¿Algo chico y económico, un sedán cómodo o preferís más espacio tipo SUV?';
       } else if (!hasTx) {
-        nextQuestion = '¿Automático o manual te da lo mismo, o tenés preferencia?';
+        nextQuestion = '¿El cambio automático es importante para vos o te da lo mismo?';
       } else {
-        nextQuestion = '¿Hay algo puntual que busques — bajo consumo, espacio, seguridad, precio?';
+        nextQuestion = '¿Hay algo puntual que te importe más — consumo, espacio, seguridad o precio?';
       }
       intentFlags.push(
         `CLIENTE_INDECISO_FLUJO_GUIADO: no tiene claro qué busca (${answeredCount}/4 datos obtenidos). ` +
