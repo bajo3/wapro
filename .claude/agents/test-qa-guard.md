@@ -1,6 +1,6 @@
 ---
 name: test-qa-guard
-description: Especialista en riesgo, regresión y readiness para cambios en WaPro.
+description: DEPRECADO — No usar. Funcionalidad absorbida por conversation-judge (Modo B: Release QA Check) y shared/AGENT_CHECKLIST.md. Eliminado en auditoría 2026-04-06.
 model: sonnet
 memory: project
 ---

@@ -1,39 +1,57 @@
 # Agents — WaPro
 
-## Cómo usar esta carpeta
+Auditado y optimizado: 2026-04-06
 
-### 1. Elegí el dueño principal del problema
-No arranques por tres agentes. Elegí uno.
+## Cómo elegir el agente correcto
 
-### 2. Sumá guardrails solo si agregan valor
-- `catalog-truth-guardian` si el tema toca stock, precio, moneda, versión o disponibilidad
-- `conversation-judge` si querés auditoría final o el cambio es sensible
+### 1. Identificá el dominio del problema
+No arranques por orquestación. Elegí el especialista dueño.
 
-### 3. Escalá a orquestación solo cuando haga falta
-`chief-of-staff-orchestrator` es útil cuando el caso toca varias capas o hay contradicción entre especialistas.
+### 2. Usá guardrails solo cuando agreguen valor
+- `catalog-truth-guardian` → si el tema toca stock, precio, moneda, versión o disponibilidad
+- `conversation-judge` → para auditoría final de respuesta del bot O checklist de release
 
-## Core agents
+### 3. Escalá a orquestación solo si hay cruce real de dominios
+`chief-of-staff-orchestrator` — solo para casos mixtos o ambiguos. No es el entry point por default.
 
-| Agente | Dueño de | Cuándo usar |
-|---|---|---|
-| `chief-of-staff-orchestrator` | estrategia, ruteo y síntesis | tareas mixtas, ambiguas o de alto impacto |
-| `bot-sales-brain` | inteligencia comercial del bot | intención, respuestas, seguimiento, escalado comercial |
-| `catalog-truth-guardian` | verdad comercial | stock, precio, moneda, catálogo, riesgo de invención |
-| `conversation-judge` | auditoría final | validar calidad antes de aprobar |
+---
 
-## Support agents
+## Agentes activos (9)
 
-| Agente | Dueño de | Cuándo usar |
-|---|---|---|
-| `backend-fixer` | backend/API/contratos/persistencia | bugs de backend, 200 OK sin persistencia, validaciones |
-| `debug-deploy-ops` | Railway/build/runtime/env | fallos de deploy, logs, CORS, assets, drift local/prod |
-| `data-sync-catalog` | syncs y calidad del catálogo | Supabase/Railway/ML, mapeos, currency, modelo/version |
-| `frontend-ui-ux` | panel React y ergonomía | tickets, pipeline, cotizaciones, estados visuales |
-| `crm-product-owner` | prioridad funcional y ROI | decidir qué conviene hacer primero |
-| `prompt-training-manager` | entrenamiento del bot | prompts, playbooks, FAQs, ejemplos, tests |
-| `test-qa-guard` | riesgo y regresión | checklist de release, edge cases, cobertura mínima |
+### Orquestación
+| Agente | Cuándo usar |
+|--------|-------------|
+| `chief-of-staff-orchestrator` | Tarea mixta que cruza 2+ dominios, o alto riesgo |
+
+### Núcleo bot/comercial
+| Agente | Cuándo usar |
+|--------|-------------|
+| `bot-sales-brain` | Comportamiento runtime del bot: intención, respuesta, objeciones, seguimiento |
+| `catalog-truth-guardian` | Validar stock, precio, moneda, disponibilidad antes de afirmarlos |
+| `conversation-judge` | Auditoría de respuesta del bot (Modo A) o QA de release (Modo B) |
+| `bot-trainer` | Artefactos de entrenamiento: examples, FAQs, evaluations, prompt, playbooks |
+
+### Especialistas técnicos
+| Agente | Cuándo usar |
+|--------|-------------|
+| `backend-fixer` | Bugs backend, API, contratos, persistencia, webhooks |
+| `debug-deploy-ops` | Railway, build, env, runtime, CI/CD, drift local/prod |
+| `data-sync-catalog` | Calidad y consistencia del catálogo vehicular |
+| `frontend-ui-ux` | Panel React, ergonomía operativa, bugs de UI |
+
+---
+
+## Archivos deprecados (no usar)
+- `crm-product-owner.md` — Felipe es el PO directo
+- `test-qa-guard.md` — absorbido por `conversation-judge` Modo B
+- `prompt-training-manager.md` — renombrado a `bot-trainer.md`
+
+---
 
 ## Regla de ownership
-
 Cada tarea debe tener **un solo dueño principal**.
 Los demás agentes acompañan, validan o bloquean.
+
+## Regla de orquestación
+Antes de llamar a `chief-of-staff-orchestrator`, preguntate:
+¿Puede un solo agente especialista resolverlo bien? Si sí → no orquestar.

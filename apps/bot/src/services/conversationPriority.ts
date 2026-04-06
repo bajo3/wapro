@@ -49,7 +49,6 @@ export function calculateConversationPriority(
     (temperature === 'hot' && primary === 'visit_intent') ||
     (temperature === 'hot' && primary === 'buy_intent') ||
     hasUrgency ||
-    primary === 'urgent_purchase' ||
     nextAction.action === 'handoff_to_human' ||
     nextAction.action === 'confirm_visit'
   ) {

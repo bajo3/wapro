@@ -1,6 +1,6 @@
 ---
 name: prompt-training-manager
-description: Especialista en entrenamiento del bot de WaPro: prompts, policies, FAQs, playbooks, ejemplos y evaluaciones.
+description: DEPRECADO — Renombrado a bot-trainer. Usar agents/bot-trainer.md en su lugar. Eliminado en auditoría 2026-04-06.
 model: sonnet
 memory: project
 ---

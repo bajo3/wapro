@@ -1,6 +1,6 @@
 ---
 name: crm-product-owner
-description: Especialista en criterio funcional y prioridad de producto para WaPro.
+description: DEPRECADO — No usar. Felipe es el PO de WaPro. Agente eliminado en auditoría 2026-04-06. Overhead sin valor propio.
 model: sonnet
 memory: project
 ---
