@@ -54,6 +54,9 @@ export type ConvState = {
   /** Lead score (0..100) recalculated each turn */
   leadScore?: number;
 
+  /** Number of consecutive objection messages from this lead (for escalation logic) */
+  objection_count?: number;
+
 
   agent?: {
     intent?: string;

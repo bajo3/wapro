@@ -102,6 +102,32 @@ export function buildAgentSystemPrompt(
     'NO filtres el catálogo hasta recibir la aclaración.'
   );
   // v7: Nuevos flags de intención
+  // Hard-enforce SHOW rule in code: if there's ≥1 useful filter, agent must show (not ask more)
+  const hasAnyFilter = !!(ctx.brand || ctx.model || (ctx.maxPrice ?? ctx.amount) || ctx.bodywork || ctx.fuel || ctx.transmission || ctx.useCase || ctx.primaryUse || ctx.year);
+  if (hasAnyFilter && !ctx.showIntent && !ctx.ambiguousCurrency && !ctx.isIndecisive) {
+    intentFlags.push(
+      'DATOS_SUFICIENTES: el cliente ya tiene al menos un filtro útil. ' +
+      'NO hagas preguntas adicionales antes de mostrar opciones. ' +
+      'Mostrá lo que tenés que encaje y luego ofrecé refinar si quiere.'
+    );
+  }
+
+  // Low-confidence intent: agent must confirm before acting
+  if (ctx.lowConfidenceIntent) intentFlags.push(
+    'INTENCION_INCIERTA: el mensaje no deja clara la intención (confianza baja). ' +
+    'Interpretá con cautela. Si hay ambigüedad entre explorar y comprar, preferí mostrar antes de preguntar. ' +
+    'No asumir intención de cierre sin evidencia textual.'
+  );
+
+  // Objection tracking: after 2+ objections, change strategy
+  const objCount = Number(ctx.objection_count ?? 0);
+  if (objCount >= 2) intentFlags.push(
+    `OBJECIONES_REPETIDAS (${objCount}x): el cliente lleva ${objCount} mensajes con objeciones similares. ` +
+    'Cambiar estrategia: (1) ofrecer una alternativa concreta de menor precio o diferente segmento, ' +
+    'o (2) derivar al asesor para negociación real. No repetir los mismos argumentos. ' +
+    'handoffRecommended=true si la objeción sigue siendo de precio después de ofrecer alternativas.'
+  );
+
   if (ctx.highUrgency) intentFlags.push(
     'ALTA_URGENCIA: el cliente necesita el vehículo con urgencia temporal (esta semana, mañana, ya). ' +
     'Priorizar acción concreta: opciones disponibles AHORA + handoffRecommended=true para coordinar rápido. ' +
@@ -172,7 +198,7 @@ export function buildAgentSystemPrompt(
   // FIX-09: Cold-lead fallback — after 4+ turns with zero data, show top catalog highlights
   // v8: flujo guiado para indecisos, cold-lead después de 4 turnos sin datos
   const coldLeadNote = (turns >= 4 && !ctx.brand && !ctx.model && !ctx.maxPrice && !ctx.bodywork && !ctx.useCase && !ctx.primaryUse)
-    ? '\nLEAD FRÍO SIN DATOS (4+ turnos): No le hagas más preguntas. Mostrá los 3 autos más baratos o más populares del catálogo con su precio y año. Esto activa FOMO y le da algo concreto para reaccionar.'
+    ? '\nLEAD FRÍO SIN DATOS (4+ turnos): No le hagas más preguntas. Mostrá 3 opciones del catálogo con precio y año: una compacta/económica, una SUV o familiar, y una opción intermedia. Esto le da contexto real para reaccionar. No inventes si no hay esa combinación disponible — usá lo que tenés más variado posible.'
     : (ctx.isIndecisive && turns <= 1 && !ctx.primaryUse && !ctx.useCase)
       ? '\nCLIENTE INDECISO (inicio): UNA pregunta cálida y concreta. Tono vendedor, no de encuesta: "Para recomendarte bien — ¿para qué lo usarías más: ciudad, ruta, familia o trabajo? ¿Y tenés presupuesto en mente?" Con esas dos respuestas te doy opciones concretas.'
       : '';
@@ -475,6 +501,29 @@ export function buildAgentSystemPrompt(
     '  Tomé todos los filtros: SUV 7 asientos, diesel, automática, hasta USD 40.000. Déjame ver lo que hay… [mostrar resultados o alternativas cercanas]. Si no hay match exacto: "No tengo esa combinación exacta en stock ahora, pero puedo anotarte para cuando ingrese. ¿Querés ver alternativas que cumplan 4 de los 5 filtros?"',
     'SALIDA INCORRECTA: "No tenemos ese vehículo disponible."',
     '',
+    // ── Ejemplos informales en argentino (lenguaje real del cliente) ─────────
+    'ENTRADA: "dale cuanto sale el cronos" (informal, sin tildes, intención clara)',
+    'SALIDA CORRECTA (suggestedReply):',
+    '  El Cronos está en varias versiones. Según equipamiento va de $X a $Y.',
+    '  ¿Querés el básico o buscás algo más equipado?',
+    'SALIDA INCORRECTA: "¡Hola! ¿En qué puedo ayudarte hoy con nuestro catálogo?"',
+    '',
+    'ENTRADA: "q tienen en suv xq kiero algo un poco mas grande ke mi auto" (typos, informal)',
+    'SALIDA CORRECTA (suggestedReply):',
+    '  Para SUV tengo esto disponible: [mostrar 2-3 del catálogo con precio]',
+    '  ¿Tenés presupuesto en mente o lo vemos libre?',
+    'SALIDA INCORRECTA: "Estimado cliente, contamos con disponibilidad en nuestro segmento SUV..."',
+    '',
+    'ENTRADA: "si lo financio cuanto saldría aprox??" (doble signo de pregunta, casual)',
+    'SALIDA CORRECTA (suggestedReply):',
+    '  Depende del anticipo y los meses. ¿Cuánto podés poner de entrada y en cuántos meses lo querés?',
+    'SALIDA INCORRECTA: "El financiamiento depende de múltiples variables del mercado..."',
+    '',
+    'ENTRADA: "ese el de la foto ta bien cuanto es" (referencia a imagen anterior)',
+    'SALIDA CORRECTA (suggestedReply):',
+    '  [precio del vehículo mostrado]. ¿Querés que te cuente más sobre ese o arrancamos con los datos?',
+    'SALIDA INCORRECTA: "No sé a cuál te referís. ¿Me podés especificar el modelo?"',
+    '',
     // ── Ejemplos dinámicos aprendidos de conversaciones reales ───────────────
     dynamicExamples || '',
     '',
@@ -733,7 +782,7 @@ export async function decideAgentAction(params: any & {
     history: historyArr.slice(-8),  // 8 turns of context
     model,
     maxTokens: 1100,
-    temperature: 0.32
+    temperature: isClosingStage ? 0.35 : 0.55
   });
 
   if (!result || typeof result !== 'object') return null;

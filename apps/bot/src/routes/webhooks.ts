@@ -1036,6 +1036,22 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     // Phase 4 score es la fuente de verdad para este turno.
     state.leadScore = commercialResult.leadScore.score;
 
+    // ── Intent confidence + objection tracking ────────────────────────────────
+    // Low-confidence intent: inject flag so agent handles with extra caution
+    if (commercialResult.intent.confidence < 0.65) {
+      extracted.lowConfidenceIntent = true;
+    } else {
+      delete extracted.lowConfidenceIntent;
+    }
+    // Objection count: increment on objection message, decrement (floor 0) on non-objection
+    {
+      const prevObjCount = Number((state as any).objection_count ?? 0);
+      const isObjTurn = commercialResult.intent.primary === 'objection' || !!commercialResult.objectionType;
+      const newObjCount = isObjTurn ? prevObjCount + 1 : Math.max(0, prevObjCount - 1);
+      (state as any).objection_count = newObjCount;
+      extracted.objection_count = newObjCount;
+    }
+
     const aggEntry = aggregators.get(key);
     const cleanup = () => {
       const e = aggregators.get(key);
@@ -1681,7 +1697,18 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       const normText = normalize(rawText);
       const hasContent = normText.length >= 3 && /[a-z0-9]/i.test(normText);
       const stage = state.stage as ConvState['stage'];
-      const shouldSearch = stage === 'awaiting_query' || looksLikeGamingQuery || looksLikeVehicleQuery || hasStructuredSearchNeed(extracted) || (asksPrice && hasContent);
+
+      // Coherence check: if user references a vehicle from last_hits, skip fresh search.
+      // This prevents "no tengo X" when X was shown moments ago in the same conversation.
+      const lastHitItems = lastHitsFresh
+        ? catalog.filter((it: any) => lastHits.includes(it.id))
+        : [];
+      const isAboutLastHit = lastHitItems.length > 0 && lastHitItems.some((it: any) => {
+        const itText = normalize([it.brand, it.model, it.name].filter(Boolean).join(' '));
+        return itText.split(/\s+/).some((tok: string) => tok.length >= 4 && normText.includes(tok));
+      });
+
+      const shouldSearch = !isAboutLastHit && (stage === 'awaiting_query' || looksLikeGamingQuery || looksLikeVehicleQuery || hasStructuredSearchNeed(extracted) || (asksPrice && hasContent));
 
       if (isGreeting) {
         // v3: si el cliente vuelve después de que el contexto expiró, recordarle su búsqueda anterior.

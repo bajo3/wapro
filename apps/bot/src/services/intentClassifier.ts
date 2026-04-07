@@ -32,6 +32,8 @@ export interface IntentClassification {
   confidence: number;     // 0-1
   evidence: string;       // texto que disparó la clasificación
   multipleIntents: boolean;
+  /** True when confidence < 0.65 — agent should treat intent with more caution */
+  lowConfidence: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -177,6 +179,7 @@ export function classifyIntent(
         confidence: 0.55,
         evidence: 'inferred from extracted context',
         multipleIntents: false,
+        lowConfidence: true,
       };
     }
 
@@ -187,6 +190,7 @@ export function classifyIntent(
       confidence: 0.40,
       evidence: 'no clear signal detected',
       multipleIntents: false,
+      lowConfidence: true,
     };
   }
 
@@ -201,5 +205,6 @@ export function classifyIntent(
     confidence: primary.rule.confidence,
     evidence: primary.match,
     multipleIntents: matches.length > 1,
+    lowConfidence: primary.rule.confidence < 0.65,
   };
 }
