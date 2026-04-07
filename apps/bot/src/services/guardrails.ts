@@ -237,8 +237,11 @@ export function validateReply(
     hasInvention ? 'high'
     : hasHallucination ? 'medium'
     : 'low';
-  // Force human review only for stock/price invention (most specific and dangerous)
-  const requiresHumanReview = hasInvention;
+  // requiresHumanReview is intentionally false: the regex patterns for stock_price_invention
+  // can match legitimate catalog-backed price responses (e.g. "está a $8.900.000").
+  // The issue flag is kept for metrics/tracing; escalation must be decided in context
+  // (webhooks.ts) where catalog usage is known. Regex alone is not a reliable signal.
+  const requiresHumanReview = false;
 
   // ── Final decision ─────────────────────────────────────────────────────────
   const blockingIssues: GuardrailIssue[] = ['internal_content', 'raw_json', 'action_code_leaked', 'policy_body_too_long'];
