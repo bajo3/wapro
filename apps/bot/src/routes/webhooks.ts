@@ -887,12 +887,19 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     // ── Lead memory: start async load in parallel (never blocks) ─────────────
     const memoryPromise = loadLeadMemory(instance, remoteJid);
 
-    // Context timeout (30 min): if idle too long, drop accumulated search/finance context.
+    // Context timeout: si estuvo inactivo >30 min, limpiar contexto de búsqueda acumulado.
+    const CONTEXT_TTL_MS = Number(process.env.CONTEXT_TTL_MS ?? String(30 * 60 * 1000)); // default 30 min
+    // TTL para mostrar el reminder de "la última vez buscabas X": default 48h.
+    // Más tiempo que eso y el contexto ya no es relevante para el cliente.
+    const STALE_CONTEXT_SHOW_TTL_MS = Number(process.env.STALE_CONTEXT_SHOW_TTL_MS ?? String(48 * 60 * 60 * 1000));
     const lastUserAtMs = stateRaw.last_user_at ? Date.parse(stateRaw.last_user_at) : NaN;
-    const contextExpired = !Number.isNaN(lastUserAtMs) && now - lastUserAtMs > 30 * 60 * 1000;
-    // v3: si el contexto expiró pero el cliente vuelve con un saludo, recuperar resumen
-    // para reanudación natural ("Hola, volviste a preguntar por Corolla ARS 30 M")
-    const staleContext = contextExpired ? stateRaw.search_context : undefined;
+    const idleMs = !Number.isNaN(lastUserAtMs) ? now - lastUserAtMs : Infinity;
+    const contextExpired = idleMs > CONTEXT_TTL_MS;
+    // v3: si el contexto expiró Y no es demasiado viejo, mostrar resumen al saludar.
+    // Si es más viejo que STALE_CONTEXT_SHOW_TTL_MS → no mostrar (irrelevante).
+    const staleContext = (contextExpired && idleMs <= STALE_CONTEXT_SHOW_TTL_MS)
+      ? stateRaw.search_context
+      : undefined;
 
     const state: ConvState = {
       ...stateRaw,
@@ -913,6 +920,23 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     if (topicChanged) {
       console.log(`[webhooks] topic change detected for ${remoteJid.slice(0, 12)} — resetting vehicle context`);
+    }
+
+    // ── Pending context restore: handle response to greeting's "¿Seguís con eso?" ──
+    // Si el turno anterior fue un saludo con contexto viejo, y el usuario responde:
+    //   - Afirmativo ("sí", "dale", etc.) → restaurar contexto anterior
+    //   - Negativo / topic change → descartar (no contaminar nueva búsqueda)
+    const _pendingRestore = (state as any)._pendingRestoreContext;
+    if (_pendingRestore) {
+      const _isAffirmative = !topicChanged &&
+        /\b(sí|si|dale|ok|claro|sigo|seguí|seguís|correcto|exacto|bueno|eso|ese|esa|continúa|continua|quiero|mismo)\b/i.test(rawText);
+      if (_isAffirmative) {
+        (state as any).search_context = _pendingRestore;
+        console.log(`[webhooks] pending search context restored for ${remoteJid.slice(0, 12)} — user confirmed continuation`);
+      } else {
+        console.log(`[webhooks] pending search context discarded for ${remoteJid.slice(0, 12)} — user negated or changed topic`);
+      }
+      // pendingRestoreContext will be cleared when newState is built (not carried over)
     }
 
     // ── Resolve lead memory and merge into extracted ──────────────────────────
@@ -1642,20 +1666,29 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       const shouldSearch = stage === 'awaiting_query' || looksLikeGamingQuery || looksLikeVehicleQuery || hasStructuredSearchNeed(extracted) || (asksPrice && hasContent);
 
       if (isGreeting) {
-        // v3: si el cliente vuelve después de que el contexto expiró, recordarle su búsqueda anterior
+        // v3: si el cliente vuelve después de que el contexto expiró, recordarle su búsqueda anterior.
+        // FIX: NO restaurar el contexto automáticamente — guardarlo como "pendiente".
+        // Se restaura solo si el usuario responde afirmativamente en el siguiente turno.
         if (staleContext && (staleContext.brand || staleContext.model || staleContext.maxPrice)) {
+          // Sanitizar el par brand+model antes de mostrarlo (previene "ford corolla" u otros pares inválidos)
+          const sanitizedStale = sanitizeBrandModel({ ...staleContext });
           const parts: string[] = [];
-          if (staleContext.brand && staleContext.model) parts.push(`${staleContext.brand} ${staleContext.model}`);
-          else if (staleContext.brand) parts.push(staleContext.brand);
-          else if (staleContext.model) parts.push(staleContext.model);
-          if (staleContext.maxPrice) {
-            const amt = staleContext.maxPrice;
+          if (sanitizedStale.brand && sanitizedStale.model) parts.push(`${sanitizedStale.brand} ${sanitizedStale.model}`);
+          else if (sanitizedStale.brand) parts.push(sanitizedStale.brand);
+          else if (sanitizedStale.model) parts.push(sanitizedStale.model);
+          if (sanitizedStale.maxPrice) {
+            const amt = sanitizedStale.maxPrice;
             parts.push(`hasta ARS ${amt >= 1_000_000 ? (amt / 1_000_000) + ' M' : amt.toLocaleString('es-AR')}`);
           }
-          reply = `¡Hola! Bienvenido de vuelta. La última vez estabas buscando ${parts.join(' ')}. ¿Seguís con eso o te puedo ayudar con otra cosa?`;
-          // Restaurar el contexto anterior para esta nueva sesión
-          state.search_context = staleContext;
-          newState.search_context = staleContext;
+          if (parts.length > 0) {
+            reply = `¡Hola! Bienvenido de vuelta. La última vez estabas buscando ${parts.join(' ')}. ¿Seguís con eso o te puedo ayudar con otra cosa?`;
+            // Guardar como pendiente — se restaura SOLO si el usuario confirma en el próximo turno.
+            (newState as any)._pendingRestoreContext = sanitizedStale;
+          } else {
+            // Datos inválidos tras sanitización → saludo genérico
+            reply = pickOne(['¡Hola! ¿Cómo va? Contame qué auto estás buscando y te doy una mano.', '¡Buenas! Decime qué tenés en mente y te paso lo mejor.']);
+          }
+          // NO asignar state.search_context ni newState.search_context aquí
         } else {
           const greetVariants = [
             '¡Hola! ¿Cómo va? Contame qué auto estás buscando y te doy una mano.',
