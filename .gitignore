@@ -1,3 +1,4 @@
 # Ignore accidental duplicate copies
 *(1).*
 .claude/agent-memory.zip
+.claude.zip

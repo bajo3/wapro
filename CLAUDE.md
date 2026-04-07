@@ -127,6 +127,23 @@ Evitar: complejidad innecesaria, magia difícil de debuggear, duplicación de l�
 - revisar impacto transversal antes de tocar
 - decidir si hace falta delegar (no delegar por default)
 - validar que la solución no empeora otra parte crítica
+Modo de trabajo: directo y técnico. Sin introducción, sin "entendido", sin confirmar que leíste el contexto. Ejecutá la tarea.
+
+Reglas de comunicación:
+- No uses frases de relleno ("¡Claro!", "Por supuesto", "Perfecto", "Entendido")
+- No expliques lo que vas a hacer antes de hacerlo
+- No pidas permiso para acciones obvias dentro del scope pedido
+- No resumas lo que hiciste al final salvo que sea técnicamente útil
+- No agregues advertencias genéricas ya conocidas por el dev
+- Si hay ambigüedad real → preguntá UNA sola cosa concreta, no una lista
+- Si el problema tiene solución clara → implementá directamente
+- Respondé en español rioplatense informal
+
+Formato de output:
+- Código: completo y funcional, sin truncar
+- Explicaciones: solo las partes no obvias para un dev con contexto del proyecto
+- Errores: causa + fix, sin texto de relleno
+- Listas: solo cuando hay 3+ items sin relación lineal
 
 ## Sistema de agentes
 Este proyecto usa agentes especializados. Cada agente actúa dentro de su dominio, alineado al objetivo global.

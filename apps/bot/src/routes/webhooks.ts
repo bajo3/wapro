@@ -381,12 +381,22 @@ function inferFuelFromItem(it: any): string {
 }
 
 function inferBodyworkFromItem(it: any): string {
+  // Priorizar campo bodywork ya calculado en catalog.ts al cargar
+  if (it?.bodywork) {
+    const b = String(it.bodywork).trim().toLowerCase();
+    if (b) return b;
+  }
   const txt = normalize(getItemText(it));
   if (/(?:^|\s)(suv|crossover|todoterreno|4x4|awd|4wd)(?:\s|$)/.test(txt)) return 'suv';
-  if (/(?:^|\s)(pickup|pick up|pick-up|doble cabina)(?:\s|$)/.test(txt)) return 'pickup';
-  if (/(?:^|\s)(sedan|sedan 4 puertas|4 puertas)(?:\s|$)/.test(txt)) return 'sedan';
+  if (/(?:^|\s)(pickup|pick up|pick-up|doble cabina|cabina doble|raptor|ranger|hilux|amarok|l200|s10|frontier|strada|maverick|saveiro)(?:\s|$)/.test(txt)) return 'pickup';
+  if (/(?:^|\s)(sedan|4 puertas)(?:\s|$)/.test(txt)) return 'sedan';
   if (/(?:^|\s)(hatch|hatchback|3 puertas)(?:\s|$)/.test(txt)) return 'hatch';
-  if (/(?:^|\s)(furgon|utilitario|partner|berlingo|kangoo|vito|sprinter|ducato|master)(?:\s|$)/.test(txt)) return 'furgon';
+  if (/(?:^|\s)(familiar|estate|sw\b|station wagon|touring|kombi)(?:\s|$)/.test(txt)) return 'familiar';
+  // Motorhome / casa rodante → monovolumen (excluir de búsquedas de "familiar")
+  if (/(?:^|\s)(monovolumen|minivan|van\b|mpv|motorhome|casa rodante|camper|caravana|autocaravana)(?:\s|$)/.test(txt)) return 'monovolumen';
+  if (/(?:^|\s)(furgon|utilitario|partner|berlingo|kangoo|vito|sprinter|ducato|master|jumper|transit|trafic|express\b)(?:\s|$)/.test(txt)) return 'furgon';
+  if (/(?:^|\s)(coupe|coup[eé]|2 puertas)(?:\s|$)/.test(txt)) return 'coupe';
+  if (/(?:^|\s)(camioneta)(?:\s|$)/.test(txt)) return 'pickup';
   return '';
 }
 
@@ -435,8 +445,10 @@ async function filterCatalogByContext(catalog: any[], ctx: any): Promise<any[]> 
   const result = (catalog || [])
     .filter((it) => isVehicleItem(it))
     .filter((it) => {
-      const b = it?.brand ? normalize(String(it.brand)) : normalize(String(it?.category || ''));
-      const m = it?.model ? normalize(String(it.model)) : normalize(String(it?.name || ''));
+      // Brand: check brand field first, fall back to name for items without explicit brand
+      const b = normalize([it?.brand, it?.category].filter(Boolean).join(' ') || String(it?.name || ''));
+      // Model: check model field first, fall back to full name
+      const m = normalize(String(it?.model || it?.name || ''));
       const itemTx = normalize(String(it?.transmission || ''));
       const itemFuel = inferFuelFromItem(it);
       const itemBodywork = inferBodyworkFromItem(it);
@@ -447,7 +459,10 @@ async function filterCatalogByContext(catalog: any[], ctx: any): Promise<any[]> 
       if (tx && itemTx && !itemTx.includes(tx)) return false;
       if (fuel && itemFuel && itemFuel !== fuel) return false;
       if (wantsGnc && itemFuel && itemFuel !== 'gnc') return false;
+      // Bodywork filter: exclude known mismatches; also exclude unclassified items
+      // when a specific bodywork is requested (prevents motorhomes slipping into "familiar")
       if (bodywork && itemBodywork && itemBodywork !== bodywork) return false;
+      if (bodywork && !itemBodywork && !brand && !model) return false; // unclassified + bodywork-only search → exclude
       if (maxPrice && Number(it?.priceNumber || 0)) {
         // v5: usa rate dinámico en vez de hardcode 1500
         const itemCurrency = String(it?.currency ?? 'ARS');
@@ -1039,8 +1054,11 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         const sentIso = new Date().toISOString();
         const shouldMoveToHuman = Boolean(options?.handoff || nextState?.agent?.handoffRecommended || nextState?.last_intent === 'handoff');
         try {
-          if (options?.imageUrl) {
-            await sendImageAndPersist(instance, remoteJid, options.imageUrl, reply, shouldMoveToHuman ? {
+          // Validate image URL before sending: must be http(s) and not obviously wrong
+          const rawImageUrl = options?.imageUrl;
+          const validImageUrl = rawImageUrl && /^https?:\/\/.{10,}/.test(rawImageUrl) ? rawImageUrl : undefined;
+          if (validImageUrl) {
+            await sendImageAndPersist(instance, remoteJid, validImageUrl, reply, shouldMoveToHuman ? {
               handoff: true,
               ticketStatus: 'open',
               botMode: 'HUMAN_ONLY'
@@ -1715,11 +1733,29 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         // Financing simulator (offline): collect price, downPayment, months.
         const finance = { ...(state.finance || {}), stage: 'collecting' } as any;
 
-        // Try infer price from last single option.
+        // Try infer price from last shown results.
         const lastHitsNow: string[] = Array.isArray((state as any).last_hits) ? (state as any).last_hits : [];
-        if (!finance.price && lastHitsNow.length === 1) {
-          const item = catalog.find((x) => x.id === lastHitsNow[0]);
-          if (item?.priceNumber) finance.price = Number(item.priceNumber);
+        if (!finance.price && lastHitsNow.length > 0) {
+          if (lastHitsNow.length === 1) {
+            // Only 1 vehicle shown → use it directly
+            const item = catalog.find((x) => x.id === lastHitsNow[0]);
+            if (item?.priceNumber) finance.price = Number(item.priceNumber);
+          } else {
+            // Multiple vehicles shown: find the one the user mentioned by brand/model name
+            const mentionedBrand = extracted?.brand ? normalize(String(extracted.brand)) : '';
+            const mentionedModel = extracted?.model ? normalize(String(extracted.model)) : '';
+            const rawNorm = normalize(rawText);
+            const matchedItem = catalog.find((x) => {
+              if (!lastHitsNow.includes(x.id)) return false;
+              const xText = normalize([x.brand, x.model, x.name].filter(Boolean).join(' '));
+              if (mentionedBrand && xText.includes(mentionedBrand)) return true;
+              if (mentionedModel && xText.includes(mentionedModel)) return true;
+              // Also try direct name match against raw text
+              const xName = normalize(String(x.name || ''));
+              return xName.split(/\s+/).some((tok) => tok.length >= 4 && rawNorm.includes(tok));
+            });
+            if (matchedItem?.priceNumber) finance.price = Number(matchedItem.priceNumber);
+          }
         }
 
         // Heuristics: if text contains "entrada/anticipo" and we parsed an amount, treat as down payment.

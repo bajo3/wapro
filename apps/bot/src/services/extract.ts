@@ -484,8 +484,8 @@ function detectImplicitBodywork(text: string): string | null {
   // Familiar / SUV por necesidad de espacio
   if (/\b(?:para\s+(?:la\s+)?familia|somos\s+(?:muchos|\d+)|viaj[ao](?:mos)?\s+(?:mucho|seguido)|varios\s+chicos?|con\s+chicos?|baulera\s+grande|maletero\s+grande)\b/.test(t)) return 'suv';
 
-  // Compacto por tamaño reducido
-  if (/\b(?:no\s+muy\s+grande|algo\s+chico|chiquito|compacto|facil\s+de\s+maniobrar|para\s+la\s+ciudad|estacion(?:ar)?\s+facil|poco\s+espacio)\b/.test(t)) return 'hatch';
+  // Compacto por tamaño reducido — incluye "un auto chico", "algo chico", "chiquito"
+  if (/\b(?:no\s+muy\s+grande|algo\s+chico|auto\s+chico|coche\s+chico|chico\b|chica\b|chiquito|chiquita|compacto|compacta|facil\s+de\s+maniobrar|para\s+la\s+ciudad|estacion(?:ar)?\s+facil|poco\s+espacio|pequeño|pequeña)\b/.test(t)) return 'hatch';
 
   return null;
 }
