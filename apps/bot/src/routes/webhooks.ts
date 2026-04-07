@@ -53,7 +53,8 @@ import {
   formatExamplesForPrompt,
   type SourceType
 } from '../services/learning.js';
-import { applyGuardrail, validateReply } from '../services/guardrails.js';
+import { applyGuardrail, validateReply, getGuardrailFallback } from '../services/guardrails.js';
+import { recordTrace, hashText } from '../services/messageTrace.js';
 import { learnFromConversation } from '../services/autoTrainer.js';
 import { logBotDecision } from '../lib/decisionLogger.js';
 import { detectStagnation } from '../services/conversationAnalyzer.js';
@@ -2192,7 +2193,23 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         source: (newState as any).last_intent?.startsWith('agent') ? 'agent' : String((newState as any).last_intent ?? ''),
         lastBotReply: finalLastBotReply
       });
-      if (!finalGr.ok) {
+      // ── Fase 5: Stock/price invention → forzar handoff ────────────────────
+      if (finalGr.requiresHumanReview) {
+        console.warn(`[guardrails] HIGH hallucination risk — forcing human handoff. Issues: ${finalGr.issues.join(',')}`);
+        console.log(JSON.stringify({
+          type: 'hallucination_blocked',
+          messageId: msgId,
+          remoteJid,
+          risk: 'high',
+          issues: finalGr.issues,
+          timestamp: new Date().toISOString(),
+        }));
+        void setConversationRule(instance, remoteJid, 'HUMAN_ONLY').catch(() => {});
+        reply = getGuardrailFallback();
+        isFallback = true;
+        (newState as any).last_intent = 'handoff';
+        (newState as any).agent = { ...((newState as any).agent ?? {}), handoffRecommended: true };
+      } else if (!finalGr.ok) {
         if (finalGr.safeReply) {
           reply = finalGr.safeReply; // use cleaned version
         } else {
@@ -2361,6 +2378,24 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         usedExamples: _intent.startsWith('agent_') && !!_agent?.suggestedReply,
         hallucinationRisk,
         timestamp: new Date().toISOString(),
+      });
+
+      // ── Fase 5: Trazabilidad por messageId (fire-and-forget) ────────────────
+      recordTrace({
+        messageId: msgId,
+        instanceName: instance,
+        remoteJid,
+        intent: _intent || undefined,
+        intentConfidence: _confidence || undefined,
+        decision: _isHandoff ? 'handoff' : isFallback ? 'respond' : 'respond',
+        hallucinationRisk,
+        hallucinationBlocked: _isHandoff && isFallback && _intent === 'handoff',
+        leadScore: typeof commercialResult.leadScore.score === 'number' ? commercialResult.leadScore.score : undefined,
+        leadTemperature: commercialResult.leadScore.temperature,
+        commercialPriority: commercialResult.priority.priority,
+        rawTextHash: hashText(rawText),
+        replyHash: hashText(reply),
+        turnIndex: userMsgCount,
       });
     } catch { /* structured log never blocks the send */ }
 

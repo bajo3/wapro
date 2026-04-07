@@ -254,4 +254,65 @@ botIntelligenceRoutes.post("/bot/learning/memory", async (req, res) => {
   return res.status(r.status).json(r.data);
 });
 
+// ─── Fase 5: Trazabilidad ─────────────────────────────────────────────────────
+
+botIntelligenceRoutes.get("/bot/trace", async (req, res) => {
+  const params = new URLSearchParams();
+  if (req.query.limit) params.set("limit", String(req.query.limit));
+  if (req.query.remoteJid) params.set("remoteJid", String(req.query.remoteJid));
+  if (req.query.onlyBlocked) params.set("onlyBlocked", String(req.query.onlyBlocked));
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const r = await forward(req, `/admin/trace${qs}`);
+  return res.status(r.status).json(r.data);
+});
+
+botIntelligenceRoutes.get("/bot/trace/:messageId", async (req, res) => {
+  const r = await forward(req, `/admin/trace/${encodeURIComponent(req.params.messageId)}`);
+  return res.status(r.status).json(r.data);
+});
+
+// ─── Fase 5: Métricas ─────────────────────────────────────────────────────────
+
+botIntelligenceRoutes.get("/bot/metrics/summary", async (req, res) => {
+  const qs = req.query.windowHours ? `?windowHours=${encodeURIComponent(String(req.query.windowHours))}` : "";
+  const r = await forward(req, `/admin/metrics/summary${qs}`);
+  return res.status(r.status).json(r.data);
+});
+
+botIntelligenceRoutes.get("/bot/metrics/timeseries", async (req, res) => {
+  const qs = req.query.hours ? `?hours=${encodeURIComponent(String(req.query.hours))}` : "";
+  const r = await forward(req, `/admin/metrics/timeseries${qs}`);
+  return res.status(r.status).json(r.data);
+});
+
+botIntelligenceRoutes.get("/bot/metrics/alerts", async (req, res) => {
+  const r = await forward(req, "/admin/metrics/alerts");
+  return res.status(r.status).json(r.data);
+});
+
+botIntelligenceRoutes.post("/bot/metrics/alerts/:id/resolve", async (req, res) => {
+  const r = await forward(req, `/admin/metrics/alerts/${encodeURIComponent(req.params.id)}/resolve`);
+  return res.status(r.status).json(r.data);
+});
+
+// ─── Fase 5: Health check ─────────────────────────────────────────────────────
+
+botIntelligenceRoutes.get("/bot/health/bot", async (req, res) => {
+  const r = await forward(req, "/admin/health/bot");
+  return res.status(r.status).json(r.data);
+});
+
+// ─── Fase 5: Evaluaciones ─────────────────────────────────────────────────────
+
+botIntelligenceRoutes.get("/bot/eval/runs", async (req, res) => {
+  const qs = req.query.limit ? `?limit=${encodeURIComponent(String(req.query.limit))}` : "";
+  const r = await forward(req, `/admin/eval/runs${qs}`);
+  return res.status(r.status).json(r.data);
+});
+
+botIntelligenceRoutes.post("/bot/eval/run", async (req, res) => {
+  const r = await forward(req, "/admin/eval/run");
+  return res.status(r.status).json(r.data);
+});
+
 export default botIntelligenceRoutes;

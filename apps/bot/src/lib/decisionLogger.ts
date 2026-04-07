@@ -50,6 +50,11 @@ export type BotDecisionLog = {
   /** Heuristic risk of the bot inventing data it does not have */
   hallucinationRisk?: 'low' | 'medium' | 'high';
 
+  /** Fase 5: true si el guardrail bloqueó la respuesta por riesgo de alucinación */
+  hallucinationBlocked?: boolean;
+  /** Fase 5: lista de issues del guardrail detectados en esta respuesta */
+  guardrailIssues?: string[];
+
   /** ISO 8601 timestamp — always required */
   timestamp: string;
 };

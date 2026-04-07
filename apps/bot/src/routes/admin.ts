@@ -80,6 +80,17 @@ import {
   clearVehicleSourceCache
 } from '../services/demands.js';
 
+// ─── Fase 5: Enterprise imports ───────────────────────────────────────────────
+import { buildTrailForMessage, listRecentTraces } from '../services/messageTrace.js';
+import {
+  getMetricsSummary,
+  getHourlyTimeseries,
+  getActiveAlerts,
+  getBotHealthCheck,
+  resolveAlert,
+} from '../services/metricsAggregator.js';
+import { runEvalSuite, listEvalRuns } from '../services/evalRunner.js';
+
 export const adminRouter = Router();
 
 function requireAdmin(req: any, res: any, next: any) {
@@ -1304,6 +1315,145 @@ adminRouter.post('/learning/memory', async (req, res) => {
       confidence: Number(confidence ?? 0.8)
     });
     return res.json({ ok: true });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// ─── Fase 5: Trazabilidad ─────────────────────────────────────────────────────
+
+/**
+ * GET /admin/trace/:messageId
+ * Devuelve el trail completo de un mensaje: trace + datos comerciales + capturas.
+ */
+adminRouter.get('/trace/:messageId', async (req, res) => {
+  const messageId = String(req.params.messageId ?? '');
+  const instanceName = String(req.query.instance ?? env.instanceName);
+  if (!messageId) return res.status(400).json({ ok: false, error: 'messageId required' });
+  try {
+    const trail = await buildTrailForMessage(messageId, instanceName);
+    if (!trail) return res.status(404).json({ ok: false, error: 'not found' });
+    return res.json({ ok: true, trail });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+/**
+ * GET /admin/trace?instance=&limit=&onlyBlocked=
+ * Lista trazas recientes.
+ */
+adminRouter.get('/trace', async (req, res) => {
+  const instanceName = String(req.query.instance ?? env.instanceName);
+  const limit = Number(req.query.limit ?? 50);
+  const onlyBlocked = req.query.onlyBlocked === 'true';
+  const remoteJid = req.query.remoteJid ? String(req.query.remoteJid) : undefined;
+  try {
+    const traces = await listRecentTraces(instanceName, { remoteJid, limit, onlyBlocked });
+    return res.json({ ok: true, traces });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// ─── Fase 5: Métricas ─────────────────────────────────────────────────────────
+
+/**
+ * GET /admin/metrics/summary?instance=&windowHours=24
+ */
+adminRouter.get('/metrics/summary', async (req, res) => {
+  const instanceName = String(req.query.instance ?? env.instanceName);
+  const windowHours = Number(req.query.windowHours ?? 24);
+  try {
+    const summary = await getMetricsSummary(instanceName, windowHours);
+    return res.json({ ok: true, summary });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+/**
+ * GET /admin/metrics/timeseries?instance=&hours=48
+ */
+adminRouter.get('/metrics/timeseries', async (req, res) => {
+  const instanceName = String(req.query.instance ?? env.instanceName);
+  const hours = Number(req.query.hours ?? 48);
+  try {
+    const timeseries = await getHourlyTimeseries(instanceName, hours);
+    return res.json({ ok: true, timeseries });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+/**
+ * GET /admin/metrics/alerts?instance=
+ */
+adminRouter.get('/metrics/alerts', async (req, res) => {
+  const instanceName = String(req.query.instance ?? env.instanceName);
+  try {
+    const alerts = await getActiveAlerts(instanceName);
+    return res.json({ ok: true, alerts });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+/**
+ * POST /admin/metrics/alerts/:id/resolve
+ */
+adminRouter.post('/metrics/alerts/:id/resolve', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ ok: false, error: 'valid id required' });
+  try {
+    await resolveAlert(id);
+    return res.json({ ok: true });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// ─── Fase 5: Health check ─────────────────────────────────────────────────────
+
+/**
+ * GET /admin/health/bot?instance=
+ * Devuelve estado de salud del bot: catálogo, fallback rate, alertas activas.
+ */
+adminRouter.get('/health/bot', async (req, res) => {
+  const instanceName = String(req.query.instance ?? env.instanceName);
+  try {
+    const health = await getBotHealthCheck(instanceName);
+    return res.status(health.ok ? 200 : 503).json({ ok: health.ok, health });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+// ─── Fase 5: Evaluaciones automáticas ────────────────────────────────────────
+
+/**
+ * GET /admin/eval/runs?instance=&limit=10
+ */
+adminRouter.get('/eval/runs', async (req, res) => {
+  const instanceName = String(req.query.instance ?? env.instanceName);
+  const limit = Number(req.query.limit ?? 10);
+  try {
+    const runs = await listEvalRuns(instanceName, limit);
+    return res.json({ ok: true, runs });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
+  }
+});
+
+/**
+ * POST /admin/eval/run
+ * Trigger manual de una evaluación.
+ */
+adminRouter.post('/eval/run', async (req, res) => {
+  const instanceName = String(req.body?.instance ?? env.instanceName);
+  try {
+    const result = await runEvalSuite(instanceName, 'manual');
+    return res.json({ ok: true, result });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: String(e?.message ?? e) });
   }

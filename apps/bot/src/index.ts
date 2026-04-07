@@ -53,6 +53,8 @@ import { scanRecentVehiclesForDemandMatches, runRecontactJob } from "./services/
 import { sendTextAndPersist } from "./services/panelPersistence.js";
 import { runAutoTrainerScan } from "./services/autoTrainer.js";
 import { loadBotMemory } from "./services/botMemory.js";
+import { computeHourlyMetrics } from "./services/metricsAggregator.js";
+import { runEvalSuite } from "./services/evalRunner.js";
 
 async function main() {
   await migrate();
@@ -308,6 +310,46 @@ async function main() {
       autoTrainerRunning = false;
     }
   }, Math.max(60 * 60 * 1000, AUTOTRAINER_MS)); // min 1h between runs
+
+  // ─── Fase 5: Métricas horarias ────────────────────────────────────────────────
+  // Computa métricas de la hora anterior. Se corre cada hora.
+  let metricsJobRunning = false;
+  setInterval(async () => {
+    if (metricsJobRunning) return;
+    metricsJobRunning = true;
+    try {
+      await computeHourlyMetrics(env.instanceName);
+    } catch (e) {
+      console.error('[metricsAggregator] hourly job error:', e);
+    } finally {
+      metricsJobRunning = false;
+    }
+  }, 60 * 60 * 1000); // cada hora
+
+  // ─── Fase 5: Evaluaciones automáticas ────────────────────────────────────────
+  // Corre la suite de evaluación. Startup después de 10 min, luego cada 6h.
+  let evalJobRunning = false;
+
+  setTimeout(async () => {
+    try {
+      console.log('[evalRunner] startup evaluation run...');
+      await runEvalSuite(env.instanceName, 'startup');
+    } catch (e) {
+      console.error('[evalRunner] startup error:', e);
+    }
+  }, 10 * 60 * 1000); // 10 min after boot
+
+  setInterval(async () => {
+    if (evalJobRunning) return;
+    evalJobRunning = true;
+    try {
+      await runEvalSuite(env.instanceName, 'scheduled');
+    } catch (e) {
+      console.error('[evalRunner] periodic error:', e);
+    } finally {
+      evalJobRunning = false;
+    }
+  }, 6 * 60 * 60 * 1000); // cada 6 horas
 }
 
 main().catch((e) => {

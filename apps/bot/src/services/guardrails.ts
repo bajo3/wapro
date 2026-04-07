@@ -25,6 +25,7 @@ export type GuardrailIssue =
   | 'code_block'
   | 'action_code_leaked'
   | 'likely_hallucination'
+  | 'stock_price_invention'  // Fase 5: aserciones de stock/precio no verificadas
   | 'repeated_reply'
   | 'policy_body_too_long';
 
@@ -38,6 +39,13 @@ export interface GuardrailResult {
    * (e.g. code block stripped). Null if the reply should be discarded entirely.
    */
   safeReply: string | null;
+  /** Fase 5: riesgo de alucinación computado del conjunto de issues */
+  hallucinationRisk: 'low' | 'medium' | 'high';
+  /**
+   * Fase 5: true cuando el riesgo es alto y se recomienda forzar revisión humana.
+   * El caller (webhooks.ts) debe interceptar y hacer handoff si esto es true.
+   */
+  requiresHumanReview: boolean;
 }
 
 // ─── Detection Patterns ───────────────────────────────────────────────────────
@@ -96,6 +104,22 @@ const HALLUCINATION_SIGNALS: RegExp[] = [
   /\bgarantía\s+de\s+\d+\s+(?:año|mes)/i,
 ];
 
+/**
+ * Fase 5 — Patterns that indicate the bot is asserting stock or price availability
+ * without having been given catalog data. These trigger 'stock_price_invention' issue.
+ *
+ * Design: kept narrow to avoid false positives on real catalog-backed replies.
+ * Requires BOTH a stock assertion AND a specific vehicle/price combination.
+ */
+const STOCK_PRICE_INVENTION_SIGNALS: RegExp[] = [
+  // "Sí, tenemos el X disponible" / "lo tenemos en stock" — unverified availability claim
+  /\b(?:sí,?\s+)?(?:tenemos|contamos con|hay)\s+(?:el|un|una|los)\s+\w[\w\s]{2,40}(?:disponible|en stock|en catálogo)\b/i,
+  // "El precio es $X" or "vale $X" with a specific large number — price claim
+  /\b(?:el precio|vale|cuesta|está a|sale)\s+(?:ARS\s*)?\$\s*\d[\d.,]{5,}/i,
+  // "confirmamos disponibilidad" — direct confirmation bot shouldn't make
+  /\bconfirm(?:o|amos|ás)\s+(?:la\s+)?disponibilidad\b/i,
+];
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -145,7 +169,7 @@ export function validateReply(
 ): GuardrailResult {
   // ── Empty check ────────────────────────────────────────────────────────────
   if (!text || !text.trim()) {
-    return { ok: false, issues: ['empty_reply'], safeReply: null };
+    return { ok: false, issues: ['empty_reply'], safeReply: null, hallucinationRisk: 'low', requiresHumanReview: false };
   }
 
   let working = text;
@@ -154,7 +178,7 @@ export function validateReply(
   // ── Code block strip (fixable) ─────────────────────────────────────────────
   if (/```/.test(working)) {
     working = stripCodeBlocks(working);
-    if (!working) return { ok: false, issues: ['code_block'], safeReply: null };
+    if (!working) return { ok: false, issues: ['code_block'], safeReply: null, hallucinationRisk: 'low', requiresHumanReview: false };
     issues.push('code_block'); // flag it but use cleaned version
   }
 
@@ -164,7 +188,7 @@ export function validateReply(
       issues.push(issue);
       // Internal content → discard, don't send
       console.warn(`[guardrails] Blocked reply — issue: ${issue}. Preview: "${working.slice(0, 120)}"`);
-      return { ok: false, issues, safeReply: null };
+      return { ok: false, issues, safeReply: null, hallucinationRisk: 'low', requiresHumanReview: false };
     }
   }
 
@@ -177,6 +201,15 @@ export function validateReply(
     }
   }
 
+  // ── Fase 5: Stock/price invention (blocking for 'requiresHumanReview') ───────
+  for (const pattern of STOCK_PRICE_INVENTION_SIGNALS) {
+    if (pattern.test(working)) {
+      issues.push('stock_price_invention');
+      console.warn(`[guardrails] Stock/price invention signal detected. Preview: "${working.slice(0, 120)}"`);
+      break;
+    }
+  }
+
   // ── Policy body sanity (if source=policy, content should be user-facing) ──
   if (opts?.source === 'policy') {
     // Policies with bullet rules/caps text are internal — block
@@ -186,7 +219,7 @@ export function validateReply(
     if (looksPolicyInternal) {
       issues.push('policy_body_too_long');
       console.warn(`[guardrails] Policy body looks internal — blocked. Preview: "${working.slice(0, 80)}"`);
-      return { ok: false, issues, safeReply: null };
+      return { ok: false, issues, safeReply: null, hallucinationRisk: 'low', requiresHumanReview: false };
     }
   }
 
@@ -197,20 +230,30 @@ export function validateReply(
     console.warn(`[guardrails] Repeated reply detected.`);
   }
 
+  // ── Fase 5: Hallucination risk + requiresHumanReview ─────────────────────
+  const hasInvention = issues.includes('stock_price_invention');
+  const hasHallucination = issues.includes('likely_hallucination');
+  const hallucinationRisk: 'low' | 'medium' | 'high' =
+    hasInvention ? 'high'
+    : hasHallucination ? 'medium'
+    : 'low';
+  // Force human review only for stock/price invention (most specific and dangerous)
+  const requiresHumanReview = hasInvention;
+
   // ── Final decision ─────────────────────────────────────────────────────────
   const blockingIssues: GuardrailIssue[] = ['internal_content', 'raw_json', 'action_code_leaked', 'policy_body_too_long'];
   const hasBlocker = issues.some(i => blockingIssues.includes(i));
 
   if (hasBlocker) {
-    return { ok: false, issues, safeReply: null };
+    return { ok: false, issues, safeReply: null, hallucinationRisk, requiresHumanReview };
   }
 
   // Code block was stripped: return cleaned version
   if (issues.includes('code_block')) {
-    return { ok: false, issues, safeReply: working };
+    return { ok: false, issues, safeReply: working, hallucinationRisk, requiresHumanReview };
   }
 
-  return { ok: true, issues, safeReply: working };
+  return { ok: true, issues, safeReply: working, hallucinationRisk, requiresHumanReview };
 }
 
 // ─── Safe Fallback Replies ────────────────────────────────────────────────────

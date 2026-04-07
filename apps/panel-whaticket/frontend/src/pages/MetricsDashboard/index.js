@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Container, Grid, Paper, Typography, Box, CircularProgress,
-  Chip, Divider, Tooltip, IconButton
+  Chip, Divider, Tooltip, IconButton, LinearProgress, Button
 } from "@material-ui/core";
 import { makeStyles } from "@material-ui/core/styles";
 import RefreshIcon from "@material-ui/icons/Refresh";
@@ -11,6 +11,10 @@ import PeopleIcon from "@material-ui/icons/People";
 import DirectionsCarIcon from "@material-ui/icons/DirectionsCar";
 import MonetizationOnIcon from "@material-ui/icons/MonetizationOn";
 import AssignmentIcon from "@material-ui/icons/Assignment";
+import CheckCircleIcon from "@material-ui/icons/CheckCircle";
+import ErrorIcon from "@material-ui/icons/Error";
+import WarningIcon from "@material-ui/icons/Warning";
+import SmartToyIcon from "@material-ui/icons/Android";
 import api from "../../services/api";
 import axios from "axios";
 
@@ -94,6 +98,28 @@ const useStyles = makeStyles((theme) => ({
   chip: {
     fontWeight: 600, fontSize: 11,
   },
+  healthRow: {
+    display: "flex", alignItems: "center",
+    justifyContent: "space-between",
+    padding: "8px 0",
+    borderBottom: `1px solid ${theme.palette.divider}`,
+    "&:last-child": { borderBottom: "none" },
+  },
+  alertRow: {
+    display: "flex", alignItems: "center",
+    gap: 8,
+    padding: "6px 0",
+    borderBottom: `1px solid ${theme.palette.divider}`,
+    "&:last-child": { borderBottom: "none" },
+  },
+  evalRow: {
+    display: "flex", alignItems: "center",
+    justifyContent: "space-between",
+    padding: "6px 0",
+    borderBottom: `1px solid ${theme.palette.divider}`,
+    "&:last-child": { borderBottom: "none" },
+    fontSize: 13,
+  },
   loader: {
     display: "flex", justifyContent: "center",
     alignItems: "center", minHeight: 300,
@@ -161,6 +187,12 @@ const MetricsDashboard = () => {
   const [leadIntents, setLeadIntents] = useState([]);
   const [vehicleCount, setVehicleCount] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
+  // Fase 5: Bot intelligence
+  const [botHealth, setBotHealth] = useState(null);
+  const [botMetrics, setBotMetrics] = useState(null);
+  const [botAlerts, setBotAlerts] = useState([]);
+  const [evalRuns, setEvalRuns] = useState([]);
+  const [evalRunning, setEvalRunning] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -191,6 +223,14 @@ const MetricsDashboard = () => {
           setLeadIntents(intentsRes.data.intents);
         }
       } catch { /* bot API optional */ }
+
+      // Fase 5: Bot health, metrics, alerts, eval runs — via panel proxy
+      await Promise.allSettled([
+        api.get("/bot/health/bot").then((r) => setBotHealth(r.data?.health ?? null)).catch(() => {}),
+        api.get("/bot/metrics/summary").then((r) => setBotMetrics(r.data?.summary ?? null)).catch(() => {}),
+        api.get("/bot/metrics/alerts").then((r) => setBotAlerts(Array.isArray(r.data?.alerts) ? r.data.alerts : [])).catch(() => {}),
+        api.get("/bot/eval/runs?limit=5").then((r) => setEvalRuns(Array.isArray(r.data?.runs) ? r.data.runs : [])).catch(() => {}),
+      ]);
 
       setLastUpdated(new Date().toLocaleTimeString("es-AR"));
     } catch (e) {
@@ -377,6 +417,231 @@ const MetricsDashboard = () => {
             )}
           </Paper>
         </Grid>
+
+        {/* ── Fase 5: Salud del bot ── */}
+        {botHealth && (
+          <Grid item xs={12} sm={6}>
+            <Paper className={classes.card}>
+              <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
+                <Typography className={classes.sectionTitle}>
+                  <SmartToyIcon style={{ fontSize: 16, marginRight: 6, verticalAlign: "middle" }} />
+                  Salud del bot
+                </Typography>
+                <Chip
+                  label={botHealth.ok ? "OK" : "DEGRADADO"}
+                  size="small"
+                  className={classes.chip}
+                  style={{
+                    background: botHealth.ok ? "#dcfce7" : "#fee2e2",
+                    color: botHealth.ok ? "#15803d" : "#dc2626",
+                  }}
+                  icon={botHealth.ok
+                    ? <CheckCircleIcon style={{ fontSize: 14 }} />
+                    : <ErrorIcon style={{ fontSize: 14 }} />}
+                />
+              </Box>
+              <Divider style={{ marginBottom: 8 }} />
+              {[
+                { label: "Catálogo activo", ok: botHealth.checks?.catalog?.ok, detail: `${botHealth.checks?.catalog?.vehicleCount ?? 0} vehículos` },
+                { label: "Fallback rate", ok: botHealth.checks?.fallbackRate?.ok, detail: `${((botHealth.checks?.fallbackRate?.rate ?? 0) * 100).toFixed(1)}%` },
+                { label: "Alucinaciones bloqueadas", ok: botHealth.checks?.hallucinationBlocks?.ok, detail: `${botHealth.checks?.hallucinationBlocks?.lastHour ?? 0} última hora` },
+                { label: "Dead letters", ok: botHealth.checks?.deadLetters?.ok, detail: `${botHealth.checks?.deadLetters?.lastHour ?? 0} última hora` },
+                { label: "Alertas activas", ok: (botHealth.checks?.activeAlerts ?? 0) === 0, detail: `${botHealth.checks?.activeAlerts ?? 0}` },
+              ].map(({ label, ok, detail }) => (
+                <Box key={label} className={classes.healthRow}>
+                  <Typography variant="body2" style={{ fontSize: 12 }}>{label}</Typography>
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <Typography variant="body2" style={{ fontSize: 12, color: "#6b7280" }}>{detail}</Typography>
+                    {ok
+                      ? <CheckCircleIcon style={{ fontSize: 14, color: "#15803d" }} />
+                      : <ErrorIcon style={{ fontSize: 14, color: "#dc2626" }} />}
+                  </Box>
+                </Box>
+              ))}
+            </Paper>
+          </Grid>
+        )}
+
+        {/* ── Fase 5: Métricas del bot ── */}
+        {botMetrics && (
+          <Grid item xs={12} sm={6}>
+            <Paper className={classes.card}>
+              <Typography className={classes.sectionTitle}>
+                Inteligencia del bot — últimas 24h
+              </Typography>
+              <Divider style={{ marginBottom: 8 }} />
+              {[
+                { label: "Tasa de respuesta", value: `${((botMetrics.responseRate ?? 0) * 100).toFixed(1)}%`, color: "#3b82f6", pct: (botMetrics.responseRate ?? 0) * 100 },
+                { label: "Tasa de handoff", value: `${((botMetrics.handoffRate ?? 0) * 100).toFixed(1)}%`, color: "#f97316", pct: (botMetrics.handoffRate ?? 0) * 100 },
+                { label: "Fallback rate", value: `${((botMetrics.fallbackRate ?? 0) * 100).toFixed(1)}%`, color: (botMetrics.fallbackRate ?? 0) > 0.3 ? "#dc2626" : "#6b7280", pct: (botMetrics.fallbackRate ?? 0) * 100 },
+                { label: "Alucinaciones bloqueadas", value: `${((botMetrics.hallucinationBlockRate ?? 0) * 100).toFixed(1)}%`, color: "#dc2626", pct: (botMetrics.hallucinationBlockRate ?? 0) * 100 },
+              ].map(({ label, value, color, pct }) => (
+                <Box key={label} className={classes.intentRow}>
+                  <Typography variant="body2" style={{ minWidth: 190, fontSize: 12, fontWeight: 500 }}>{label}</Typography>
+                  <Box className={classes.barBg}>
+                    <Box className={classes.barFill} style={{ width: `${Math.min(pct, 100)}%`, background: color }} />
+                  </Box>
+                  <Typography variant="body2" style={{ fontWeight: 700, minWidth: 44, textAlign: "right", color, fontSize: 12 }}>
+                    {value}
+                  </Typography>
+                </Box>
+              ))}
+              <Box mt={1} display="flex" alignItems="center" gap={1}>
+                <Typography variant="caption" color="textSecondary">
+                  Score promedio: <b>{botMetrics.avgLeadScore != null ? botMetrics.avgLeadScore.toFixed(0) : "—"}</b>
+                </Typography>
+                <Typography variant="caption" color="textSecondary" style={{ marginLeft: 12 }}>
+                  Mensajes: <b>{botMetrics.last24hMessages ?? 0}</b>
+                  {botMetrics.trendVsPrevious24h !== 0 && (
+                    <span style={{ color: botMetrics.trendVsPrevious24h > 0 ? "#15803d" : "#dc2626", marginLeft: 4 }}>
+                      {botMetrics.trendVsPrevious24h > 0 ? "▲" : "▼"} {Math.abs(botMetrics.trendVsPrevious24h)}%
+                    </span>
+                  )}
+                </Typography>
+              </Box>
+              {/* Temperatura de leads */}
+              {botMetrics.temperatureDistribution && (
+                <Box mt={1}>
+                  {[
+                    { key: "hot", label: "Hot", color: "#ef4444" },
+                    { key: "warm", label: "Warm", color: "#f97316" },
+                    { key: "cold", label: "Cold", color: "#3b82f6" },
+                  ].map(({ key, label, color }) => {
+                    const cnt = botMetrics.temperatureDistribution[key] ?? 0;
+                    const total = (botMetrics.temperatureDistribution.hot ?? 0) +
+                      (botMetrics.temperatureDistribution.warm ?? 0) +
+                      (botMetrics.temperatureDistribution.cold ?? 0);
+                    const pct = total > 0 ? (cnt / total) * 100 : 0;
+                    return (
+                      <Box key={key} className={classes.intentRow}>
+                        <Chip label={label} size="small" style={{ background: color + "22", color, fontWeight: 700, fontSize: 10, minWidth: 44 }} />
+                        <Box className={classes.barBg} style={{ margin: "0 8px" }}>
+                          <Box className={classes.barFill} style={{ width: `${pct}%`, background: color }} />
+                        </Box>
+                        <Typography variant="caption" style={{ fontWeight: 700, color, minWidth: 24, textAlign: "right" }}>{cnt}</Typography>
+                      </Box>
+                    );
+                  })}
+                </Box>
+              )}
+            </Paper>
+          </Grid>
+        )}
+
+        {/* ── Fase 5: Alertas activas ── */}
+        {botAlerts.length > 0 && (
+          <Grid item xs={12} sm={6}>
+            <Paper className={classes.card}>
+              <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
+                <Typography className={classes.sectionTitle}>
+                  <WarningIcon style={{ fontSize: 16, marginRight: 6, color: "#f97316", verticalAlign: "middle" }} />
+                  Alertas activas
+                </Typography>
+                <Chip label={botAlerts.length} size="small" style={{ background: "#fee2e2", color: "#dc2626", fontWeight: 700 }} />
+              </Box>
+              <Divider style={{ marginBottom: 8 }} />
+              {botAlerts.slice(0, 5).map((alert) => (
+                <Box key={alert.id} className={classes.alertRow}>
+                  {alert.severity === "critical"
+                    ? <ErrorIcon style={{ fontSize: 16, color: "#dc2626", flexShrink: 0 }} />
+                    : <WarningIcon style={{ fontSize: 16, color: "#f97316", flexShrink: 0 }} />}
+                  <Box flex={1}>
+                    <Typography variant="body2" style={{ fontSize: 12, fontWeight: 600 }}>
+                      {alert.alertType.replace(/_/g, " ")}
+                    </Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      Valor: {typeof alert.metricValue === "number" ? alert.metricValue.toFixed(2) : alert.metricValue}
+                      {" | "}Umbral: {typeof alert.thresholdValue === "number" ? alert.thresholdValue.toFixed(2) : alert.thresholdValue}
+                    </Typography>
+                  </Box>
+                  <Button
+                    size="small"
+                    style={{ fontSize: 10, color: "#6b7280", minWidth: 0, padding: "2px 6px" }}
+                    onClick={() =>
+                      api.post(`/bot/metrics/alerts/${alert.id}/resolve`)
+                        .then(() => setBotAlerts((prev) => prev.filter((a) => a.id !== alert.id)))
+                        .catch(() => {})
+                    }
+                  >
+                    Resolver
+                  </Button>
+                </Box>
+              ))}
+            </Paper>
+          </Grid>
+        )}
+
+        {/* ── Fase 5: Historial de evaluaciones ── */}
+        {evalRuns.length > 0 && (
+          <Grid item xs={12} sm={6}>
+            <Paper className={classes.card}>
+              <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
+                <Typography className={classes.sectionTitle}>Evaluaciones automáticas</Typography>
+                <Button
+                  size="small"
+                  disabled={evalRunning}
+                  style={{ fontSize: 11, background: "#dbeafe", color: "#1d4ed8", borderRadius: 6, padding: "3px 10px" }}
+                  onClick={() => {
+                    setEvalRunning(true);
+                    api.post("/bot/eval/run")
+                      .then((r) => {
+                        if (r.data?.result) {
+                          setEvalRuns((prev) => [
+                            {
+                              run_at: r.data.result.runAt,
+                              triggered_by: "manual",
+                              total_cases: r.data.result.totalCases,
+                              passed: r.data.result.passed,
+                              failed: r.data.result.failed,
+                              pass_rate: r.data.result.passRate,
+                              avg_score: r.data.result.avgScore,
+                              below_threshold: r.data.result.belowThreshold,
+                            },
+                            ...prev.slice(0, 4),
+                          ]);
+                        }
+                      })
+                      .catch(() => {})
+                      .finally(() => setEvalRunning(false));
+                  }}
+                >
+                  {evalRunning ? "Corriendo…" : "▶ Correr ahora"}
+                </Button>
+              </Box>
+              <Divider style={{ marginBottom: 8 }} />
+              {evalRuns.map((run, idx) => (
+                <Box key={idx} className={classes.evalRow}>
+                  <Box>
+                    <Typography variant="body2" style={{ fontSize: 12, fontWeight: 600 }}>
+                      {new Date(run.run_at).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      <span style={{ fontWeight: 400, color: "#94a3b8", fontSize: 11, marginLeft: 6 }}>{run.triggered_by}</span>
+                    </Typography>
+                    <LinearProgress
+                      variant="determinate"
+                      value={Math.round((Number(run.pass_rate ?? 0)) * 100)}
+                      style={{ height: 4, borderRadius: 2, marginTop: 4, width: 120 }}
+                      color={run.below_threshold ? "secondary" : "primary"}
+                    />
+                  </Box>
+                  <Box textAlign="right">
+                    <Chip
+                      label={`${Math.round((Number(run.pass_rate ?? 0)) * 100)}%`}
+                      size="small"
+                      style={{
+                        background: run.below_threshold ? "#fee2e2" : "#dcfce7",
+                        color: run.below_threshold ? "#dc2626" : "#15803d",
+                        fontWeight: 700, fontSize: 11,
+                      }}
+                    />
+                    <Typography variant="caption" display="block" color="textSecondary" style={{ fontSize: 10, marginTop: 2 }}>
+                      {run.passed}/{run.total_cases} casos
+                    </Typography>
+                  </Box>
+                </Box>
+              ))}
+            </Paper>
+          </Grid>
+        )}
 
         {/* Resumen acciones rápidas */}
         <Grid item xs={12}>
