@@ -114,7 +114,7 @@ async function writeToDeadLetter(payload: object, reason: string): Promise<void>
 // ─── Core persist function (with retry) ──────────────────────────────────────
 
 interface PersistPayload {
-  syntheticId: string;
+  id: string;        // was syntheticId — controller reads body.id
   instance: string;
   remoteJid: string;
   text: string;
@@ -255,7 +255,7 @@ export async function persistBotOutboundMessage(params: {
   const syntheticId = `bot-${params.instance}-${number}-${Date.now()}-${hashString(`${text}|${imageUrl || ''}`)}`;
 
   const body: PersistPayload = {
-    syntheticId,
+    id: syntheticId,
     instance: params.instance,
     remoteJid,
     text,
