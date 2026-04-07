@@ -32,7 +32,8 @@
       "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend/src/services/TicketServices' -name List* -o -name Index*)",
       "Bash(xargs grep:*)",
       "Bash(find /c/Users/felip/OneDrive/Escritorio/Feli Web/wapro -name *.sql -o -name *migration* -o -name *schema*)",
-      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/bot' -maxdepth 3 -name *.sql)"
+      "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/bot' -maxdepth 3 -name *.sql)",
+      "Bash(grep:*)"
     ]
   }
 }

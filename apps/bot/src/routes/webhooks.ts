@@ -24,7 +24,7 @@ import {
 import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from '../services/extract.js';
 import { createHash } from 'node:crypto';
 import type { ConvState } from '../services/state.js';
-import { computeLeadScore, computeLeadScoreBreakdown, leadLabel } from '../services/lead.js';
+import { computeLeadScore, leadLabel } from '../services/lead.js';
 
 import { getFinanceApr, simulateFinancing, formatArs } from '../services/finance.js';
 import { sendImageAndPersist, sendTextAndPersist } from '../services/panelPersistence.js';
@@ -982,13 +982,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     state.search_context = nextSearchCtx;
     state.search_context_at = nowIso;
 
-    // Lead score recalculated each turn.
-    const leadBreakdown = computeLeadScoreBreakdown({ ...state, last_query: rawText }, extracted, now);
-    state.leadScore = leadBreakdown.total;
-
     // ── Fase 4: Pipeline comercial inteligente ────────────────────────────────
-    // Ejecuta clasificación de intención, scoring semántico, next best action,
-    // prioridad de conversación y sugerencias al vendedor.
+    // Autoridad única de scoring — reemplaza computeLeadScoreBreakdown.
     // Async en persistencia — nunca bloquea la respuesta principal.
     const commercialResult = runCommercialPipeline(
       rawText,
@@ -998,6 +993,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       remoteJid,
       typeof state.leadScore === 'number' ? state.leadScore : undefined
     );
+    // Phase 4 score es la fuente de verdad para este turno.
+    state.leadScore = commercialResult.leadScore.score;
 
     const aggEntry = aggregators.get(key);
     const cleanup = () => {
@@ -1268,8 +1265,14 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           .slice(0, 12)
           .map(([k, v]) => `${k}=${String(v)}`);
         const handoffReason = isComplaint ? 'reclamo' : isUrgent ? 'urgencia' : wantsPerson ? 'solicitud_persona' : 'intencion_de_cierre';
+        const commercialNote = [
+          `Score: ${commercialResult.leadScore.score} (${commercialResult.leadScore.temperature})`,
+          `Intención: ${commercialResult.intent.primary}`,
+          commercialResult.suggestion.suggestedAction ? `Acción sugerida: ${commercialResult.suggestion.suggestedAction.slice(0, 100)}` : null,
+          commercialResult.suggestion.humanHandoffReason ? `Motivo handoff: ${commercialResult.suggestion.humanHandoffReason.slice(0, 100)}` : null,
+        ].filter(Boolean).join(' | ');
         await addConversationNote(instance, remoteJid,
-          `Handoff automático [${handoffReason}]. Texto: "${rawText.slice(0, 140)}"\nDatos: ${pairs.join(' | ') || 'n/a'}`);
+          `Handoff automático [${handoffReason}]. Texto: "${rawText.slice(0, 140)}"\nDatos: ${pairs.join(' | ') || 'n/a'}\n${commercialNote}`);
       } catch (err) {
         console.error('Failed to set conversation rule on handoff', err);
       }
@@ -1524,7 +1527,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     let reply = '';
     const { _forceFinancing: _ff, ...stateClean } = state as any;
-    let newState: ConvState = { ...stateClean, stage: 'idle', lastBotAt: nowIso, extracted, last_media: lastMedia, leadScore: leadBreakdown.total, leadScoreBreakdown: leadBreakdown as any } as any;
+    let newState: ConvState = { ...stateClean, stage: 'idle', lastBotAt: nowIso, extracted, last_media: lastMedia, leadScore: commercialResult.leadScore.score, leadScoreBreakdown: commercialResult.leadScore as any } as any;
     let isFallback = false;
 
     // ── INTELLIGENCE LAYER: check FAQ / Policy / Playbook FIRST ────────────

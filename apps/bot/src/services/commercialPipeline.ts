@@ -20,6 +20,7 @@ import { computeCommercialScore, type LeadScore } from './commercialScoring.js';
 import { determineNextBestAction, type NextBestAction } from './nextBestAction.js';
 import { calculateConversationPriority, type ConversationPriority } from './conversationPriority.js';
 import { generateSalesSuggestions, type SalesSuggestion } from './salesSuggestions.js';
+import { detectObjection } from './salesCoach.js';
 import { pool } from './db.js';
 
 // ─── Tipos exportados ─────────────────────────────────────────────────────────
@@ -30,6 +31,8 @@ export interface CommercialPipelineResult {
   nextAction: NextBestAction;
   priority: ConversationPriority;
   suggestion: SalesSuggestion;
+  /** Tipo de objeción detectada en el mensaje, si la hay */
+  objectionType?: string;
 }
 
 // ─── Score history helpers ────────────────────────────────────────────────────
@@ -72,6 +75,10 @@ async function persistCommercialData(
       evidence: s.evidence,
     }))
   );
+
+  const scoreReason = result.objectionType
+    ? `${leadScore.reason} | objecion: ${result.objectionType}`
+    : leadScore.reason;
 
   await pool.query(
     `INSERT INTO lead_commercial_data (
@@ -131,7 +138,7 @@ async function persistCommercialData(
       last_scored_at         = EXCLUDED.last_scored_at`,
     [
       conversationId, instanceName, remoteJid,
-      leadScore.score, leadScore.temperature, leadScore.reason, leadScore.confidence,
+      leadScore.score, leadScore.temperature, scoreReason, leadScore.confidence,
       intent.primary, intent.secondary ?? null, intent.confidence, intent.evidence,
       signalsJson,
       nextAction.action, nextAction.reason, nextAction.priority,
@@ -183,7 +190,11 @@ export function runCommercialPipeline(
   // 5. Generar sugerencias al vendedor
   const suggestion = generateSalesSuggestions(leadScore, intent, nextAction, extracted);
 
-  const result: CommercialPipelineResult = { intent, leadScore, nextAction, priority, suggestion };
+  // 6. Detectar objeción (determinista, sin GPT)
+  const objectionMatch = detectObjection(text);
+  const objectionType = objectionMatch?.type ?? undefined;
+
+  const result: CommercialPipelineResult = { intent, leadScore, nextAction, priority, suggestion, objectionType };
 
   // 6. Persistir en DB de forma async (no bloquea)
   void (async () => {
@@ -249,6 +260,13 @@ export function runCommercialPipeline(
     urgency: suggestion.urgency,
     hasHandoffReason: Boolean(suggestion.humanHandoffReason),
   }));
+
+  if (objectionType) {
+    console.info('[OBJECTION_DETECTED]', JSON.stringify({
+      conversationId: conversationId.slice(0, 20),
+      objectionType,
+    }));
+  }
 
   return result;
 }
