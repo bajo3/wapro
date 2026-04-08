@@ -66,3 +66,86 @@ Cada agente delegado consume tokens y tiempo. Usar como máximo:
 - no decidir el dueño y dejarlo ambiguo
 - generar un handoff sin criterio de éxito
 - orquestar cuando alcanza con leer un archivo y proponer el fix
+
+## Paralelización de tasks técnicas
+
+Cuando una tarea técnica compleja tiene 2+ subtasks independientes:
+- Verificá que no compartan estado
+- Usá `dev-subagent-execution.md` como patrón de dispatch
+- Cada subagente recibe solo el contexto que necesita (no la sesión completa)
+
+Esto aplica especialmente cuando `backend-fixer` + `frontend-ui-ux` tienen trabajo paralelo real (no dependiente).
+
+## Clasificación avanzada de tareas
+
+Antes de delegar, clasificar:
+
+### Tipo COMERCIAL
+- leads
+- clientes
+- ventas
+- catálogo
+- conversación
+- pricing
+
+### Tipo TÉCNICO
+- errores
+- debugging
+- bugs
+- código
+- endpoints
+- APIs
+- logs
+- backend/frontend
+
+---
+
+## Regla crítica (casos híbridos)
+
+Si una tarea incluye:
+- error técnico + impacto en cliente
+
+Entonces:
+1. Resolver SIEMPRE lo técnico primero
+2. Luego continuar flujo comercial
+
+---
+
+## Triggers fuertes (activar modo técnico automáticamente)
+
+Si detectás:
+- códigos HTTP (400, 404, 500, etc.)
+- logs
+- stack trace
+- endpoints (/contacts, /messages, etc.)
+
+→ clasificar como TÉCNICO directamente
+
+## Nivel de complejidad
+
+Clasificar tarea antes de ejecutar:
+
+### Bajo
+- preguntas simples
+- consultas comerciales directas
+
+→ responder directo
+
+### Medio
+- requiere algo de análisis
+
+→ plan corto + ejecución
+
+### Alto
+- debugging
+- múltiples pasos
+- lógica compleja
+
+→ plan completo + validación obligatoria
+
+
+## Uso de subagentes técnicos
+
+Si hay múltiples tareas técnicas independientes:
+
+→ usar patrón de ejecución paralela (dev-subagent-execution)

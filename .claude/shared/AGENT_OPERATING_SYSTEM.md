@@ -55,3 +55,75 @@ Delegar solo si:
 - no inventar precio final
 - sí ofrecer alternativa útil
 - sí empujar siguiente mejor paso comercial
+
+## Skills de desarrollo (dev-*)
+
+Las skills prefijadas con `dev-` son para tareas técnicas exclusivamente.
+
+**Activar cuando la tarea involucra:**
+- errores, bugs, o debugging
+- implementación técnica (endpoints, servicios, migraciones)
+- testing o QA de código
+- planning de features
+
+**NO activar en:**
+- flujos comerciales del bot
+- respuestas a leads
+- lógica de conversación
+
+| Situación | Skill |
+|---|---|
+| Bug, error, comportamiento inesperado | `dev-systematic-debugging` |
+| Antes de afirmar que algo está listo | `dev-verification` |
+| Feature multi-paso con spec | `dev-writing-plans` |
+| Implementar cualquier feature o fix | `dev-tdd` |
+| Ejecutar plan con tasks independientes | `dev-subagent-execution` |
+
+
+## Skills de desarrollo (Superpowers)
+
+Las skills de desarrollo están prefijadas con `dev-`.
+
+Ejemplos:
+- dev-systematic-debugging
+- dev-verification
+- dev-writing-plans
+- dev-tdd
+
+Reglas:
+
+- Usar estas skills SOLO para tareas técnicas:
+  - código
+  - bugs
+  - arquitectura
+  - APIs
+
+- NO usar estas skills en:
+  - ventas
+  - conversaciones con clientes
+  - lógica comercial
+
+  ## Regla de verificación obligatoria
+
+- No se puede declarar una tarea como completa sin validación
+- No asumir que algo funciona sin evidencia
+- Siempre verificar:
+  - lógica
+  - outputs
+  - posibles errores
+  
+  ## Regla de verificación obligatoria
+
+- No se puede declarar una tarea como completa sin validación
+- No asumir que algo funciona sin evidencia
+- Siempre verificar:
+  - lógica
+  - outputs
+  - posibles errores
+
+## Regla de verificación
+
+No hacer claims de completion sin evidencia fresca:
+- "listo", "funciona", "corregido", "pasa" → requieren haber corrido el comando en este mensaje
+- Exit code y output completo son la evidencia — no el código cambiado
+- Aplica a deploys Railway: verificar logs, no solo que el push fue

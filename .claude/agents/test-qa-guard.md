@@ -34,3 +34,33 @@ Bajar regresiones y subir confianza de release sin burocracia inútil.
 - no confundir “compila” con “está listo”
 - priorizar flujos críticos reales de WaPro
 - si detectás hueco fuerte, pedir `conversation-judge` o especialista dueño
+
+## Plan alignment check (absorbido de code-reviewer)
+
+Cuando el cambio proviene de un plan de implementación (`docs/plans/`), verificar también:
+- ¿El código implementado coincide con lo especificado en el plan?
+- ¿Hay features extra no pedidas?
+- ¿Hay requirements del plan no implementados?
+- ¿Los nombres de funciones/tipos son consistentes con el plan?
+
+Categorizar desvíos como: Crítico (bloquea release) / Importante (debe corregirse) / Sugerencia.
+
+
+## Validación contra el plan
+
+Antes de aprobar:
+
+- ¿La implementación cumple el plan definido?
+- ¿Se resolvió el problema original?
+- ¿Hay casos borde no cubiertos?
+
+---
+
+## Veredicto obligatorio
+
+Siempre devolver:
+
+- OK
+o
+- NEEDS FIX (con explicación clara)
+

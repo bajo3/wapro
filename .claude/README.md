@@ -36,7 +36,9 @@ Sistema de agentes, skills y evaluaciones para WaPro CRM automotriz.
 
 **Especialistas:** `backend-fixer`, `debug-deploy-ops`, `data-sync-catalog`, `frontend-ui-ux`, `crm-product-owner`, `test-qa-guard`
 
-## Skills (9)
+## Skills (14)
+
+### Bot / Comerciales (9)
 
 | Skill | Cuándo aplicar |
 |---|---|
@@ -49,6 +51,18 @@ Sistema de agentes, skills y evaluaciones para WaPro CRM automotriz.
 | `moneda-dual-ars-usd` | Cualquier consulta con ARS y/o USD |
 | `seguimiento-lead-frio` | Lead sin respuesta en 24hs+ |
 | `escalar-a-humano` | Cierre, reclamo, objeción sin resolver, pedido explícito |
+
+### Dev / Técnicas (5) — prefijo `dev-`
+
+Solo para tareas técnicas. NO usar en flujos comerciales o del bot.
+
+| Skill | Cuándo aplicar |
+|---|---|
+| `dev-systematic-debugging` | Bug, error, o comportamiento inesperado — antes de proponer fix |
+| `dev-verification` | Antes de afirmar que algo está listo, funciona, o fue corregido |
+| `dev-writing-plans` | Feature multi-paso con spec — antes de tocar código |
+| `dev-tdd` | Implementar cualquier feature o bugfix — antes de escribir código |
+| `dev-subagent-execution` | Ejecutar plan con tasks independientes en sesión actual |
 
 ## Evaluations (11)
 
