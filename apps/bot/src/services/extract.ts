@@ -49,6 +49,13 @@ function parseYearRange(text: string): { minYear?: number; maxYear?: number } {
   const range = t.match(/\b(?:entre|del?)\s*(20\d{2}|19\d{2})\s*(?:y|al?)\s*(20\d{2}|19\d{2})\b/);
   if (range) { out.minYear = Number(range[1]); out.maxYear = Number(range[2]); return out; }
 
+  const hyphenRange = t.match(/\b(20\d{2}|19\d{2})\s*[-/]\s*(20\d{2}|19\d{2})\b/);
+  if (hyphenRange) {
+    out.minYear = Number(hyphenRange[1]);
+    out.maxYear = Number(hyphenRange[2]);
+    return out;
+  }
+
   const since = t.match(/\b(?:del?|desde)\s*(20\d{2}|19\d{2})\s*(?:en\s+adelante|para\s+arriba)?/);
   if (since) { out.minYear = Number(since[1]); return out; }
 
@@ -1060,8 +1067,6 @@ export function isPureGreetingMessage(text: string): boolean {
 export function shouldResetOperationalContext(text: string): boolean {
   const t = norm(text);
   if (!t) return false;
-
-  if (isPureGreetingMessage(text)) return true;
 
   const explicitReset = /\b(arranquemos\s+de\s+nuevo|arranquemos\s+de\s+cero|empecemos\s+de\s+nuevo|empecemos\s+de\s+cero|reiniciemos|reiniciar|resetemos|reseteemos|volver\s+a\s+empezar|empezar\s+otra\s+vez)\b/.test(t);
   if (explicitReset) return true;

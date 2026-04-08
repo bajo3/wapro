@@ -1,0 +1,269 @@
+{
+  "conversationalPatterns": [],
+  "usefulQuestions": [],
+  "objectionPatterns": [],
+  "turnMetrics": [
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 250,
+      "questionsAsked": 0,
+      "dataExtracted": 5,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:26.632Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 109,
+      "questionsAsked": 0,
+      "dataExtracted": 2,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:26.671Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 250,
+      "questionsAsked": 0,
+      "dataExtracted": 5,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:26.699Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 96,
+      "questionsAsked": 0,
+      "dataExtracted": 2,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:26.724Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 189,
+      "questionsAsked": 0,
+      "dataExtracted": 3,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:26.757Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 190,
+      "questionsAsked": 0,
+      "dataExtracted": 5,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:26.791Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 108,
+      "questionsAsked": 0,
+      "dataExtracted": 4,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:26.810Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 250,
+      "questionsAsked": 0,
+      "dataExtracted": 5,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:26.833Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 250,
+      "questionsAsked": 0,
+      "dataExtracted": 5,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:26.865Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 170,
+      "questionsAsked": 0,
+      "dataExtracted": 2,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:26.905Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 250,
+      "questionsAsked": 0,
+      "dataExtracted": 5,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:52.459Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 109,
+      "questionsAsked": 0,
+      "dataExtracted": 2,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:52.507Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 250,
+      "questionsAsked": 0,
+      "dataExtracted": 5,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:52.532Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 89,
+      "questionsAsked": 0,
+      "dataExtracted": 2,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:52.563Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 189,
+      "questionsAsked": 0,
+      "dataExtracted": 3,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:52.581Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 190,
+      "questionsAsked": 0,
+      "dataExtracted": 5,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:52.602Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 108,
+      "questionsAsked": 0,
+      "dataExtracted": 4,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:52.630Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 250,
+      "questionsAsked": 0,
+      "dataExtracted": 5,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:52.651Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 250,
+      "questionsAsked": 0,
+      "dataExtracted": 5,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:52.680Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    },
+    {
+      "conversationId": "5491100000001@s.whatsapp.net",
+      "turnIndex": 0,
+      "responseLength": 170,
+      "questionsAsked": 0,
+      "dataExtracted": 2,
+      "followUp": false,
+      "timestamp": "2026-04-08T21:31:52.702Z",
+      "flags": {
+        "tooLong": false,
+        "tooManyQuestions": false
+      }
+    }
+  ],
+  "lastUpdated": "2026-04-08T21:32:02.472Z",
+  "version": 1
+}

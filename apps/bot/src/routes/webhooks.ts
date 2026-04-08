@@ -59,6 +59,14 @@ import { learnFromConversation } from '../services/autoTrainer.js';
 import { logBotDecision } from '../lib/decisionLogger.js';
 import { detectBuyerConcernSignals, detectStagnation } from '../services/conversationAnalyzer.js';
 import {
+  buildNoStockReply,
+  isConversationKeepAliveMessage,
+  isSearchRefinementMessage,
+  isVehicleDetailsRequest,
+  selectMentionedVehicle,
+  wantsVehicleMedia,
+} from '../services/conversationRules.js';
+import {
   recordTurnMetrics,
   buildIndecisiveContextBlock,
   buildObjectionContextBlock,
@@ -72,6 +80,67 @@ import {
 } from '../services/botMemory.js';
 
 export const webhookRouter = Router();
+
+type WebhookRuntimeOverrides = {
+  getContactRule: typeof getContactRule;
+  getConversationRule: typeof getConversationRule;
+  getState: typeof getState;
+  setState: typeof setState;
+  loadLeadMemory: typeof loadLeadMemory;
+  runCommercialPipeline: typeof runCommercialPipeline;
+  evolutionSendPresence: typeof evolutionSendPresence;
+  sendImageAndPersist: typeof sendImageAndPersist;
+  sendTextHuman: typeof sendTextHuman;
+  logEpisode: typeof logEpisode;
+  upsertLeadProfile: typeof upsertLeadProfile;
+  getCatalog: typeof getCatalog;
+  matchBest: typeof matchBest;
+  searchKnowledge: typeof searchKnowledge;
+  decideAgentAction: typeof decideAgentAction;
+  askGPT: typeof askGPT;
+  setConversationRule: typeof setConversationRule;
+  addConversationNote: typeof addConversationNote;
+  computeHumanDelay: typeof computeHumanDelay;
+  logConversationDecision: (payload: Record<string, unknown>) => void;
+};
+
+const webhookRuntimeOverrides: Partial<WebhookRuntimeOverrides> = {};
+
+function resolveWebhookRuntime<K extends keyof WebhookRuntimeOverrides>(
+  key: K,
+  fallback: WebhookRuntimeOverrides[K]
+): WebhookRuntimeOverrides[K] {
+  return (webhookRuntimeOverrides[key] ?? fallback) as WebhookRuntimeOverrides[K];
+}
+
+function defaultConversationDecisionLogger(payload: Record<string, unknown>): void {
+  console.info('[conversationDecision]', JSON.stringify(payload));
+}
+
+export function __setWebhookRuntimeOverrides(overrides: Partial<WebhookRuntimeOverrides>): void {
+  Object.assign(webhookRuntimeOverrides, overrides);
+}
+
+export function __resetWebhookRuntimeOverrides(): void {
+  for (const key of Object.keys(webhookRuntimeOverrides)) {
+    delete (webhookRuntimeOverrides as Record<string, unknown>)[key];
+  }
+}
+
+export function __resetWebhookAggregators(): void {
+  aggregators.clear();
+}
+
+export async function __handleAggregatedMessageForTest(params: {
+  instance: string;
+  remoteJid: string;
+  rawText: string;
+  msgId: string;
+  key?: string;
+}): Promise<void> {
+  const key = params.key ?? `${params.instance}:${params.remoteJid}`;
+  await handleAggregatedMessage(key, params.instance, params.remoteJid, params.rawText, params.msgId);
+}
 
 function getText(msg: any): string {
   const m = msg?.message || {};
@@ -741,6 +810,18 @@ function getNextBroadSearchQuestion(ctx: any): string {
 }
 
 function buildWideSearchFallback(ctx: any): string {
+  const filterCount = [
+    ctx?.brand,
+    ctx?.model,
+    ctx?.bodywork,
+    ctx?.maxPrice ?? ctx?.amount,
+    ctx?.year ?? ctx?.minYear ?? ctx?.maxYear,
+    ctx?.transmission,
+    ctx?.fuel,
+  ].filter(Boolean).length;
+  if (filterCount >= 3) {
+    return buildNoStockReply();
+  }
   const nextQuestion = getNextBroadSearchQuestion(ctx);
   if (ctx?.maxPrice || ctx?.amount || ctx?.year || ctx?.minYear || ctx?.maxYear) {
     return `Con lo que me pasaste ya puedo afinar bastante. ${nextQuestion}`;
@@ -755,10 +836,6 @@ function formatVehicleReference(entity: { brand?: string; model?: string }): str
     .trim();
   if (!raw) return 'ese modelo';
   return raw.replace(/\b\w/g, (m) => m.toUpperCase());
-}
-
-function isVehicleDetailsRequest(text: string): boolean {
-  return /\b(detalles?|más\s+detalles?|mas\s+detalles?|info(?:rmacion)?|ficha|datos?|contame\s+m[aá]s|decime\s+m[aá]s)\b/i.test(text);
 }
 
 function hasActiveVehicleEvidence(
@@ -879,6 +956,15 @@ Si querés, avanzamos con visita, financiación o te paso una alternativa pareci
   return '';
 }
 
+function buildVehicleDetailReply(item: any): string {
+  return [
+    `Te paso más detalle de ${item?.name ?? 'esa opción'}:`,
+    formatItemLine(item, 1),
+    '',
+    'Si querés, seguimos con precio, financiación o una alternativa parecida.'
+  ].join('\n');
+}
+
 async function findReferencedVehicle(catalog: any[], rawText: string, ctx: any): Promise<any | null> {
   const normText = normalize(rawText);
   const matches = await getVehicleMatches(catalog, rawText, { ...ctx, maxPrice: undefined }, 3);
@@ -924,6 +1010,27 @@ function clearOperationalContextState(state: ConvState): ConvState {
  */
 async function handleAggregatedMessage(key: string, instance: string, remoteJid: string, rawText: string, msgId: string) {
   try {
+    const getContactRuleImpl = resolveWebhookRuntime('getContactRule', getContactRule);
+    const getConversationRuleImpl = resolveWebhookRuntime('getConversationRule', getConversationRule);
+    const getStateImpl = resolveWebhookRuntime('getState', getState);
+    const setStateImpl = resolveWebhookRuntime('setState', setState);
+    const loadLeadMemoryImpl = resolveWebhookRuntime('loadLeadMemory', loadLeadMemory);
+    const runCommercialPipelineImpl = resolveWebhookRuntime('runCommercialPipeline', runCommercialPipeline);
+    const evolutionSendPresenceImpl = resolveWebhookRuntime('evolutionSendPresence', evolutionSendPresence);
+    const sendImageAndPersistImpl = resolveWebhookRuntime('sendImageAndPersist', sendImageAndPersist);
+    const sendTextHumanImpl = resolveWebhookRuntime('sendTextHuman', sendTextHuman);
+    const logEpisodeImpl = resolveWebhookRuntime('logEpisode', logEpisode);
+    const upsertLeadProfileImpl = resolveWebhookRuntime('upsertLeadProfile', upsertLeadProfile);
+    const getCatalogImpl = resolveWebhookRuntime('getCatalog', getCatalog);
+    const matchBestImpl = resolveWebhookRuntime('matchBest', matchBest);
+    const searchKnowledgeImpl = resolveWebhookRuntime('searchKnowledge', searchKnowledge);
+    const decideAgentActionImpl = resolveWebhookRuntime('decideAgentAction', decideAgentAction);
+    const askGPTImpl = resolveWebhookRuntime('askGPT', askGPT);
+    const setConversationRuleImpl = resolveWebhookRuntime('setConversationRule', setConversationRule);
+    const addConversationNoteImpl = resolveWebhookRuntime('addConversationNote', addConversationNote);
+    const computeHumanDelayImpl = resolveWebhookRuntime('computeHumanDelay', computeHumanDelay);
+    const logConversationDecision = resolveWebhookRuntime('logConversationDecision', defaultConversationDecisionLogger);
+
     const number = remoteJid.split('@')[0];
 
     // Do not respond to admin/test numbers.
@@ -947,7 +1054,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // Contact rule check
     try {
-      const rule = await getContactRule(number);
+      const rule = await getContactRuleImpl(number);
       if (rule && rule !== 'ON') {
         const e = aggregators.get(key);
         if (e?.timer) clearTimeout(e.timer);
@@ -961,7 +1068,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // Conversation rule check
     try {
-      const convRule = await getConversationRule(instance, remoteJid);
+      const convRule = await getConversationRuleImpl(instance, remoteJid);
       if (convRule && convRule !== 'ON') {
         const e = aggregators.get(key);
         if (e?.timer) clearTimeout(e.timer);
@@ -974,14 +1081,14 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     }
 
     // Conversation state
-    const stateRaw: ConvState = await getState(instance, remoteJid);
+    const stateRaw: ConvState = await getStateImpl(instance, remoteJid);
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
     const resetOperationalContext = shouldResetOperationalContext(rawText);
     let suppressVehicleCarryover = resetOperationalContext || Boolean((stateRaw as any)._suppressVehicleCarryover);
 
     // ── Lead memory: start async load in parallel (never blocks) ─────────────
-    const memoryPromise = loadLeadMemory(instance, remoteJid);
+    const memoryPromise = loadLeadMemoryImpl(instance, remoteJid);
 
     // Context timeout: si estuvo inactivo >30 min, limpiar contexto de búsqueda acumulado.
     const CONTEXT_TTL_MS = Number(process.env.CONTEXT_TTL_MS ?? String(30 * 60 * 1000)); // default 30 min
@@ -1024,6 +1131,10 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     if (operationalRestart) {
       const reason = resetOperationalContext ? 'operational_reset' : 'topic_change';
       console.log(`[webhooks] ${reason} detected for ${remoteJid.slice(0, 12)} — resetting operational context`);
+      logConversationDecision({
+        continuedThread: false,
+        usedUpdatedContext: false,
+      });
     }
 
     // ── Pending context restore: handle response to greeting's "¿Seguís con eso?" ──
@@ -1129,7 +1240,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     // ── Fase 4: Pipeline comercial inteligente ────────────────────────────────
     // Autoridad única de scoring — reemplaza computeLeadScoreBreakdown.
     // Async en persistencia — nunca bloquea la respuesta principal.
-    const commercialResult = runCommercialPipeline(
+    const commercialResult = runCommercialPipelineImpl(
       rawText,
       extracted,
       remoteJid,
@@ -1170,31 +1281,39 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     const lastMedia = (aggEntry as any)?.lastMedia ?? null;
 
     const scheduleReply = (reply: string, nextState: any, options?: { imageUrl?: string; handoff?: boolean }) => {
-      const delayMs = computeHumanDelay(reply);
-      void evolutionSendPresence(instance, number, 'composing', Math.min(delayMs, 5000)).catch(() => {});
+      const delayMs = computeHumanDelayImpl(reply);
+      void evolutionSendPresenceImpl(instance, number, 'composing', Math.min(delayMs, 5000)).catch(() => {});
 
       const timer = setTimeout(async () => {
         const sentIso = new Date().toISOString();
         const shouldMoveToHuman = Boolean(options?.handoff || nextState?.agent?.handoffRecommended || nextState?.last_intent === 'handoff');
         try {
-          // Validate image URL before sending: must be http(s) and not obviously wrong
+          // Guardrail comercial: no adjuntar imagen salvo pedido explícito del cliente.
           const rawImageUrl = options?.imageUrl;
-          const validImageUrl = rawImageUrl && /^https?:\/\/.{10,}/.test(rawImageUrl) ? rawImageUrl : undefined;
+          const validImageUrl = wantsVehicleMedia(rawText) && rawImageUrl && /^https?:\/\/.{10,}/.test(rawImageUrl)
+            ? rawImageUrl
+            : undefined;
+          if (rawImageUrl && !validImageUrl) {
+            logConversationDecision({
+              blockedAutoMedia: true,
+              continuedThread: false,
+            });
+          }
           if (validImageUrl) {
-            await sendImageAndPersist(instance, remoteJid, validImageUrl, reply, shouldMoveToHuman ? {
+            await sendImageAndPersistImpl(instance, remoteJid, validImageUrl, reply, shouldMoveToHuman ? {
               handoff: true,
               ticketStatus: 'open',
               botMode: 'HUMAN_ONLY'
             } : undefined);
           } else {
-            await sendTextHuman(instance, remoteJid, reply, shouldMoveToHuman ? {
+            await sendTextHumanImpl(instance, remoteJid, reply, shouldMoveToHuman ? {
               handoff: true,
               ticketStatus: 'open',
               botMode: 'HUMAN_ONLY'
             } : undefined);
           }
 
-          await setState(instance, remoteJid, {
+          await setStateImpl(instance, remoteJid, {
             ...nextState,
             lastBotAt: sentIso,
             last_bot_reply_at: sentIso,
@@ -1212,7 +1331,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               ? nextState.last_variant.trim()
               : undefined;
             if (rawText && reply) {
-              await logEpisode({
+              await logEpisodeImpl({
                 instance, remoteJid, channel: 'whatsapp',
                 user_text: rawText, reply_text: reply,
                 intent, variant, sources, extracted: extractedObj, missing_fields: missingFields
@@ -1297,7 +1416,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           const extractedCta = extractCtaFromReply(reply);
           const hasVisitInterest = detectVisitInterest(rawText);
 
-          void upsertLeadProfile({
+          void upsertLeadProfileImpl({
             instance,
             remoteJid,
             extracted: nextState?.extracted ?? extracted,
@@ -1329,7 +1448,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
           const sock = getSocket();
           if (sock) {
-            sock.emit('send.message', { instance, number, text: reply, imageUrl: options?.imageUrl ?? null });
+            sock.emit('send.message', { instance, number, text: reply, imageUrl: validImageUrl ?? null });
           }
         } catch (err) {
           console.error(err);
@@ -1354,7 +1473,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     }
 
     // Lazy-load catalog: only fetch when the message could need vehicle data
-    const catalog = await getCatalog();
+    const catalog = await getCatalogImpl();
 
     // ── Handoff detection ───────────────────────────────────────────────────
     // v3: urgencia temporal distinguida de urgencia adjetival.
@@ -1425,7 +1544,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       }));
 
       try {
-        await setConversationRule(instance, remoteJid, 'HUMAN_ONLY');
+        await setConversationRuleImpl(instance, remoteJid, 'HUMAN_ONLY');
         const pairs = Object.entries(extracted || {})
           .filter(([_, v]) => v !== undefined && v !== null && String(v).trim() !== '')
           .slice(0, 12)
@@ -1437,7 +1556,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           commercialResult.suggestion.suggestedAction ? `Acción sugerida: ${commercialResult.suggestion.suggestedAction.slice(0, 100)}` : null,
           commercialResult.suggestion.humanHandoffReason ? `Motivo handoff: ${commercialResult.suggestion.humanHandoffReason.slice(0, 100)}` : null,
         ].filter(Boolean).join(' | ');
-        await addConversationNote(instance, remoteJid,
+        await addConversationNoteImpl(instance, remoteJid,
           `Handoff automático [${handoffReason}]. Texto: "${rawText.slice(0, 140)}"\nDatos: ${pairs.join(' | ') || 'n/a'}\n${commercialNote}`);
       } catch (err) {
         console.error('Failed to set conversation rule on handoff', err);
@@ -1599,7 +1718,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           ].join('\n');
 
           try {
-            await addConversationNote(instance, remoteJid,
+            await addConversationNoteImpl(instance, remoteJid,
               `Simulación financiación: precio=${sim.price} entrada=${sim.downPayment} meses=${sim.months} apr=${apr} cuota=${Math.round(sim.monthly)}`
             );
           } catch { /* ignore */ }
@@ -1640,10 +1759,15 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     const lastHitsAtStr: string | undefined = (state as any).last_hits_at;
     const lastHitsAt = lastHitsAtStr ? Date.parse(lastHitsAtStr) : NaN;
     const lastHitsFresh = lastHits.length > 0 && !Number.isNaN(lastHitsAt) && now - lastHitsAt < 20 * 60 * 1000;
+    const currentSearchCtx = nextSearchCtx;
+    const lastHitItems = lastHitsFresh
+      ? catalog.filter((it: any) => lastHits.includes(it.id))
+      : [];
     const opt = extractOptionNumber(rawText);
     const asksPriceQuick = /(precio|cuanto|vale|valor|sale)/i.test(rawText);
 
     if (lastHitsFresh) {
+      const mentionedLastHit = selectMentionedVehicle(rawText, lastHitItems);
       if (opt && opt >= 1 && opt <= lastHits.length) {
         const selectedId = lastHits[opt - 1];
         const item = catalog.find((x) => x.id === selectedId);
@@ -1658,17 +1782,34 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           { ...state, stage: 'idle', last_intent: 'ask_price_which' } as any);
         return;
       }
+      if (isVehicleDetailsRequest(rawText)) {
+        const item = mentionedLastHit ?? (lastHitItems.length === 1 ? lastHitItems[0] : null);
+        if (item) {
+          logConversationDecision({
+            continuedThread: true,
+            followUpDetected: true,
+            usedUpdatedContext: true,
+            resolvedVehicleSource: mentionedLastHit ? 'last_hits_mention' : 'last_hits_single',
+          });
+          scheduleReply(
+            buildVehicleDetailReply(item),
+            { ...state, stage: 'idle', last_intent: 'vehicle_details_followup', last_hits: [item.id], last_hits_at: nowIso } as any,
+            { imageUrl: (item as any).image ?? undefined }
+          );
+          return;
+        }
+      }
     }
 
     // ── Multi-turn refinement: if we just showed product results and user adds filters,
     // refine using accumulated search_context instead of starting from scratch.
     const prevIntent = String((state as any).last_intent || '');
-    const hasSearchCtx = !!(state.search_context && hasUsefulSearchContext(state.search_context));
+    const hasSearchCtx = !!(currentSearchCtx && hasUsefulSearchContext(currentSearchCtx));
     const looksLikeRefineOnly = !/(busco|quiero|tenes|tienes|hay|mostrame|mostrar|opcion|opci[oó]n)/i.test(rawText)
       && /\b(20\d{2}|19\d{2}|manual|autom[aá]t|cvt|dsg|nafta|diesel|gasoil|gnc|suv|pickup|hatch|sedan|hasta|m[aá]ximo|palos|mil|usd|dolares?)\b/i.test(rawText);
 
-    if ((prevIntent === 'product_results' || prevIntent === 'product_results_single') && hasSearchCtx && looksLikeRefineOnly) {
-      const refined = await filterCatalogByContext(catalog, state.search_context);
+    if ((prevIntent === 'product_results' || prevIntent === 'product_results_single') && hasSearchCtx && (isSearchRefinementMessage(rawText) || looksLikeRefineOnly)) {
+      const refined = await filterCatalogByContext(catalog, currentSearchCtx);
       const baseHits = refined.length > 0
         ? refined.slice(0, 3)
         : searchCatalog(catalog, rawText, 3);
@@ -1684,8 +1825,16 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           last_query: (state.last_query || '') + ' | refine: ' + rawText,
           last_hits: hits.map((it) => it.id).slice(0, 3),
           last_hits_at: nowIso,
-          extracted
+          extracted,
+          search_context: currentSearchCtx,
+          search_context_at: nowIso
         } as any;
+        logConversationDecision({
+          continuedThread: true,
+          followUpDetected: true,
+          usedUpdatedContext: true,
+          resolvedVehicleSource: 'search_context',
+        });
         scheduleReply(reply, nextState);
         return;
       }
@@ -1698,7 +1847,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // ── INTELLIGENCE LAYER: check FAQ / Policy / Playbook FIRST ────────────
     // This is the key improvement — knowledge base is now wired into every message.
-    const knowledgeMatch = await matchBest(rawText);
+      const knowledgeMatch = await matchBestImpl(rawText);
     if (knowledgeMatch && knowledgeMatch.score >= 0.5) {
       const { type, row, score: kScore } = knowledgeMatch;
 
@@ -1754,13 +1903,13 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // ── Awaiting query from previous turn ───────────────────────────────────
     if (state.stage === 'awaiting_query') {
-      const rawMatches = await getVehicleMatches(catalog, rawText, state.search_context, 3);
+      const rawMatches = await getVehicleMatches(catalog, rawText, currentSearchCtx, 3);
       const guarded = applyVehicleGuardrails(rawText, rawMatches.hits);
       const matches = { ...rawMatches, hits: guarded.hits };
       if (matches.hits.length || matches.usedBudgetFallback) {
         if (matches.hits.length === 1 && !matches.usedBudgetFallback) {
           const item = matches.hits[0];
-          const detailReply = buildVehicleReply(rawText, matches, state.search_context);
+          const detailReply = buildVehicleReply(rawText, matches, currentSearchCtx);
           const nextState: ConvState = { ...state, stage: 'idle', last_intent: 'product_results_single', last_query: rawText, last_hits: [item.id], last_hits_at: nowIso };
           if (detailReply.trim()) {
             scheduleReply(detailReply, nextState, { imageUrl: (item as any).image ?? undefined });
@@ -1768,7 +1917,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           }
           // buildVehicleReply returned empty → fall through to intent detection
         } else {
-          reply = buildVehicleReply(rawText, matches, state.search_context);
+          reply = buildVehicleReply(rawText, matches, currentSearchCtx);
           if (reply.trim()) {
             newState.last_intent = 'product_results';
             newState.last_query = rawText;
@@ -1783,7 +1932,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         }
       }
       if (!reply) {
-        const nextQuestion = buildWideSearchFallback({ ...(state.search_context || {}), ...extracted });
+        const nextQuestion = buildWideSearchFallback(currentSearchCtx);
         reply = lastMedia && !String(rawText || '').trim()
           ? 'Te vi la imagen. ¿Qué modelo o marca querés mirar?'
           : nextQuestion;
@@ -1804,6 +1953,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       const normText = normalize(rawText);
       const hasContent = normText.length >= 3 && /[a-z0-9]/i.test(normText);
       const stage = state.stage as ConvState['stage'];
+      const activeConversation = !contextExpired && (lastHitsFresh || hasUsefulSearchContext(currentSearchCtx));
+      const keepAliveMessage = isConversationKeepAliveMessage(rawText);
 
       // Coherence check: if user references a vehicle from last_hits, skip fresh search.
       // This prevents "no tengo X" when X was shown moments ago in the same conversation.
@@ -1817,7 +1968,21 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
       const shouldSearch = !isAboutLastHit && (stage === 'awaiting_query' || looksLikeGamingQuery || looksLikeVehicleQuery || hasStructuredSearchNeed(extracted) || (asksPrice && hasContent));
 
-      if (isGreeting) {
+      if ((isGreeting || keepAliveMessage) && activeConversation) {
+        const recentVehicle = selectMentionedVehicle(rawText, lastHitItems) ?? lastHitItems[0] ?? null;
+        reply = recentVehicle
+          ? `Todo bien. Seguimos con ${recentVehicle.name}. Si querés, te paso más detalle o vemos otra alternativa.`
+          : 'Todo bien. Seguimos con la búsqueda que veníamos armando. Si querés, lo afino por kilómetros, caja o una opción puntual.';
+        newState.stage = 'idle';
+        newState.last_intent = 'conversation_keepalive';
+        logConversationDecision({
+          continuedThread: true,
+          followUpDetected: false,
+          usedUpdatedContext: true,
+          resolvedVehicleSource: recentVehicle ? 'last_hits' : 'search_context',
+        });
+
+      } else if (isGreeting) {
         // v3: si el cliente vuelve después de que el contexto expiró, recordarle su búsqueda anterior.
         // FIX: NO restaurar el contexto automáticamente — guardarlo como "pendiente".
         // Se restaura solo si el usuario responde afirmativamente en el siguiente turno.
@@ -1858,7 +2023,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         newState.last_intent = 'smalltalk';
 
       } else if (asksDemand && !looksLikeVehicleQuery && !hasStructuredSearchNeed(extracted)) {
-        const nextQuestion = getNextUsefulSearchQuestion(state.search_context || {});
+        const nextQuestion = getNextUsefulSearchQuestion(currentSearchCtx || {});
         reply = `Perfecto. ${nextQuestion}`;
         newState.stage = 'awaiting_query';
         newState.last_intent = 'demand_intake';
@@ -1943,7 +2108,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
           // Best-effort: persist a note for the operator.
           try {
-            await addConversationNote(instance, remoteJid, `Simulación financiación: precio=${sim.price} entrada=${sim.downPayment} meses=${sim.months} apr=${apr} cuota=${Math.round(sim.monthly)}`);
+            await addConversationNoteImpl(instance, remoteJid, `Simulación financiación: precio=${sim.price} entrada=${sim.downPayment} meses=${sim.months} apr=${apr} cuota=${Math.round(sim.monthly)}`);
           } catch {
             // ignore
           }
@@ -1969,7 +2134,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         }
         newState.last_intent = 'tradein';
 
-      } else if (asksPrice && !hasStructuredSearchNeed(extracted) && !hasUsefulSearchContext(state.search_context ?? {})) {
+      } else if (asksPrice && !hasStructuredSearchNeed(extracted) && !hasUsefulSearchContext(currentSearchCtx ?? {})) {
         // Solo pedir modelo si NO tenemos contexto — si ya sabemos la marca/modelo, buscamos directo
         reply = pickOne([
           'Decime qué modelo tenés en mente y te confirmo precio y disponibilidad.',
@@ -1980,13 +2145,13 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         newState.last_intent = 'price_request';
 
       } else if (shouldSearch) {
-        const rawMatches = await getVehicleMatches(catalog, rawText, state.search_context, 3);
+        const rawMatches = await getVehicleMatches(catalog, rawText, currentSearchCtx, 3);
         const guarded = applyVehicleGuardrails(rawText, rawMatches.hits);
         const matches = { ...rawMatches, hits: guarded.hits };
         if (matches.hits.length || matches.usedBudgetFallback) {
           if (matches.hits.length === 1 && !matches.usedBudgetFallback) {
             const item = matches.hits[0];
-            const detailReply = buildVehicleReply(rawText, matches, state.search_context);
+            const detailReply = buildVehicleReply(rawText, matches, currentSearchCtx);
             if (detailReply.trim()) {
               const nextState: ConvState = { ...state, stage: 'idle', last_intent: 'product_results_single', last_query: rawText, last_hits: [item.id], last_hits_at: nowIso };
               scheduleReply(detailReply, nextState, { imageUrl: (item as any).image ?? undefined });
@@ -1994,7 +2159,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             }
             // Empty detailReply → fall through to next question
           } else {
-            const candidateReply = buildVehicleReply(rawText, matches, state.search_context);
+            const candidateReply = buildVehicleReply(rawText, matches, currentSearchCtx);
             if (candidateReply.trim()) {
               reply = candidateReply;
               newState.last_intent = 'product_results';
@@ -2020,24 +2185,27 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             // reply queda vacío → el código cae al agente en la rama else de shouldSearch? No,
             // shouldSearch es un else-if. Usamos el flag para mejorarlo en el agente call abajo.
             // Por ahora damos una respuesta consultiva como fallback de shouldSearch.
-            const ctx = { ...(state.search_context || {}), ...extracted };
+            const ctx = currentSearchCtx;
             const hasSpecificTurnEntity = explicitVehicleRequestedThisTurn;
             const activeEntityEvidence = hasSpecificTurnEntity
-              ? hasActiveVehicleEvidence(explicitTurnEntity, lastHitItems, prevIntent, state.search_context)
+              ? hasActiveVehicleEvidence(explicitTurnEntity, lastHitItems, prevIntent, currentSearchCtx)
               : false;
             if (hasSpecificTurnEntity && isVehicleDetailsRequest(rawText) && !activeEntityEvidence) {
               const vehicleRef = formatVehicleReference(explicitTurnEntity);
-              const similarKind = ctx?.bodywork === 'sedan' || explicitTurnEntity.model ? 'sedanes similares' : 'opciones similares';
-              reply = `¿Te referís a ${vehicleRef} o querés ver ${similarKind}?`;
+              reply = buildNoStockReply({ vehicleLabel: vehicleRef });
             } else if (hasSpecificTurnEntity) {
               const what = formatVehicleReference(explicitTurnEntity);
-              reply = pickOne([
-                `Ahora mismo no tengo ${what} en stock, pero puedo anotarte para avisarte cuando entre. ¿Querés que te anote o preferís ver alternativas parecidas?`,
-                `No tengo ${what} disponible en este momento. ¿Te sirve que te muestre algo similar o preferís esperar a que entre stock?`,
-              ]);
+              reply = buildNoStockReply({ vehicleLabel: what });
             } else {
               reply = buildWideSearchFallback(ctx);
             }
+            logConversationDecision({
+              continuedThread: !operationalRestart,
+              followUpDetected: hasSpecificTurnEntity || hasSearchCtx,
+              usedUpdatedContext: Boolean(currentSearchCtx && hasUsefulSearchContext(currentSearchCtx)),
+              resolvedVehicleSource: hasSpecificTurnEntity ? 'explicit_turn_entity' : 'search_context',
+              safeNoStockReply: true,
+            });
             newState.last_intent = 'no_match';
             newState.last_query = rawText;
             newState.stage = 'awaiting_query';
@@ -2047,7 +2215,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
       } else {
         // Fallback 1: full-text knowledge search
-        const kResults = await searchKnowledge(rawText, 2);
+        const kResults = await searchKnowledgeImpl(rawText, 2);
         if (kResults.length > 0 && kResults[0].rank > 0) {
           const snippet = kResults[0].snippet;
           // Only use snippet if it passes the guardrail (snippets from policies can be internal)
@@ -2193,7 +2361,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             // Policy context captured earlier (if a policy matched but we didn't send its body)
             const policyContext: string | undefined = (newState as any)._policyContext ?? (state as any)._policyContext ?? undefined;
 
-            const agentDecision = await decideAgentAction({
+            const agentDecision = await decideAgentActionImpl({
               dealershipName: process.env.DEALERSHIP_NAME ?? undefined,
               userMessage: rawText,
               history,
@@ -2280,7 +2448,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 { role: 'assistant', content: agentDecision.suggestedReply }
               ].slice(-12);
               if (agentDecision.handoffRecommended) {
-                try { await setConversationRule(instance, remoteJid, 'HUMAN_ONLY'); } catch {}
+                try { await setConversationRuleImpl(instance, remoteJid, 'HUMAN_ONLY'); } catch {}
               }
               void logDecision({
                 instance,
@@ -2303,7 +2471,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 faqSummary: faqSummary || undefined
               });
 
-              const gptReply = await askGPT({ systemPrompt, userMessage: rawText, history });
+              const gptReply = await askGPTImpl({ systemPrompt, userMessage: rawText, history });
 
               if (gptReply) {
                 const gptGr = applyGuardrail(gptReply, { source: 'gpt', lastBotReply });
@@ -2369,7 +2537,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       const lastFb = Date.parse(lastFallbackAt);
       if (!Number.isNaN(lastFb) && now - lastFb < env.fallbackCooldownMs) {
         // Construir lista de preguntas filtrando las que ya fueron respondidas
-        const ctx = state.search_context ?? {};
+        const ctx = (newState as any).search_context ?? state.search_context ?? {};
         const fallbackQuestions: string[] = [];
 
         // Solo preguntar marca/modelo si no se conoce ninguno de los dos
@@ -2432,7 +2600,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           issues: finalGr.issues,
           timestamp: new Date().toISOString(),
         }));
-        void setConversationRule(instance, remoteJid, 'HUMAN_ONLY').catch(() => {});
+        void setConversationRuleImpl(instance, remoteJid, 'HUMAN_ONLY').catch(() => {});
         reply = getGuardrailFallback();
         isFallback = true;
         (newState as any).last_intent = 'handoff';
