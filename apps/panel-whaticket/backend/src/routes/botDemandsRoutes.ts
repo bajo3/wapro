@@ -1,54 +1,16 @@
 import { Router } from "express";
-import fetch from "node-fetch";
 import isAuth from "../middleware/isAuth";
 import AppError from "../errors/AppError";
+import { forwardBotAdmin } from "../services/BotServices/forwardBotAdmin";
 
-const BOT_URL = String(process.env.BOT_URL || "").replace(/\/$/, "");
-const BOT_ADMIN_TOKEN = String(process.env.BOT_ADMIN_TOKEN || "");
-
-function ensureConfigured() {
-  if (!BOT_URL || !BOT_ADMIN_TOKEN) {
-    throw new AppError("ERR_BOT_NOT_CONFIGURED", 503);
-  }
-}
-
-async function forward(req: any, path: string) {
-  ensureConfigured();
-  const url = `${BOT_URL}${path}`;
-  const method = req.method;
-  const body = method === "GET" || method === "HEAD" ? undefined : JSON.stringify(req.body ?? {});
-  const timeoutMs = Number(process.env.BOT_HTTP_TIMEOUT_MS ?? "15000");
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
-
-  let r: any;
-  try {
-    r = await fetch(url, {
-      method,
-      headers: {
-        "content-type": "application/json",
-        "x-admin-token": BOT_ADMIN_TOKEN
-      } as any,
-      body,
-      signal: controller.signal as any
-    } as any);
-  } catch (err: any) {
-    if (String(err?.name) === "AbortError") {
-      throw new AppError("ERR_BOT_TIMEOUT", 504);
-    }
-    throw err;
-  } finally {
-    clearTimeout(t);
-  }
-
-  const text = await r.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = text;
-  }
-  return { status: r.status, ok: r.ok, data };
+async function forward(req: any, path: string, query?: Record<string, string | number | boolean | undefined>) {
+  return forwardBotAdmin({
+    path,
+    method: req.method,
+    body: req.body,
+    query,
+    context: "botDemandsRoutes"
+  });
 }
 
 const botDemandsRoutes = Router();
@@ -63,9 +25,10 @@ botDemandsRoutes.use((req, _res, next) => {
 
 // List demands
 botDemandsRoutes.get("/bot/demands", async (req, res) => {
-  const status = String(req.query.status ?? "open");
-  const limit = String(req.query.limit ?? "100");
-  const r = await forward(req, `/admin/vehicle-demands?status=${encodeURIComponent(status)}&limit=${encodeURIComponent(limit)}`);
+  const r = await forward(req, "/admin/vehicle-demands", {
+    status: String(req.query.status ?? "open"),
+    limit: String(req.query.limit ?? "100")
+  });
   return res.status(r.status).json(r.data);
 });
 
@@ -92,16 +55,18 @@ botDemandsRoutes.post("/bot/demands/:id/close", async (req, res) => {
 // Matches
 botDemandsRoutes.get("/bot/demands/:id/matches", async (req, res) => {
   const id = encodeURIComponent(String(req.params.id));
-  const limit = String(req.query.limit ?? "20");
-  const r = await forward(req, `/admin/vehicle-demands/${id}/matches?limit=${encodeURIComponent(limit)}`);
+  const r = await forward(req, `/admin/vehicle-demands/${id}/matches`, {
+    limit: String(req.query.limit ?? "20")
+  });
   return res.status(r.status).json(r.data);
 });
 
 // Recontact history
 botDemandsRoutes.get("/bot/demands/:id/recontacts", async (req, res) => {
   const id = encodeURIComponent(String(req.params.id));
-  const limit = String(req.query.limit ?? "50");
-  const r = await forward(req, `/admin/vehicle-demands/${id}/recontacts?limit=${encodeURIComponent(limit)}`);
+  const r = await forward(req, `/admin/vehicle-demands/${id}/recontacts`, {
+    limit: String(req.query.limit ?? "50")
+  });
   return res.status(r.status).json(r.data);
 });
 

@@ -1,39 +1,16 @@
 import { Router } from "express";
-import fetch from "node-fetch";
 import isAuth from "../middleware/isAuth";
 import AppError from "../errors/AppError";
+import { forwardBotAdmin } from "../services/BotServices/forwardBotAdmin";
 
-const BOT_URL = String(process.env.BOT_URL || "").replace(/\/$/, "");
-const BOT_ADMIN_TOKEN = String(process.env.BOT_ADMIN_TOKEN || "");
-
-function ensureConfigured() {
-  if (!BOT_URL || !BOT_ADMIN_TOKEN) {
-    throw new AppError("ERR_BOT_NOT_CONFIGURED", 503);
-  }
-}
-
-async function forward(req: any, path: string) {
-  ensureConfigured();
-  const url = `${BOT_URL}${path}`;
-  const method = req.method;
-  const body = method === "GET" || method === "HEAD" ? undefined : JSON.stringify(req.body ?? {});
-  const r = await fetch(url, {
-    method,
-    headers: {
-      "content-type": "application/json",
-      "x-admin-token": BOT_ADMIN_TOKEN
-    } as any,
-    body
+async function forward(req: any, path: string, query?: Record<string, string | number | boolean | undefined>) {
+  return forwardBotAdmin({
+    path,
+    method: req.method,
+    body: req.body,
+    query,
+    context: "botIntelligenceRoutes"
   });
-
-  const text = await r.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = text;
-  }
-  return { status: r.status, ok: r.ok, data };
 }
 
 const botIntelligenceRoutes = Router();
@@ -124,8 +101,9 @@ botIntelligenceRoutes.delete("/bot/intelligence/examples/:id", async (req, res) 
 
 // Decisions
 botIntelligenceRoutes.get("/bot/intelligence/decisions", async (req, res) => {
-  const limit = req.query.limit ? `?limit=${encodeURIComponent(String(req.query.limit))}` : "";
-  const r = await forward(req, `/admin/intelligence/decisions${limit}`);
+  const r = await forward(req, "/admin/intelligence/decisions", {
+    limit: req.query.limit ? String(req.query.limit) : undefined
+  });
   return res.status(r.status).json(r.data);
 });
 
@@ -166,13 +144,12 @@ botIntelligenceRoutes.get("/bot/learning/stats", async (req, res) => {
 
 // Listar capturas de conversación para revisión
 botIntelligenceRoutes.get("/bot/learning/captures", async (req, res) => {
-  const params = new URLSearchParams();
-  if (req.query.status) params.set("status", String(req.query.status));
-  if (req.query.limit)  params.set("limit",  String(req.query.limit));
-  if (req.query.offset) params.set("offset", String(req.query.offset));
-  if (req.query.intent) params.set("intent", String(req.query.intent));
-  const qs = params.toString() ? `?${params.toString()}` : "";
-  const r = await forward(req, `/admin/learning/captures${qs}`);
+  const r = await forward(req, "/admin/learning/captures", {
+    status: req.query.status ? String(req.query.status) : undefined,
+    limit: req.query.limit ? String(req.query.limit) : undefined,
+    offset: req.query.offset ? String(req.query.offset) : undefined,
+    intent: req.query.intent ? String(req.query.intent) : undefined
+  });
   return res.status(r.status).json(r.data);
 });
 
@@ -208,11 +185,10 @@ botIntelligenceRoutes.post("/bot/learning/flag/:id", async (req, res) => {
 
 // Previsualizar ejemplos few-shot dinámicos
 botIntelligenceRoutes.get("/bot/learning/examples/preview", async (req, res) => {
-  const params = new URLSearchParams();
-  if (req.query.intent) params.set("intent", String(req.query.intent));
-  if (req.query.max)    params.set("max",    String(req.query.max));
-  const qs = params.toString() ? `?${params.toString()}` : "";
-  const r = await forward(req, `/admin/learning/examples/preview${qs}`);
+  const r = await forward(req, "/admin/learning/examples/preview", {
+    intent: req.query.intent ? String(req.query.intent) : undefined,
+    max: req.query.max ? String(req.query.max) : undefined
+  });
   return res.status(r.status).json(r.data);
 });
 
@@ -220,13 +196,12 @@ botIntelligenceRoutes.get("/bot/learning/examples/preview", async (req, res) => 
 
 // Listar patrones de memoria
 botIntelligenceRoutes.get("/bot/learning/memory", async (req, res) => {
-  const params = new URLSearchParams();
-  if (req.query.type)   params.set("type",   String(req.query.type));
-  if (req.query.status) params.set("status", String(req.query.status));
-  if (req.query.limit)  params.set("limit",  String(req.query.limit));
-  if (req.query.offset) params.set("offset", String(req.query.offset));
-  const qs = params.toString() ? `?${params.toString()}` : "";
-  const r = await forward(req, `/admin/learning/memory${qs}`);
+  const r = await forward(req, "/admin/learning/memory", {
+    type: req.query.type ? String(req.query.type) : undefined,
+    status: req.query.status ? String(req.query.status) : undefined,
+    limit: req.query.limit ? String(req.query.limit) : undefined,
+    offset: req.query.offset ? String(req.query.offset) : undefined
+  });
   return res.status(r.status).json(r.data);
 });
 
@@ -257,12 +232,11 @@ botIntelligenceRoutes.post("/bot/learning/memory", async (req, res) => {
 // ─── Fase 5: Trazabilidad ─────────────────────────────────────────────────────
 
 botIntelligenceRoutes.get("/bot/trace", async (req, res) => {
-  const params = new URLSearchParams();
-  if (req.query.limit) params.set("limit", String(req.query.limit));
-  if (req.query.remoteJid) params.set("remoteJid", String(req.query.remoteJid));
-  if (req.query.onlyBlocked) params.set("onlyBlocked", String(req.query.onlyBlocked));
-  const qs = params.toString() ? `?${params.toString()}` : "";
-  const r = await forward(req, `/admin/trace${qs}`);
+  const r = await forward(req, "/admin/trace", {
+    limit: req.query.limit ? String(req.query.limit) : undefined,
+    remoteJid: req.query.remoteJid ? String(req.query.remoteJid) : undefined,
+    onlyBlocked: req.query.onlyBlocked ? String(req.query.onlyBlocked) : undefined
+  });
   return res.status(r.status).json(r.data);
 });
 
@@ -274,14 +248,16 @@ botIntelligenceRoutes.get("/bot/trace/:messageId", async (req, res) => {
 // ─── Fase 5: Métricas ─────────────────────────────────────────────────────────
 
 botIntelligenceRoutes.get("/bot/metrics/summary", async (req, res) => {
-  const qs = req.query.windowHours ? `?windowHours=${encodeURIComponent(String(req.query.windowHours))}` : "";
-  const r = await forward(req, `/admin/metrics/summary${qs}`);
+  const r = await forward(req, "/admin/metrics/summary", {
+    windowHours: req.query.windowHours ? String(req.query.windowHours) : undefined
+  });
   return res.status(r.status).json(r.data);
 });
 
 botIntelligenceRoutes.get("/bot/metrics/timeseries", async (req, res) => {
-  const qs = req.query.hours ? `?hours=${encodeURIComponent(String(req.query.hours))}` : "";
-  const r = await forward(req, `/admin/metrics/timeseries${qs}`);
+  const r = await forward(req, "/admin/metrics/timeseries", {
+    hours: req.query.hours ? String(req.query.hours) : undefined
+  });
   return res.status(r.status).json(r.data);
 });
 
@@ -305,8 +281,9 @@ botIntelligenceRoutes.get("/bot/health/bot", async (req, res) => {
 // ─── Fase 5: Evaluaciones ─────────────────────────────────────────────────────
 
 botIntelligenceRoutes.get("/bot/eval/runs", async (req, res) => {
-  const qs = req.query.limit ? `?limit=${encodeURIComponent(String(req.query.limit))}` : "";
-  const r = await forward(req, `/admin/eval/runs${qs}`);
+  const r = await forward(req, "/admin/eval/runs", {
+    limit: req.query.limit ? String(req.query.limit) : undefined
+  });
   return res.status(r.status).json(r.data);
 });
 

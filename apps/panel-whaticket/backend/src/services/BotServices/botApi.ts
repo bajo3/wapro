@@ -1,6 +1,5 @@
-import fetch from "node-fetch";
-
 import { logger } from "../../utils/logger";
+import { forwardBotAdmin } from "./forwardBotAdmin";
 
 const BOT_URL = String(process.env.BOT_URL || "").replace(/\/$/, "");
 const BOT_WEBHOOK_SECRET = String(process.env.BOT_WEBHOOK_SECRET || "");
@@ -56,23 +55,20 @@ export async function botSetConversationMode(params: {
   }
 
   try {
-    const url = `${BOT_URL}/admin/conversation-rules`;
-    const r = await fetch(url, {
+    const r = await forwardBotAdmin({
+      path: "/admin/conversation-rules",
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-admin-token": BOT_ADMIN_TOKEN
-      } as any,
-      body: JSON.stringify({
+      body: {
         instance: params.instance,
         remoteJid: params.remoteJid,
         botMode: params.botMode,
         notes: params.notes
-      })
+      },
+      context: "botSetConversationMode"
     });
 
     if (!r.ok) {
-      const text = await r.text().catch(() => "");
+      const text = typeof r.data === "string" ? r.data : JSON.stringify(r.data ?? {});
       logger.warn({ status: r.status, text }, "botSetConversationMode failed");
       return { ok: false, status: r.status, error: `HTTP ${r.status}: ${text.slice(0, 200)}` };
     }
@@ -91,19 +87,14 @@ export async function botDeleteConversationRule(params: {
   if (!isConfigured() || !BOT_ADMIN_TOKEN) return;
 
   try {
-    const url = `${BOT_URL}/admin/conversation-rules/${encodeURIComponent(
-      params.instance
-    )}/${encodeURIComponent(params.remoteJid)}`;
-
-    const r = await fetch(url, {
+    const r = await forwardBotAdmin({
+      path: `/admin/conversation-rules/${encodeURIComponent(params.instance)}/${encodeURIComponent(params.remoteJid)}`,
       method: "DELETE",
-      headers: {
-        "x-admin-token": BOT_ADMIN_TOKEN
-      } as any
+      context: "botDeleteConversationRule"
     });
 
     if (!r.ok) {
-      const text = await r.text().catch(() => "");
+      const text = typeof r.data === "string" ? r.data : JSON.stringify(r.data ?? {});
       logger.warn({ status: r.status, text }, "botDeleteConversationRule failed");
     }
   } catch (err: any) {
@@ -121,24 +112,21 @@ export async function botIngestEpisode(params: {
   if (!isConfigured() || !BOT_ADMIN_TOKEN) return;
 
   try {
-    const url = `${BOT_URL}/admin/intelligence/episodes/ingest`;
-    const r = await fetch(url, {
+    const r = await forwardBotAdmin({
+      path: "/admin/intelligence/episodes/ingest",
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-admin-token": BOT_ADMIN_TOKEN
-      } as any,
-      body: JSON.stringify({
+      body: {
         channel: params.channel ?? "WHATSAPP",
         contact_id: params.contact_id ?? null,
         user_text: params.user_text,
         reply_text: params.reply_text,
         meta: params.meta ?? {}
-      })
+      },
+      context: "botIngestEpisode"
     });
 
     if (!r.ok) {
-      const text = await r.text().catch(() => "");
+      const text = typeof r.data === "string" ? r.data : JSON.stringify(r.data ?? {});
       logger.warn({ status: r.status, text }, "botIngestEpisode failed");
     }
   } catch (err: any) {

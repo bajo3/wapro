@@ -87,6 +87,15 @@ export function buildAgentSystemPrompt(
     const yr = ctx.year ? String(ctx.year) : `${ctx.minYear ?? '?'}-${ctx.maxYear ?? '?'}`;
     knownFields.push(`año: ${yr}`);
   }
+  if (Array.isArray(ctx.highIntentSignals) && ctx.highIntentSignals.length > 0) {
+    knownFields.push(`señales de alta intención: ${ctx.highIntentSignals.join(', ')}`);
+  }
+  if (Array.isArray(ctx.objectionClassifiers) && ctx.objectionClassifiers.length > 0) {
+    knownFields.push(`objeciones detectadas: ${ctx.objectionClassifiers.join(', ')}`);
+  }
+  if (Array.isArray(ctx.handoffReasons) && ctx.handoffReasons.length > 0) {
+    knownFields.push(`motivos de handoff: ${ctx.handoffReasons.join(', ')}`);
+  }
 
   // ── Flags de intención detectados ───────────────────────────────────────
   const intentFlags: string[] = [];
@@ -95,6 +104,49 @@ export function buildAgentSystemPrompt(
   if (ctx.rangeExpansion) intentFlags.push('EXPANDIR_RANGO: el cliente quiere ver opciones un poco más caras (+15-20% sobre el presupuesto actual)');
   if (ctx.isClosure) intentFlags.push('CIERRE_CONVERSACION: el cliente se despidió o agradeció');
   if (ctx.closingIntent) intentFlags.push('INTENCION_COMPRA: el cliente quiere avanzar — derivar a humano');
+  if (Array.isArray(ctx.highIntentSignals) && ctx.highIntentSignals.includes('final_price_breakdown')) {
+    intentFlags.push(
+      'PRECIO_FINAL_POR_ESCRITO: el cliente pidió precio final/desglose/OTD. ' +
+      'Eso es alta intención. Respondé con transparencia y próximo paso concreto. ' +
+      'No lo trates como regateo molesto.'
+    );
+  }
+  if (Array.isArray(ctx.highIntentSignals) && ctx.highIntentSignals.includes('preapproved_financing')) {
+    intentFlags.push(
+      'FINANCIACION_PROPIA: el cliente mencionó preaprobación, banco propio o financiación externa. ' +
+      'No empujes financiación sin antes aclarar si prioriza cuota mensual o precio final total.'
+    );
+  }
+  if (Array.isArray(ctx.highIntentSignals) && ctx.highIntentSignals.includes('vin_history_inspection_docs')) {
+    intentFlags.push(
+      'MODO_CHECKLIST_USADO: el cliente pidió VIN/historial/inspección/papeles/garantía. ' +
+      'Priorizá confianza y respaldo antes que persuasión comercial.'
+    );
+  }
+  if (Array.isArray(ctx.objectionClassifiers) && ctx.objectionClassifiers.includes('hidden_fees')) {
+    intentFlags.push('OBJECION_FEES_OCULTOS: responder con transparencia, desglose y cargo incluido. No esquivar la pregunta.');
+  }
+  if (Array.isArray(ctx.objectionClassifiers) && ctx.objectionClassifiers.includes('financial_distrust')) {
+    intentFlags.push('OBJECION_DESCONFIANZA_FINANCIERA: evitar prometer tasa/cuota exacta sin dato verificado. Clarificar estructura del negocio.');
+  }
+  if (Array.isArray(ctx.objectionClassifiers) && ctx.objectionClassifiers.includes('history_damage')) {
+    intentFlags.push('OBJECION_HISTORIAL_CHOQUE: hablar de historial/estado/inspección con mucha cautela. No minimizar daño ni “maquillar” la duda.');
+  }
+  if (Array.isArray(ctx.objectionClassifiers) && ctx.objectionClassifiers.includes('inspection')) {
+    intentFlags.push('OBJECION_INSPECCION: ofrecer revisión, historial o paso humano. No desincentivar inspección independiente.');
+  }
+  if (Array.isArray(ctx.objectionClassifiers) && ctx.objectionClassifiers.includes('fuel_maintenance')) {
+    intentFlags.push('OBJECION_CONSUMO_MANTENIMIENTO: responder desde uso y costo futuro. No prometer consumos ni services no verificados.');
+  }
+  if (Array.isArray(ctx.objectionClassifiers) && ctx.objectionClassifiers.includes('fraud_documents')) {
+    intentFlags.push('OBJECION_FRAUDE_PAPELES: cambiar a modo reducción de riesgo. Verificación documental primero, venta después.');
+  }
+  if (Array.isArray(ctx.handoffReasons) && ctx.handoffReasons.length > 0) {
+    intentFlags.push(
+      `HANDOFF_FORZADO: hay disparadores críticos (${ctx.handoffReasons.join(', ')}). ` +
+      'action=ESCALATE_HUMAN y handoffRecommended=true.'
+    );
+  }
   // FIX-05: Flag for ambiguous currency — agent must ask for clarification before filtering catalog
   if (ctx.ambiguousCurrency) intentFlags.push(
     'MONEDA_AMBIGUA: el cliente mencionó un monto sin especificar si son pesos o dólares. ' +
@@ -346,6 +398,10 @@ export function buildAgentSystemPrompt(
     '  • El cliente tiene una objeción de precio que requiere negociación real',
     '  • La conversación lleva más de 8 turnos sin avance',
     '  • El cliente pregunta por financiación específica (banco, cuotas exactas, PGP)',
+    '  • El cliente dice que le rechazaron la financiación externa o que solo aceptan financiación del dealer',
+    '  • El cliente denuncia add-ons obligatorios o cargos obligatorios no transparentados',
+    '  • El cliente menciona daño estructural o choque grave',
+    '  • El cliente marca irregularidad documental, fraude o papeles dudosos',
     'NO derivar todavía cuando:',
     '  • El cliente solo está explorando opciones',
     '  • Todavía hay preguntas de filtro válidas por hacer',

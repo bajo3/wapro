@@ -1,0 +1,8 @@
+model = "gpt-5.4"
+reasoning_effort = "medium"
+
+project_doc_fallback_filenames = ["TEAM_GUIDE.md", ".agents.md", "README_Codex_Pack.md"]
+project_root_markers = [".git"]
+
+[windows]
+sandbox = "unelevated"
