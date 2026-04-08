@@ -104,6 +104,13 @@ export interface ConversationContext {
   needsProfileBuilding: boolean;
 }
 
+export interface BuyerConcernSignals {
+  highIntentSignals: string[];
+  objectionClassifiers: string[];
+  handoffReasons: string[];
+  requiresHumanHandoff: boolean;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function norm(s: string): string {
@@ -130,6 +137,36 @@ const INTENT_RULES: Array<{
   nextAction: NextAction;
   requiresHuman?: boolean;
 }> = [
+  // Deal transparency / final-price requests
+  {
+    intent: 'price_inquiry',
+    subIntent: 'final_price_breakdown',
+    patterns: [
+      /\b(precio\s+final|precio\s+total|precio\s+cerrado|desglose|desglosado|detalle\s+de\s+cargos|cargos\s+incluidos|otd|all[\s-]?in|out\s+the\s+door|por\s+escrito)\b/i,
+    ],
+    confidence: 0.90,
+    nextAction: 'SHOW_STOCK',
+  },
+  // Own financing / pre-approval
+  {
+    intent: 'financing_inquiry',
+    subIntent: 'preapproved_outside_financing',
+    patterns: [
+      /\b(preaprobado|preaprobada|pre approved|pre-approved|credito\s+propio|financiacion\s+propia|financiaci[oó]n\s+propia|mi\s+banco|mi\s+financier[ao]|credit\s+union|outside\s+financing|financiacion\s+externa|financiaci[oó]n\s+externa)\b/i,
+    ],
+    confidence: 0.89,
+    nextAction: 'OFFER_FINANCING',
+  },
+  // Trust verification around VIN / history / inspection / papers
+  {
+    intent: 'general_inquiry',
+    subIntent: 'trust_verification',
+    patterns: [
+      /\b(vin|carfax|historial|service\s+records?|registro\s+de\s+service|papeles|papeles\s+en\s+regla|inspeccion|inspecci[oó]n|ppi|pre\s*purchase\s*inspection|garantia|garant[ií]a)\b/i,
+    ],
+    confidence: 0.86,
+    nextAction: 'CONTINUE_AGENT',
+  },
   // High-priority: closing signals
   {
     intent: 'closing',
@@ -338,6 +375,60 @@ export function analyzeIntent(
     signals,
     nextBestAction: nextAction,
     requiresHuman: best.requiresHuman ?? false,
+  };
+}
+
+const HIGH_INTENT_SIGNAL_RULES: Array<{ key: string; pattern: RegExp }> = [
+  { key: 'final_price_breakdown', pattern: /\b(precio\s+final|precio\s+total|desglose|detalle\s+de\s+cargos|otd|all[\s-]?in|out\s+the\s+door|por\s+escrito)\b/i },
+  { key: 'preapproved_financing', pattern: /\b(preaprobado|preaprobada|credito\s+propio|financiacion\s+propia|financiaci[oó]n\s+propia|mi\s+banco|credit\s+union|outside\s+financing|financiacion\s+externa|financiaci[oó]n\s+externa)\b/i },
+  { key: 'vin_history_inspection_docs', pattern: /\b(vin|carfax|historial|service\s+records?|registro\s+de\s+service|inspeccion|inspecci[oó]n|ppi|papeles|papeles\s+en\s+regla|garantia|garant[ií]a)\b/i },
+];
+
+const OBJECTION_CLASSIFIER_RULES: Array<{ key: string; pattern: RegExp }> = [
+  { key: 'hidden_fees', pattern: /\b(fees?\s+ocult|cargos?\s+ocult|gastos?\s+ocult|cargo\s+extra|cargos?\s+extra|fee|fees|add[\s-]?ons?|adicionales?\s+obligatorios|gps\s+obligatorio|paquete\s+obligatorio)\b/i },
+  { key: 'financial_distrust', pattern: /\b(no\s+quiero\s+financiar\s+con\s+ustedes|solo\s+con\s+financiaci[oó]n|me\s+cambiaron\s+la\s+cuota|me\s+rechazaron\s+la\s+financiaci[oó]n\s+externa|outside\s+financing|cuota\s+muy\s+alta|apr|tasa\s+real|letra\s+chica)\b/i },
+  { key: 'history_damage', pattern: /\b(choque|chocado|siniestro|accidente|da[nñ]o\s+estructural|estructural|reparado|inundado|flood|titulo\s+salvage|salvage)\b/i },
+  { key: 'inspection', pattern: /\b(inspeccion|inspecci[oó]n|ppi|mecanico\s+de\s+confianza|revisi[oó]n\s+independiente|pre\s*purchase\s*inspection)\b/i },
+  { key: 'fuel_maintenance', pattern: /\b(traga\s+nafta|traga\s+gasolina|consume\s+mucho|mucho\s+consumo|gasta\s+mucho|mantenimiento|service|servicio\s+le\s+toca|pr[oó]ximo\s+service|garantia\s+no\s+la\s+reconocen|garant[ií]a\s+no\s+la\s+reconocen)\b/i },
+  { key: 'fraud_documents', pattern: /\b(fraude|estafa|papeles\s+truchos|papeles\s+dudosos|raz[oó]n\s+social|factura|nacionalizado|documentaci[oó]n\s+irregular|papeles\s+en\s+regla)\b/i },
+];
+
+const HANDOFF_TRIGGER_RULES: Array<{ key: string; pattern: RegExp }> = [
+  { key: 'outside_financing_rejected', pattern: /\b(rechazaron\s+mi\s+financiaci[oó]n\s+externa|no\s+aceptan\s+mi\s+banco|no\s+aceptan\s+financiaci[oó]n\s+externa|dealer\s+cancelled\s+sale\s+after\s+outside\s+financing|solo\s+con\s+su\s+financiaci[oó]n)\b/i },
+  { key: 'mandatory_add_ons', pattern: /\b(add[\s-]?ons?\s+obligatorios|adicionales?\s+obligatorios|me\s+obligan\s+a\s+llevar|cargo\s+obligatorio|gps\s+obligatorio|seguro\s+obligatorio|paquete\s+obligatorio)\b/i },
+  { key: 'structural_damage', pattern: /\b(da[nñ]o\s+estructural|structural\s+damage|titulo\s+salvage|salvage|chocado\s+fuerte|accidente\s+grave)\b/i },
+  { key: 'document_irregularity', pattern: /\b(documentaci[oó]n\s+irregular|papeles\s+truchos|papeles\s+dudosos|factura\s+dudosa|nacionalizado\s+dudoso|irregularidad\s+documental)\b/i },
+];
+
+export function detectBuyerConcernSignals(
+  userMessage: string,
+  extracted?: Record<string, any>
+): BuyerConcernSignals {
+  const text = String(userMessage || "");
+  const highIntentSignals = HIGH_INTENT_SIGNAL_RULES
+    .filter((rule) => rule.pattern.test(text))
+    .map((rule) => rule.key);
+
+  const objectionClassifiers = OBJECTION_CLASSIFIER_RULES
+    .filter((rule) => rule.pattern.test(text))
+    .map((rule) => rule.key);
+
+  const handoffReasons = HANDOFF_TRIGGER_RULES
+    .filter((rule) => rule.pattern.test(text))
+    .map((rule) => rule.key);
+
+  if (extracted?.wantsFinancing && highIntentSignals.includes("preapproved_financing")) {
+    // This combo is especially high-value: buyer already wants to advance but needs trust.
+    if (!objectionClassifiers.includes("financial_distrust")) {
+      objectionClassifiers.push("financial_distrust");
+    }
+  }
+
+  return {
+    highIntentSignals,
+    objectionClassifiers,
+    handoffReasons,
+    requiresHumanHandoff: handoffReasons.length > 0,
   };
 }
 

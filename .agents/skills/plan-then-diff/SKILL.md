@@ -1,18 +1,21 @@
 ---
 name: plan-then-diff
-description: Usar cuando la tarea implique tocar varios archivos, riesgo de regresión o cambios estructurales. No usar para cambios triviales de una línea.
+description: Usar cuando la tarea implica varios archivos, riesgo de regresión, cambios estructurales o ambigüedad. Primero inspeccionar y planificar; recién después editar.
 ---
 
-## Objetivo
-Antes de modificar código:
-1. inspeccionar contexto
+## Secuencia obligatoria
+1. resumir el problema real
 2. listar archivos afectados
-3. proponer plan mínimo
-4. recién después editar
+3. marcar riesgos
+4. proponer plan mínimo por pasos
+5. recién después editar
+
+## Regla
+No tocar más superficie de la necesaria.
 
 ## Salida esperada
-- resumen del problema
-- archivos afectados
-- plan por pasos
-- riesgos
-- luego diff y validación
+- diagnóstico breve
+- archivos a tocar
+- plan
+- validación propuesta
+- luego diff y resultado

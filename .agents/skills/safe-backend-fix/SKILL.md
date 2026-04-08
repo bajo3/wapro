@@ -1,11 +1,12 @@
 ---
 name: safe-backend-fix
-description: Usar para corregir bugs de backend con cambios mínimos, preservando compatibilidad y validando antes de cerrar.
+description: Corregir bugs de backend con cambios mínimos, manteniendo compatibilidad y validando al final.
 ---
 
 ## Instrucciones
-- Identificar la causa raíz
-- Evitar refactors innecesarios
-- Mantener contratos existentes
-- Validar build, tests o typecheck si aplica
-- Reportar riesgos residuales
+- identificar causa raíz
+- evitar refactors innecesarios
+- preservar contratos existentes
+- validar build, tests o typecheck si existen
+- reportar riesgos residuales
+- si el fix toca auth, contratos o persistencia, explicitar impacto

@@ -57,7 +57,7 @@ import { applyGuardrail, validateReply, getGuardrailFallback } from '../services
 import { recordTrace, hashText } from '../services/messageTrace.js';
 import { learnFromConversation } from '../services/autoTrainer.js';
 import { logBotDecision } from '../lib/decisionLogger.js';
-import { detectStagnation } from '../services/conversationAnalyzer.js';
+import { detectBuyerConcernSignals, detectStagnation } from '../services/conversationAnalyzer.js';
 import {
   recordTurnMetrics,
   buildIndecisiveContextBlock,
@@ -1022,6 +1022,19 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     state.search_context = nextSearchCtx;
     state.search_context_at = nowIso;
 
+    // Señales determinísticas de comprador de usados: alta intención, objeciones y handoff.
+    const buyerSignals = detectBuyerConcernSignals(rawText, extracted);
+    if (buyerSignals.highIntentSignals.length > 0) {
+      extracted.highIntentSignals = buyerSignals.highIntentSignals;
+    }
+    if (buyerSignals.objectionClassifiers.length > 0) {
+      extracted.objectionClassifiers = buyerSignals.objectionClassifiers;
+    }
+    if (buyerSignals.handoffReasons.length > 0) {
+      extracted.handoffReasons = buyerSignals.handoffReasons;
+      extracted.forceHumanHandoff = true;
+    }
+
     // ── Fase 4: Pipeline comercial inteligente ────────────────────────────────
     // Autoridad única de scoring — reemplaza computeLeadScoreBreakdown.
     // Async en persistencia — nunca bloquea la respuesta principal.
@@ -1046,7 +1059,10 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     // Objection count: increment on objection message, decrement (floor 0) on non-objection
     {
       const prevObjCount = Number((state as any).objection_count ?? 0);
-      const isObjTurn = commercialResult.intent.primary === 'objection' || !!commercialResult.objectionType;
+      const isObjTurn =
+        commercialResult.intent.primary === 'objection' ||
+        !!commercialResult.objectionType ||
+        buyerSignals.objectionClassifiers.length > 0;
       const newObjCount = isObjTurn ? prevObjCount + 1 : Math.max(0, prevObjCount - 1);
       (state as any).objection_count = newObjCount;
       extracted.objection_count = newObjCount;
@@ -2119,6 +2135,15 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               }
             }
 
+            if (agentDecision && !agentDecision.handoffRecommended && buyerSignals.requiresHumanHandoff) {
+              agentDecision.handoffRecommended = true;
+              const reasons = buyerSignals.handoffReasons.join(',');
+              agentDecision.internalReason = agentDecision.internalReason
+                ? `${agentDecision.internalReason} | [buyer_risk] ${reasons}`
+                : `[buyer_risk] ${reasons}`;
+              console.warn(`[webhooks] buyer-risk handoff for ${remoteJid.slice(0, 12)} — forcing handoff. Reasons: ${reasons}`);
+            }
+
             if (agentDecision?.suggestedReply) {
               // Apply guardrail to agent response before using it
               const agentGr = validateReply(agentDecision.suggestedReply, {
@@ -2203,6 +2228,16 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 newState.last_intent = 'fallback';
                 isFallback = true;
               }
+            }
+
+            if (buyerSignals.requiresHumanHandoff) {
+              (newState as any).agent = {
+                ...((newState as any).agent ?? {}),
+                handoffRecommended: true,
+                internalReason: [((newState as any).agent ?? {}).internalReason, `[buyer_risk] ${buyerSignals.handoffReasons.join(',')}`]
+                  .filter(Boolean)
+                  .join(' | ')
+              };
             }
           } catch (gptErr) {
             console.error('[webhooks] GPT fallback error:', gptErr);
