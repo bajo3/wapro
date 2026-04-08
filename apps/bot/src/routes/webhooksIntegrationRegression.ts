@@ -86,15 +86,15 @@ function installHarness(catalog: any[]): RuntimeHarness {
       stateStore.set(`${instance}:${remoteJid}`, clone(nextState));
     },
     loadLeadMemory: async () => null,
-    runCommercialPipeline: () => buildCommercialResult(),
-    evolutionSendPresence: async () => {},
-    sendImageAndPersist: async (_instance: string, remoteJid: string, imageUrl: string, reply: string) => {
-      sentMessages.push({ kind: 'image', remoteJid, reply, imageUrl });
-    },
+    runCommercialPipeline: (() => buildCommercialResult()) as any,
+    evolutionSendPresence: (async () => ({ ok: true, data: null })) as any,
+    sendImageAndPersist: (async (_instance: string, remoteJid: string, imageUrl: string, reply?: string) => {
+      sentMessages.push({ kind: 'image', remoteJid, reply: String(reply ?? ''), imageUrl });
+    }) as any,
     sendTextHuman: async (_instance: string, remoteJid: string, reply: string) => {
       sentMessages.push({ kind: 'text', remoteJid, reply });
     },
-    logEpisode: async () => {},
+    logEpisode: (async () => 0) as any,
     upsertLeadProfile: async () => {},
     getCatalog: async () => clone(catalog),
     matchBest: async () => null,
