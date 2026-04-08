@@ -21,7 +21,7 @@ import {
   getAbVariantsFor,
   logEpisode
 } from '../services/intelligence.js';
-import { buildMissingQuestions, computeMissingFields, extractLeadFields, isPureGreetingMessage, requiredFieldsForIntent, shouldResetOperationalContext } from '../services/extract.js';
+import { buildMissingQuestions, computeMissingFields, extractExplicitVehicleEntity, extractLeadFields, isPureGreetingMessage, requiredFieldsForIntent, shouldResetOperationalContext } from '../services/extract.js';
 import { createHash } from 'node:crypto';
 import type { ConvState } from '../services/state.js';
 import { computeLeadScore, leadLabel } from '../services/lead.js';
@@ -724,6 +724,65 @@ function getNextUsefulSearchQuestion(ctx: any): string {
   return '¿Querés que lo afine por año o por tipo de uso?';
 }
 
+function getNextBroadSearchQuestion(ctx: any): string {
+  const hasBudget = Boolean(ctx?.maxPrice || ctx?.amount);
+  const hasYear = Boolean(ctx?.year || ctx?.minYear || ctx?.maxYear);
+  const hasType = Boolean(ctx?.bodywork);
+  const hasTransmission = Boolean(ctx?.transmission);
+  const hasFuel = Boolean(ctx?.fuel) || ctx?.gnc === true;
+
+  if (hasBudget && hasYear && !hasType) return '¿Lo querés más bien auto chico, sedán, SUV o pickup?';
+  if (hasBudget && hasYear && hasType && !hasTransmission) return '¿Preferís manual o automático?';
+  if (hasBudget && hasYear && hasType && hasTransmission && !hasFuel) return '¿Nafta, diésel o te da lo mismo?';
+  if (hasBudget && !hasYear) return '¿De qué años querés mirar más o menos?';
+  if (!hasBudget && hasYear) return '¿Hasta qué presupuesto querés mirar?';
+  if (hasType && !hasBudget) return '¿Con qué presupuesto querés buscar ese tipo de vehículo?';
+  return getNextUsefulSearchQuestion(ctx);
+}
+
+function buildWideSearchFallback(ctx: any): string {
+  const nextQuestion = getNextBroadSearchQuestion(ctx);
+  if (ctx?.maxPrice || ctx?.amount || ctx?.year || ctx?.minYear || ctx?.maxYear) {
+    return `Con lo que me pasaste ya puedo afinar bastante. ${nextQuestion}`;
+  }
+  return `Dale, lo sigo afinando. ${nextQuestion}`;
+}
+
+function formatVehicleReference(entity: { brand?: string; model?: string }): string {
+  const raw = [entity?.brand, entity?.model]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  if (!raw) return 'ese modelo';
+  return raw.replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function isVehicleDetailsRequest(text: string): boolean {
+  return /\b(detalles?|más\s+detalles?|mas\s+detalles?|info(?:rmacion)?|ficha|datos?|contame\s+m[aá]s|decime\s+m[aá]s)\b/i.test(text);
+}
+
+function hasActiveVehicleEvidence(
+  entity: { brand?: string; model?: string },
+  lastHitItems: any[],
+  prevIntent: string,
+  ctx: any
+): boolean {
+  const wanted = normalize([entity?.brand, entity?.model].filter(Boolean).join(' '));
+  if (!wanted) return false;
+
+  const lastHitMatch = (lastHitItems || []).some((it: any) => {
+    const itemText = normalize([it?.brand, it?.model, it?.name].filter(Boolean).join(' '));
+    return itemText.includes(wanted) || wanted.includes(itemText);
+  });
+  if (lastHitMatch) return true;
+
+  const canTrustContext = ['product_results', 'product_results_single', 'option_selected'].includes(String(prevIntent || ''));
+  if (!canTrustContext) return false;
+
+  const ctxText = normalize([ctx?.brand, ctx?.model].filter(Boolean).join(' '));
+  return !!ctxText && (ctxText.includes(wanted) || wanted.includes(ctxText));
+}
+
 function getNextTradeInQuestion(missing: string[]): string {
   if (missing.includes('tradeInYear')) return '¿De qué año es tu usado?';
   if (missing.includes('tradeInKm')) return '¿Cuántos km tiene?';
@@ -850,6 +909,7 @@ function clearOperationalContextState(state: ConvState): ConvState {
   next.gpt_history = undefined;
   next._pendingRestoreContext = undefined;
   next._noStockContext = undefined;
+  next._suppressVehicleCarryover = true;
   next.repeated_missing_fields = undefined;
   next.extracted = undefined;
   return next;
@@ -918,6 +978,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
     const resetOperationalContext = shouldResetOperationalContext(rawText);
+    let suppressVehicleCarryover = resetOperationalContext || Boolean((stateRaw as any)._suppressVehicleCarryover);
 
     // ── Lead memory: start async load in parallel (never blocks) ─────────────
     const memoryPromise = loadLeadMemory(instance, remoteJid);
@@ -954,6 +1015,11 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       ? clearVehicleContext((state as any)?.extracted ?? (state as any)?.lead ?? {})
       : ((state as any)?.extracted ?? (state as any)?.lead ?? {});
     const extracted = extractLeadFields(rawText, prevForExtract);
+    const explicitTurnEntity = extractExplicitVehicleEntity(rawText);
+    const explicitVehicleRequestedThisTurn = Boolean(explicitTurnEntity.brand || explicitTurnEntity.model);
+    if (resetOperationalContext) {
+      (state as any)._suppressVehicleCarryover = true;
+    }
 
     if (operationalRestart) {
       const reason = resetOperationalContext ? 'operational_reset' : 'topic_change';
@@ -979,7 +1045,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // ── Resolve lead memory and merge into extracted ──────────────────────────
     const leadMemory = await memoryPromise;
-    const sessionHadContext = !resetOperationalContext && Boolean(
+    const sessionHadContext = !resetOperationalContext && !suppressVehicleCarryover && Boolean(
       (state as any)?.extracted?.brand ||
       (state as any)?.extracted?.maxPrice ||
       (state as any)?.search_context?.brand ||
@@ -988,7 +1054,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     const isRecontactTurn = isRecontact(leadMemory, sessionHadContext && !contextExpired);
     // When context expired or first visit with DB memory: fill gaps from persistent profile.
     // On topic change: skip vehicle-specific fields from memory (user wants something different).
-    if (leadMemory && !resetOperationalContext && (contextExpired || !sessionHadContext)) {
+    if (leadMemory && !resetOperationalContext && !suppressVehicleCarryover && (contextExpired || !sessionHadContext)) {
       const enriched = mergeMemoryIntoExtracted(extracted, leadMemory, { topicChanged: operationalRestart });
       Object.assign(extracted, enriched);
     }
@@ -1717,10 +1783,10 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         }
       }
       if (!reply) {
-        const nextQuestion = getNextUsefulSearchQuestion({ ...(state.search_context || {}), ...extracted });
+        const nextQuestion = buildWideSearchFallback({ ...(state.search_context || {}), ...extracted });
         reply = lastMedia && !String(rawText || '').trim()
           ? 'Te vi la imagen. ¿Qué modelo o marca querés mirar?'
-          : `No encontré algo lógico todavía. ${nextQuestion}`;
+          : nextQuestion;
         newState.last_intent = 'no_match';
         newState.last_query = rawText;
         isFallback = true;
@@ -1955,16 +2021,22 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             // shouldSearch es un else-if. Usamos el flag para mejorarlo en el agente call abajo.
             // Por ahora damos una respuesta consultiva como fallback de shouldSearch.
             const ctx = { ...(state.search_context || {}), ...extracted };
-            const hasModel = !!(ctx.brand || ctx.model);
-            if (hasModel) {
-              const what = [ctx.brand, ctx.model].filter(Boolean).join(' ');
+            const hasSpecificTurnEntity = explicitVehicleRequestedThisTurn;
+            const activeEntityEvidence = hasSpecificTurnEntity
+              ? hasActiveVehicleEvidence(explicitTurnEntity, lastHitItems, prevIntent, state.search_context)
+              : false;
+            if (hasSpecificTurnEntity && isVehicleDetailsRequest(rawText) && !activeEntityEvidence) {
+              const vehicleRef = formatVehicleReference(explicitTurnEntity);
+              const similarKind = ctx?.bodywork === 'sedan' || explicitTurnEntity.model ? 'sedanes similares' : 'opciones similares';
+              reply = `¿Te referís a ${vehicleRef} o querés ver ${similarKind}?`;
+            } else if (hasSpecificTurnEntity) {
+              const what = formatVehicleReference(explicitTurnEntity);
               reply = pickOne([
                 `Ahora mismo no tengo ${what} en stock, pero puedo anotarte para avisarte cuando entre. ¿Querés que te anote o preferís ver alternativas parecidas?`,
                 `No tengo ${what} disponible en este momento. ¿Te sirve que te muestre algo similar o preferís esperar a que entre stock?`,
               ]);
             } else {
-              const nextQuestion = getNextUsefulSearchQuestion(ctx);
-              reply = `No encontré algo exacto con lo que tenés. ${nextQuestion}`;
+              reply = buildWideSearchFallback(ctx);
             }
             newState.last_intent = 'no_match';
             newState.last_query = rawText;
@@ -2015,8 +2087,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             // On topic change: mergeMemoryIntoExtracted skips vehicle fields from DB memory.
             const mergedExtractedRaw = mergeMemoryIntoExtracted(
               { ...(state.search_context ?? {}), ...extracted },
-              leadMemory,
-              { topicChanged }
+              suppressVehicleCarryover ? null : leadMemory,
+              { topicChanged: topicChanged || suppressVehicleCarryover }
             );
             // Guardrail final: eliminar pares brand+model semánticamente inválidos (ej: "ford+strada")
             const mergedExtracted = sanitizeBrandModel(mergedExtractedRaw);
@@ -2028,7 +2100,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             // ── Shown vehicles: combinar DB + historial de sesión ────────────────
             // On topic change: no reutilizar shown_vehicle_ids anteriores (nueva búsqueda)
             const historyShownIds = extractShownVehicleIdsFromHistory(history);
-            const allShownIds = topicChanged
+            const allShownIds = (topicChanged || suppressVehicleCarryover)
               ? []  // reset: new topic → show fresh vehicles
               : mergeShownVehicleIds(leadMemory?.shownVehicleIds, historyShownIds);
 
@@ -2054,7 +2126,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             // when the user already signaled they want something completely different.
             let memoryBlock = '';
             try {
-              if (!topicChanged) {
+              if (!topicChanged && !suppressVehicleCarryover) {
                 memoryBlock = buildMemorySummaryBlock(leadMemory, isRecontactTurn, { skipIfEmpty: true });
                 if (isRecontactTurn) {
                   console.log(`[leadMemory] recontact detected for ${remoteJid.slice(0, 12)} (count=${leadMemory?.recontactCount ?? 0})`);

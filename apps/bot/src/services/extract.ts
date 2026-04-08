@@ -1076,6 +1076,14 @@ export function shouldResetOperationalContext(text: string): boolean {
 }
 
 /**
+ * extractExplicitVehicleEntity — detecta marca/modelo mencionados en ESTE turno.
+ * No usa contexto previo; sirve para guardrails anti-arrastre.
+ */
+export function extractExplicitVehicleEntity(text: string): { brand?: string; model?: string } {
+  return detectBrandModel(String(text || ''));
+}
+
+/**
  * clearVehicleContext — elimina campos específicos de vehículo del contexto acumulado.
  * Retiene: presupuesto, nombre, ciudad (datos personales no atados al vehículo buscado).
  * Usar en topic change para hacer soft-reset del contexto de búsqueda.
