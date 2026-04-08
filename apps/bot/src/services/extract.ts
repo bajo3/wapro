@@ -1040,6 +1040,42 @@ export function detectTopicChange(text: string): boolean {
 }
 
 /**
+ * isPureGreetingMessage — saludo corto sin intención operativa adjunta.
+ * Debe iniciar limpio y NO reutilizar shortlist ni filtros viejos.
+ */
+export function isPureGreetingMessage(text: string): boolean {
+  const t = norm(text).replace(/[!?.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t) return false;
+  return /^(hola|buenas|buen dia|buen dia che|buenas tardes|buenas noches|buenos dias|hey|que tal|como va|como andas|holis|hola hola)$/.test(t);
+}
+
+/**
+ * shouldResetOperationalContext — decide si hay que cortar el arrastre de contexto
+ * operativo (shortlist, filtros, presupuesto heredado, pregunta pendiente, reasoning path).
+ *
+ * Heurística conservadora:
+ * - sí: saludo puro, reinicio explícito, "otra cosa" claro, o saludo + nuevo arranque
+ * - no: refinamientos contextuales como "ese no", "más barato", "automático", "otra opción similar"
+ */
+export function shouldResetOperationalContext(text: string): boolean {
+  const t = norm(text);
+  if (!t) return false;
+
+  if (isPureGreetingMessage(text)) return true;
+
+  const explicitReset = /\b(arranquemos\s+de\s+nuevo|arranquemos\s+de\s+cero|empecemos\s+de\s+nuevo|empecemos\s+de\s+cero|reiniciemos|reiniciar|resetemos|reseteemos|volver\s+a\s+empezar|empezar\s+otra\s+vez)\b/.test(t);
+  if (explicitReset) return true;
+
+  const explicitOtherThing = /\b(busco\s+otra\s+cosa|no[\s,]+otra\s+cosa|quiero\s+otra\s+cosa|veamos\s+otra\s+cosa|miremos\s+otra\s+cosa|arranco\s+con\s+otra\s+cosa|cambiemos\s+de\s+b[uú]squeda|cambio\s+de\s+tema|algo\s+distinto)\b/.test(t);
+  if (explicitOtherThing) return true;
+
+  const greetingWithFreshIntent = /^(hola|buenas|buen dia|buenas tardes|buenas noches|buenos dias|hey)[\s,]+(busco|buscaba|quiero|quisiera|necesito|me interesa)\b/.test(t);
+  if (greetingWithFreshIntent) return true;
+
+  return false;
+}
+
+/**
  * clearVehicleContext — elimina campos específicos de vehículo del contexto acumulado.
  * Retiene: presupuesto, nombre, ciudad (datos personales no atados al vehículo buscado).
  * Usar en topic change para hacer soft-reset del contexto de búsqueda.

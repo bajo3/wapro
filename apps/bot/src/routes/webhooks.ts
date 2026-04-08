@@ -21,7 +21,7 @@ import {
   getAbVariantsFor,
   logEpisode
 } from '../services/intelligence.js';
-import { buildMissingQuestions, computeMissingFields, extractLeadFields, requiredFieldsForIntent } from '../services/extract.js';
+import { buildMissingQuestions, computeMissingFields, extractLeadFields, isPureGreetingMessage, requiredFieldsForIntent, shouldResetOperationalContext } from '../services/extract.js';
 import { createHash } from 'node:crypto';
 import type { ConvState } from '../services/state.js';
 import { computeLeadScore, leadLabel } from '../services/lead.js';
@@ -836,6 +836,25 @@ function describeTradeIn(extracted: any): string {
   return [model, year, km].filter(Boolean).join(' ').trim();
 }
 
+function clearOperationalContextState(state: ConvState): ConvState {
+  const next: any = { ...state };
+  next.search_context = undefined;
+  next.search_context_at = undefined;
+  next.last_hits = undefined;
+  next.last_hits_at = undefined;
+  next.finance = undefined;
+  next.agent = undefined;
+  next.last_query = undefined;
+  next.last_intent = undefined;
+  next.stage = 'idle';
+  next.gpt_history = undefined;
+  next._pendingRestoreContext = undefined;
+  next._noStockContext = undefined;
+  next.repeated_missing_fields = undefined;
+  next.extracted = undefined;
+  return next;
+}
+
 /**
  * Handle an aggregated message. This function runs outside of the
  * HTTP request/response cycle. It reads the current conversation
@@ -898,6 +917,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     const stateRaw: ConvState = await getState(instance, remoteJid);
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
+    const resetOperationalContext = shouldResetOperationalContext(rawText);
 
     // ── Lead memory: start async load in parallel (never blocks) ─────────────
     const memoryPromise = loadLeadMemory(instance, remoteJid);
@@ -916,32 +936,35 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       ? stateRaw.search_context
       : undefined;
 
-    const state: ConvState = {
+    const stateBase: ConvState = {
       ...stateRaw,
       ...(contextExpired
         ? { search_context: undefined, search_context_at: undefined, finance: undefined, last_hits: undefined, last_hits_at: undefined }
         : {})
     };
+    const state: ConvState = resetOperationalContext ? clearOperationalContextState(stateBase) : stateBase;
 
     // ── Topic change detection (before extracting, affects prev context used) ──
     const topicChanged = detectTopicChange(rawText);
+    const operationalRestart = resetOperationalContext || topicChanged;
 
     // Merge extracted fields across turns.
     // On topic change: pass cleared prev to avoid contaminating new search with old vehicle data.
-    const prevForExtract = topicChanged
+    const prevForExtract = operationalRestart
       ? clearVehicleContext((state as any)?.extracted ?? (state as any)?.lead ?? {})
       : ((state as any)?.extracted ?? (state as any)?.lead ?? {});
     const extracted = extractLeadFields(rawText, prevForExtract);
 
-    if (topicChanged) {
-      console.log(`[webhooks] topic change detected for ${remoteJid.slice(0, 12)} — resetting vehicle context`);
+    if (operationalRestart) {
+      const reason = resetOperationalContext ? 'operational_reset' : 'topic_change';
+      console.log(`[webhooks] ${reason} detected for ${remoteJid.slice(0, 12)} — resetting operational context`);
     }
 
     // ── Pending context restore: handle response to greeting's "¿Seguís con eso?" ──
     // Si el turno anterior fue un saludo con contexto viejo, y el usuario responde:
     //   - Afirmativo ("sí", "dale", etc.) → restaurar contexto anterior
     //   - Negativo / topic change → descartar (no contaminar nueva búsqueda)
-    const _pendingRestore = (state as any)._pendingRestoreContext;
+    const _pendingRestore = !resetOperationalContext ? (state as any)._pendingRestoreContext : undefined;
     if (_pendingRestore) {
       const _isAffirmative = !topicChanged &&
         /\b(sí|si|dale|ok|claro|sigo|seguí|seguís|correcto|exacto|bueno|eso|ese|esa|continúa|continua|quiero|mismo)\b/i.test(rawText);
@@ -956,7 +979,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // ── Resolve lead memory and merge into extracted ──────────────────────────
     const leadMemory = await memoryPromise;
-    const sessionHadContext = Boolean(
+    const sessionHadContext = !resetOperationalContext && Boolean(
       (state as any)?.extracted?.brand ||
       (state as any)?.extracted?.maxPrice ||
       (state as any)?.search_context?.brand ||
@@ -965,8 +988,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     const isRecontactTurn = isRecontact(leadMemory, sessionHadContext && !contextExpired);
     // When context expired or first visit with DB memory: fill gaps from persistent profile.
     // On topic change: skip vehicle-specific fields from memory (user wants something different).
-    if (leadMemory && (contextExpired || !sessionHadContext)) {
-      const enriched = mergeMemoryIntoExtracted(extracted, leadMemory, { topicChanged });
+    if (leadMemory && !resetOperationalContext && (contextExpired || !sessionHadContext)) {
+      const enriched = mergeMemoryIntoExtracted(extracted, leadMemory, { topicChanged: operationalRestart });
       Object.assign(extracted, enriched);
     }
 
@@ -1018,7 +1041,9 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // Accumulate search context across turns.
     // On topic change: reset vehicle fields from prev context, keep budget/personal data.
-    const nextSearchCtx = mergeSearchContext(state.search_context, extracted, topicChanged);
+    const nextSearchCtx = resetOperationalContext
+      ? mergeSearchContext(undefined, extracted, true)
+      : mergeSearchContext(state.search_context, extracted, topicChanged);
     state.search_context = nextSearchCtx;
     state.search_context_at = nowIso;
 
@@ -1702,7 +1727,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       }
     } else {
       // ── Intent detection ──────────────────────────────────────────────────
-      const isGreeting = /^(hola|buenas|buen\s+d[ií]a|buen\s+tarde|buen\s+noche|hey|que\s+tal|buenos\s+d[ií]as?|buenas\s+tardes?|buenas\s+noches?)\b/i.test(rawText);
+      const isGreeting = isPureGreetingMessage(rawText);
       const isSmallTalk = /(te\s*amo|te\s*amoo|amor|jaja+|😂|🤣|😍|❤️|😘)/i.test(rawText);
       const asksDemand = /(busco|estoy\s+buscando|necesi+to\s+(un\s+)?auto|quiero\s+(un\s+)?(auto|coche|camioneta)|me\s+interesa(?:ría)?\s+un)/i.test(rawText);
       const asksFinancing = /(financ|cuota|cr[eé]dito|prestamo|pr[eé]stamo|banco|entrada|anticipo)/i.test(rawText) || !!(state as any)._forceFinancing;
@@ -1730,7 +1755,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         // v3: si el cliente vuelve después de que el contexto expiró, recordarle su búsqueda anterior.
         // FIX: NO restaurar el contexto automáticamente — guardarlo como "pendiente".
         // Se restaura solo si el usuario responde afirmativamente en el siguiente turno.
-        if (staleContext && (staleContext.brand || staleContext.model || staleContext.maxPrice)) {
+        if (!resetOperationalContext && staleContext && (staleContext.brand || staleContext.model || staleContext.maxPrice)) {
           // Sanitizar el par brand+model antes de mostrarlo (previene "ford corolla" u otros pares inválidos)
           const sanitizedStale = sanitizeBrandModel({ ...staleContext });
           const parts: string[] = [];
