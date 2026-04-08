@@ -1,0 +1,7 @@
+model = "gpt-5.4"
+
+project_doc_fallback_filenames = ["TEAM_GUIDE.md", ".agents.md"]
+project_root_markers = [".git"]
+
+[windows]
+sandbox = "unelevated"
