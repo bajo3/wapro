@@ -47,10 +47,22 @@ const EVAL_PASS_THRESHOLD = 0.80;
 
 // ─── Scorer por caso ──────────────────────────────────────────────────────────
 
+function normalizeExpectationPatterns(value: string | string[] | null | undefined): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item ?? '').trim().toLowerCase())
+      .filter(Boolean);
+  }
+  return String(value ?? '')
+    .split('|')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 function scoreCase(
   reply: string,
-  expectedContains: string | null,
-  expectedNotContains: string | null
+  expectedContains: string | string[] | null,
+  expectedNotContains: string | string[] | null
 ): { score: number; pass: boolean; failReasons: string[]; hallucinationDetected: boolean; guardrailIssues: string[] } {
   const failReasons: string[] = [];
   let score = 100;
@@ -74,7 +86,7 @@ function scoreCase(
 
   // Verificar expected_contains
   if (expectedContains) {
-    const patterns = expectedContains.split('|').map((p) => p.trim().toLowerCase()).filter(Boolean);
+    const patterns = normalizeExpectationPatterns(expectedContains);
     const replyLower = reply.toLowerCase();
     const matched = patterns.some((p) => replyLower.includes(p));
     if (!matched) {
@@ -85,7 +97,7 @@ function scoreCase(
 
   // Verificar expected_not_contains
   if (expectedNotContains) {
-    const patterns = expectedNotContains.split('|').map((p) => p.trim().toLowerCase()).filter(Boolean);
+    const patterns = normalizeExpectationPatterns(expectedNotContains);
     const replyLower = reply.toLowerCase();
     const found = patterns.find((p) => replyLower.includes(p));
     if (found) {
@@ -109,16 +121,30 @@ export async function runEvalSuite(
   // instanceName is used for DB writes and logging only; playground is instance-agnostic
   const runAt = new Date().toISOString();
 
-  // Cargar casos de evaluación (tag = 'evaluation')
+  // Cargar casos de evaluación. Algunas bases todavía no tienen la columna tag;
+  // en ese caso usamos los casos enabled=true para no romper el runner.
   let testCases: any[] = [];
   try {
-    const { rows } = await pool.query(
-      `SELECT id, name, user_text, expected_contains, expected_not_contains
-       FROM bot_test_cases
-       WHERE tag = 'evaluation'
-       ORDER BY id ASC
-       LIMIT 50`
+    const tagColumnR = await pool.query(
+      `SELECT 1
+         FROM information_schema.columns
+        WHERE table_name = 'bot_test_cases'
+          AND column_name = 'tag'
+        LIMIT 1`
     );
+    const hasTagColumn = (tagColumnR.rowCount ?? 0) > 0;
+    const query = hasTagColumn
+      ? `SELECT id, name, user_text, expected_contains, expected_not_contains
+           FROM bot_test_cases
+          WHERE enabled = true AND tag = 'evaluation'
+          ORDER BY id ASC
+          LIMIT 50`
+      : `SELECT id, name, user_text, expected_contains, expected_not_contains
+           FROM bot_test_cases
+          WHERE enabled = true
+          ORDER BY id ASC
+          LIMIT 50`;
+    const { rows } = await pool.query(query);
     testCases = rows;
   } catch (err) {
     console.warn('[evalRunner] No se pudo cargar test_cases:', err);
@@ -131,7 +157,7 @@ export async function runEvalSuite(
   }
 
   if (testCases.length === 0) {
-    console.info('[evalRunner] No hay casos con tag=evaluation. Skipping.');
+    console.info('[evalRunner] No hay casos de evaluación habilitados. Skipping.');
     return {
       runAt, instanceName, triggeredBy,
       totalCases: 0, passed: 0, failed: 0,

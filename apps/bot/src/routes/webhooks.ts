@@ -847,14 +847,19 @@ function buildWideSearchFallback(ctx: any, options?: { repeatedDeadSearch?: bool
     ctx?.transmission,
     ctx?.fuel,
   ].filter(Boolean).length;
+  const hasBudget = Boolean(ctx?.maxPrice || ctx?.amount);
+  const hasYear = Boolean(ctx?.year || ctx?.minYear || ctx?.maxYear);
+  const hasExplicitModel = Boolean(ctx?.brand || ctx?.model);
+  const shouldBroadenByCategory = hasBudget && hasYear && !ctx?.bodywork;
+
   if (options?.repeatedDeadSearch) {
     return `Con esos filtros ya me quedé sin matches confirmados. ${buildCategoryBroadeningPrompt(ctx)}`;
   }
-  if (filterCount >= 3) {
+  if (filterCount >= 3 || (shouldBroadenByCategory && !hasExplicitModel)) {
     return `Con esos filtros cerrados no tengo un match confirmado ahora. ${buildCategoryBroadeningPrompt(ctx)}`;
   }
   const nextQuestion = getNextBroadSearchQuestion(ctx);
-  if (ctx?.maxPrice || ctx?.amount || ctx?.year || ctx?.minYear || ctx?.maxYear) {
+  if (hasBudget || hasYear) {
     return `Con lo que me pasaste ya puedo afinar bastante. ${nextQuestion}`;
   }
   return `Dale, lo sigo afinando. ${nextQuestion}`;
@@ -2045,10 +2050,16 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         }
       }
       if (!reply) {
-        const nextQuestion = buildWideSearchFallback(currentSearchCtx);
-        reply = lastMedia && !String(rawText || '').trim()
-          ? 'Te vi la imagen. ¿Qué modelo o marca querés mirar?'
-          : nextQuestion;
+        if (explicitVehicleRequestedThisTurn && isVehicleDetailsRequest(rawText)) {
+          const vehicleRef = formatVehicleReference(explicitTurnEntity);
+          reply = `¿Te referís a ${vehicleRef} o querés que te muestre opciones parecidas que sí tenga ahora?`;
+          (newState as any)._preserveFallbackReply = true;
+        } else {
+          const nextQuestion = buildWideSearchFallback(currentSearchCtx);
+          reply = lastMedia && !String(rawText || '').trim()
+            ? 'Te vi la imagen. ¿Qué modelo o marca querés mirar?'
+            : nextQuestion;
+        }
         newState.last_intent = 'no_match';
         newState.last_query = rawText;
         isFallback = true;
@@ -2325,7 +2336,12 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             const activeEntityEvidence = hasSpecificTurnEntity
               ? hasActiveVehicleEvidence(explicitTurnEntity, lastHitItems, prevIntent, currentSearchCtx)
               : false;
-            if (hasSpecificTurnEntity && isVehicleDetailsRequest(rawText) && !activeEntityEvidence) {
+            const conversationStage = String((state as any)?.stage ?? '').toLowerCase();
+            const shouldClarifyUnknownVehicle = hasSpecificTurnEntity
+              && isVehicleDetailsRequest(rawText)
+              && !activeEntityEvidence
+              && conversationStage !== 'idle';
+            if (shouldClarifyUnknownVehicle) {
               const vehicleRef = formatVehicleReference(explicitTurnEntity);
               reply = `¿Te referís a ${vehicleRef} o querés que te muestre opciones parecidas que sí tenga ahora?`;
             } else if (hasSpecificTurnEntity) {
@@ -2334,6 +2350,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             } else {
               reply = buildWideSearchFallback(ctx, { repeatedDeadSearch });
             }
+            (newState as any)._preserveFallbackReply = true;
             logConversationDecision({
               continuedThread: !operationalRestart,
               followUpDetected: hasSpecificTurnEntity || hasSearchCtx,
@@ -2684,7 +2701,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // ── Anti-repeat fallback: vary the question (v3 — filtrado por campos conocidos) ──
     const lastFallbackAt = (state as any).last_fallback_at;
-    if (isFallback && lastFallbackAt) {
+    if (isFallback && lastFallbackAt && !(newState as any)._preserveFallbackReply) {
       const lastFb = Date.parse(lastFallbackAt);
       if (!Number.isNaN(lastFb) && now - lastFb < env.fallbackCooldownMs) {
         // Construir lista de preguntas filtrando las que ya fueron respondidas
