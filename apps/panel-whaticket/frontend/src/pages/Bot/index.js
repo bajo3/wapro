@@ -2256,7 +2256,7 @@ export default function BotPanel() {
                       <MetricCard label="Semáforo" value={catalogStatus.label} change={catalogStatus.hint} changeType={catalogStatus.tone === "danger" ? "down" : catalogStatus.tone === "warning" ? "neutral" : "up"} />
                       <MetricCard label="Stock visible" value={String(catalogDebug?.count ?? vehiculosActivos ?? 0)} change="Contador principal" changeType="up" />
                       <MetricCard label="Origen" value={catalogDebug?.supabase ? "Supabase" : "No detectado"} change={catalogDebug?.source?.schema && catalogDebug?.source?.table ? `${catalogDebug.source.schema}.${catalogDebug.source.table}` : "Sin tabla detectada"} changeType="neutral" />
-                      <MetricCard label="Bot" value={botEnabled ? "Activo" : "Pausado"} change={botEnabled ? "Puede responder" : "No procesará mensajes"} changeType={botEnabled ? "up" : "neutral"} />
+                      <MetricCard label="Bot" value={botEnabled ? "Activo" : "Pausado"} change={botEnabled ? "Puede responder" : "No responde, pero sigue escuchando"} changeType={botEnabled ? "up" : "neutral"} />
                     </div>
                   </div>
 

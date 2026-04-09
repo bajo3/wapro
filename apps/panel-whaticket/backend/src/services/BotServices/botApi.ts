@@ -83,8 +83,10 @@ export async function botSetConversationMode(params: {
 export async function botDeleteConversationRule(params: {
   instance: string;
   remoteJid: string;
-}): Promise<void> {
-  if (!isConfigured() || !BOT_ADMIN_TOKEN) return;
+}): Promise<BotModeResult> {
+  if (!isConfigured() || !BOT_ADMIN_TOKEN) {
+    return { ok: true, status: 0 };
+  }
 
   try {
     const r = await forwardBotAdmin({
@@ -96,9 +98,13 @@ export async function botDeleteConversationRule(params: {
     if (!r.ok) {
       const text = typeof r.data === "string" ? r.data : JSON.stringify(r.data ?? {});
       logger.warn({ status: r.status, text }, "botDeleteConversationRule failed");
+      return { ok: false, status: r.status, error: `HTTP ${r.status}: ${text.slice(0, 200)}` };
     }
+    return { ok: true, status: r.status };
   } catch (err: any) {
-    logger.warn({ err: String(err?.message ?? err) }, "botDeleteConversationRule error");
+    const msg = String(err?.message ?? err);
+    logger.warn({ err: msg }, "botDeleteConversationRule error");
+    return { ok: false, status: 0, error: msg };
   }
 }
 

@@ -497,7 +497,7 @@ const ContactDrawer = ({ open, handleDrawerClose, contact, ticket, loading, init
 								{i18n.t("contactDrawer.ticket.botMode.label")}: {botModeLabel}
 							</Typography>
 							<Typography variant="body2" className={classes.muted} style={{ marginTop: 4 }}>
-								Usá estos botones para pasar la conversación a humano, devolverla al bot o apagarlo por completo.
+							Usá estos botones para pasar la conversación a humano, devolverla al bot o dejarlo en escucha sin responder.
 							</Typography>
 							<div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
 								<Button size="small" variant="outlined" onClick={() => handleBotMode("ON")}>

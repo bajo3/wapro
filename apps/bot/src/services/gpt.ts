@@ -29,28 +29,6 @@ export interface GptParams {
   traceReason?: string;
 }
 
-type OpenAiErrorPayload = {
-  error?: {
-    code?: string;
-    param?: string | null;
-    message?: string;
-  };
-};
-
-function dropUnsupportedRequestParameter(body: Record<string, any>, param: string | null | undefined): boolean {
-  const raw = String(param ?? '').trim();
-  if (!raw) return false;
-  const normalized = raw.replace(/\[\d+\]/g, '').replace(/^body\./, '');
-  const candidates = Array.from(new Set([raw, normalized]));
-  for (const key of candidates) {
-    if (key && Object.prototype.hasOwnProperty.call(body, key)) {
-      delete body[key];
-      return true;
-    }
-  }
-  return false;
-}
-
 /**
  * Llama a la API de OpenAI y devuelve el texto generado, o null si falla / no
  * está configurada la API key.
@@ -74,10 +52,9 @@ export async function askGPT(params: GptParams): Promise<string | null> {
     ...(params.history ?? []),
     { role: 'user', content: params.userMessage }
   ];
-  const requestBody: Record<string, any> = { model, max_tokens: maxTokens, temperature, messages };
 
   // Retry on transient errors (rate limit 429, server errors 5xx) — max 2 attempts
-  const MAX_ATTEMPTS = 3;
+  const MAX_ATTEMPTS = 2;
   let lastErr: unknown;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -88,7 +65,7 @@ export async function askGPT(params: GptParams): Promise<string | null> {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages }),
         // 15 segundos de timeout para no trabar el flujo principal
         signal: AbortSignal.timeout?.(15_000) as any
       });
@@ -105,24 +82,7 @@ export async function askGPT(params: GptParams): Promise<string | null> {
       }
 
       if (!res.ok) {
-        const rawError = await res.text().catch(() => '');
-        let parsedError: OpenAiErrorPayload | null = null;
-        try {
-          parsedError = rawError ? JSON.parse(rawError) : null;
-        } catch {
-          parsedError = null;
-        }
-
-        if (
-          res.status === 400 &&
-          parsedError?.error?.code === 'unsupported_parameter' &&
-          dropUnsupportedRequestParameter(requestBody, parsedError.error.param)
-        ) {
-          console.warn(`[gpt] OpenAI unsupported parameter ${parsedError.error.param}; retrying without it`);
-          continue;
-        }
-
-        console.error('[gpt] OpenAI API error:', res.status, rawError);
+        console.error('[gpt] OpenAI API error:', res.status, await res.text().catch(() => ''));
         return null;
       }
 

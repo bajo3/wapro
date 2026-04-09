@@ -3,8 +3,9 @@ import { pool } from './db.js';
 /**
  * Represents the mode in which the bot should operate for a given
  * contact. When botMode is 'ON' the bot will respond normally.
- * When 'OFF' the bot will ignore incoming messages for that number.
- * When 'HUMAN_ONLY' the bot will ignore automatic replies and let
+ * When 'OFF' the bot will keep reading the conversation and updating
+ * memory/state, but it will not send automatic replies.
+ * When 'HUMAN_ONLY' the bot will stop automatic processing and let
  * a human operator handle the conversation.
  */
 export type BotMode = 'ON' | 'OFF' | 'HUMAN_ONLY';

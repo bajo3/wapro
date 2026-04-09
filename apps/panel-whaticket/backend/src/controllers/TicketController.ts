@@ -238,8 +238,11 @@ export const updateBotMode = async (
   try {
     if (instance && remoteJid) {
       if (next === "ON") {
-        // Deletion is best-effort (removing the override rule)
-        void botDeleteConversationRule({ instance, remoteJid });
+        const deleteResult = await botDeleteConversationRule({ instance, remoteJid });
+        if (!deleteResult.ok) {
+          botSyncOk = false;
+          botSyncError = deleteResult.error;
+        }
       } else {
         const modeResult = await botSetConversationMode({
           instance,

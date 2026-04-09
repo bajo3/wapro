@@ -87,6 +87,7 @@ export const webhookRouter = Router();
 type WebhookRuntimeOverrides = {
   getContactRule: typeof getContactRule;
   getConversationRule: typeof getConversationRule;
+  getIntelligenceSettings: typeof getIntelligenceSettings;
   getState: typeof getState;
   setState: typeof setState;
   loadLeadMemory: typeof loadLeadMemory;
@@ -847,19 +848,14 @@ function buildWideSearchFallback(ctx: any, options?: { repeatedDeadSearch?: bool
     ctx?.transmission,
     ctx?.fuel,
   ].filter(Boolean).length;
-  const hasBudget = Boolean(ctx?.maxPrice || ctx?.amount);
-  const hasYear = Boolean(ctx?.year || ctx?.minYear || ctx?.maxYear);
-  const hasExplicitModel = Boolean(ctx?.brand || ctx?.model);
-  const shouldBroadenByCategory = hasBudget && hasYear && !ctx?.bodywork;
-
   if (options?.repeatedDeadSearch) {
     return `Con esos filtros ya me quedé sin matches confirmados. ${buildCategoryBroadeningPrompt(ctx)}`;
   }
-  if (filterCount >= 3 || (shouldBroadenByCategory && !hasExplicitModel)) {
+  if (filterCount >= 3) {
     return `Con esos filtros cerrados no tengo un match confirmado ahora. ${buildCategoryBroadeningPrompt(ctx)}`;
   }
   const nextQuestion = getNextBroadSearchQuestion(ctx);
-  if (hasBudget || hasYear) {
+  if (ctx?.maxPrice || ctx?.amount || ctx?.year || ctx?.minYear || ctx?.maxYear) {
     return `Con lo que me pasaste ya puedo afinar bastante. ${nextQuestion}`;
   }
   return `Dale, lo sigo afinando. ${nextQuestion}`;
@@ -1096,6 +1092,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
   try {
     const getContactRuleImpl = resolveWebhookRuntime('getContactRule', getContactRule);
     const getConversationRuleImpl = resolveWebhookRuntime('getConversationRule', getConversationRule);
+    const getIntelligenceSettingsImpl = resolveWebhookRuntime('getIntelligenceSettings', getIntelligenceSettings);
     const getStateImpl = resolveWebhookRuntime('getState', getState);
     const setStateImpl = resolveWebhookRuntime('setState', setState);
     const loadLeadMemoryImpl = resolveWebhookRuntime('loadLeadMemory', loadLeadMemory);
@@ -1137,14 +1134,22 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     }
 
     // Contact rule check
+    let globalBotEnabled = true;
+    try {
+      const intelligenceSettings = await getIntelligenceSettingsImpl();
+      globalBotEnabled = intelligenceSettings?.botEnabled !== false;
+    } catch (err) {
+      console.error('Failed to get bot intelligence settings', err);
+    }
+
+    let effectiveBotMode: 'ON' | 'OFF' | 'HUMAN_ONLY' = globalBotEnabled ? 'ON' : 'OFF';
+    let modeSource: 'global_settings' | 'contact_rule' | 'conversation_rule' | 'default' = globalBotEnabled ? 'default' : 'global_settings';
+
     try {
       const rule = await getContactRuleImpl(number);
       if (rule && rule !== 'ON') {
-        const e = aggregators.get(key);
-        if (e?.timer) clearTimeout(e.timer);
-        if (e?.sendTimer) clearTimeout(e.sendTimer);
-        aggregators.delete(key);
-        return;
+        effectiveBotMode = rule;
+        modeSource = 'contact_rule';
       }
     } catch (err) {
       console.error('Failed to get contact rule for', number, err);
@@ -1154,14 +1159,21 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     try {
       const convRule = await getConversationRuleImpl(instance, remoteJid);
       if (convRule && convRule !== 'ON') {
-        const e = aggregators.get(key);
-        if (e?.timer) clearTimeout(e.timer);
-        if (e?.sendTimer) clearTimeout(e.sendTimer);
-        aggregators.delete(key);
-        return;
+        effectiveBotMode = convRule;
+        modeSource = 'conversation_rule';
       }
     } catch (err) {
       console.error('Failed to get conversation rule for', instance, remoteJid, err);
+    }
+
+    const botHardMuted = effectiveBotMode === 'HUMAN_ONLY';
+    const botListenOnly = effectiveBotMode === 'OFF';
+    if (botHardMuted) {
+      const e = aggregators.get(key);
+      if (e?.timer) clearTimeout(e.timer);
+      if (e?.sendTimer) clearTimeout(e.sendTimer);
+      aggregators.delete(key);
+      return;
     }
 
     // Conversation state
@@ -1369,9 +1381,42 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
       void evolutionSendPresenceImpl(instance, number, 'composing', Math.min(delayMs, 5000)).catch(() => {});
 
       const timer = setTimeout(async () => {
-        const sentIso = new Date().toISOString();
+        const processedIso = new Date().toISOString();
         const shouldMoveToHuman = Boolean(options?.handoff || nextState?.agent?.handoffRecommended || nextState?.last_intent === 'handoff');
         try {
+          if (botListenOnly) {
+            await setStateImpl(instance, remoteJid, {
+              ...nextState,
+              last_listen_only_at: processedIso,
+              last_listen_only_preview: String(reply).slice(0, 500),
+              last_listen_only_reason: modeSource,
+            } as any);
+
+            logConversationDecision({
+              replySuppressed: true,
+              suppressedMode: effectiveBotMode,
+              suppressedBy: modeSource,
+            });
+
+            const hasVisitInterest = detectVisitInterest(rawText);
+            await upsertLeadProfileImpl({
+              instance,
+              remoteJid,
+              extracted: nextState?.extracted ?? extracted,
+              leadScore: nextState?.leadScore ?? state.leadScore,
+              leadLabel: leadLabel(Number(nextState?.leadScore ?? state.leadScore ?? 0)),
+              decision: null,
+              lastSummary: null,
+              funnelStage: (nextState as any)?._coachStage ?? (nextState as any)?.stage ?? null,
+              mainObjection: (nextState as any)?._mainObjection ?? null,
+              lastCtaOffered: null,
+              visitInterest: hasVisitInterest || null,
+              shownVehicleIds: null,
+              incrementRecontact: false,
+            });
+            return;
+          }
+
           // Guardrail comercial: no adjuntar imagen salvo pedido explícito del cliente.
           const rawImageUrl = options?.imageUrl;
           const validImageUrl = wantsVehicleMedia(rawText) && rawImageUrl && /^https?:\/\/.{10,}/.test(rawImageUrl)
@@ -1399,8 +1444,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
           await setStateImpl(instance, remoteJid, {
             ...nextState,
-            lastBotAt: sentIso,
-            last_bot_reply_at: sentIso,
+            lastBotAt: processedIso,
+            last_bot_reply_at: processedIso,
             last_bot_reply_hash: hashString(reply)
           });
 
@@ -2050,15 +2095,21 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         }
       }
       if (!reply) {
-        if (explicitVehicleRequestedThisTurn && isVehicleDetailsRequest(rawText)) {
+        const hasSpecificTurnEntity = explicitVehicleRequestedThisTurn;
+        const activeEntityEvidence = hasSpecificTurnEntity
+          ? hasActiveVehicleEvidence(explicitTurnEntity, lastHitItems, prevIntent, currentSearchCtx)
+          : false;
+
+        if (lastMedia && !String(rawText || '').trim()) {
+          reply = 'Te vi la imagen. ¿Qué modelo o marca querés mirar?';
+        } else if (hasSpecificTurnEntity && isVehicleDetailsRequest(rawText) && !activeEntityEvidence) {
           const vehicleRef = formatVehicleReference(explicitTurnEntity);
           reply = `¿Te referís a ${vehicleRef} o querés que te muestre opciones parecidas que sí tenga ahora?`;
-          (newState as any)._preserveFallbackReply = true;
+        } else if (hasSpecificTurnEntity) {
+          const what = formatVehicleReference(explicitTurnEntity);
+          reply = buildNoStockReply({ vehicleLabel: what });
         } else {
-          const nextQuestion = buildWideSearchFallback(currentSearchCtx);
-          reply = lastMedia && !String(rawText || '').trim()
-            ? 'Te vi la imagen. ¿Qué modelo o marca querés mirar?'
-            : nextQuestion;
+          reply = buildWideSearchFallback(currentSearchCtx);
         }
         newState.last_intent = 'no_match';
         newState.last_query = rawText;
@@ -2336,12 +2387,8 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             const activeEntityEvidence = hasSpecificTurnEntity
               ? hasActiveVehicleEvidence(explicitTurnEntity, lastHitItems, prevIntent, currentSearchCtx)
               : false;
-            const conversationStage = String((state as any)?.stage ?? '').toLowerCase();
-            const shouldClarifyUnknownVehicle = hasSpecificTurnEntity
-              && isVehicleDetailsRequest(rawText)
-              && !activeEntityEvidence
-              && conversationStage !== 'idle';
-            if (shouldClarifyUnknownVehicle) {
+            const canAskVehicleClarifier = String(state.stage || '').toLowerCase() === 'awaiting_query';
+            if (hasSpecificTurnEntity && isVehicleDetailsRequest(rawText) && !activeEntityEvidence && canAskVehicleClarifier) {
               const vehicleRef = formatVehicleReference(explicitTurnEntity);
               reply = `¿Te referís a ${vehicleRef} o querés que te muestre opciones parecidas que sí tenga ahora?`;
             } else if (hasSpecificTurnEntity) {
@@ -2350,7 +2397,6 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             } else {
               reply = buildWideSearchFallback(ctx, { repeatedDeadSearch });
             }
-            (newState as any)._preserveFallbackReply = true;
             logConversationDecision({
               continuedThread: !operationalRestart,
               followUpDetected: hasSpecificTurnEntity || hasSearchCtx,
@@ -2701,11 +2747,21 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
 
     // ── Anti-repeat fallback: vary the question (v3 — filtrado por campos conocidos) ──
     const lastFallbackAt = (state as any).last_fallback_at;
-    if (isFallback && lastFallbackAt && !(newState as any)._preserveFallbackReply) {
+    if (isFallback && lastFallbackAt) {
       const lastFb = Date.parse(lastFallbackAt);
       if (!Number.isNaN(lastFb) && now - lastFb < env.fallbackCooldownMs) {
         // Construir lista de preguntas filtrando las que ya fueron respondidas
         const ctx = (newState as any).search_context ?? state.search_context ?? {};
+        const shouldKeepBroadCategoryFallback = Boolean(
+          (ctx?.maxPrice || ctx?.amount) &&
+          (ctx?.year || ctx?.minYear || ctx?.maxYear) &&
+          !ctx?.bodywork
+        );
+
+        if (shouldKeepBroadCategoryFallback) {
+          reply = buildWideSearchFallback(ctx, { repeatedDeadSearch: true });
+          isFallback = false;
+        } else {
         const fallbackQuestions: string[] = [];
 
         // Solo preguntar marca/modelo si no se conoce ninguno de los dos
@@ -2733,6 +2789,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         }
         // Si todos los campos básicos ya están: no cambiar el reply (usar el fallback original)
         isFallback = false;
+        }
       }
     }
 

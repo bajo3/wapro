@@ -80,6 +80,7 @@ function installHarness(catalog: any[]): RuntimeHarness {
   __setWebhookRuntimeOverrides({
     getContactRule: async () => 'ON',
     getConversationRule: async () => 'ON',
+    getIntelligenceSettings: async () => ({ botEnabled: true }),
     getState: async (instance: string, remoteJid: string) =>
       clone(stateStore.get(`${instance}:${remoteJid}`) ?? { stage: 'awaiting_query', gpt_history: [] }),
     setState: async (instance: string, remoteJid: string, nextState: any) => {
@@ -243,6 +244,33 @@ async function testSafeNoStockReply(): Promise<void> {
   assert.equal(hasDecision(harness.decisionLogs, { safeNoStockReply: true }), true, 'debe loguear respuesta segura de no-stock');
 }
 
+async function testOffModeListensWithoutReplying(): Promise<void> {
+  const harness = installHarness([
+    {
+      id: 'vento-1',
+      brand: 'Volkswagen',
+      model: 'Vento',
+      name: 'Volkswagen Vento 2.5 Luxury',
+      year: 2016,
+      km: 64000,
+      priceNumber: 16_900_000,
+      price: 'ARS 16.900.000',
+      image: 'https://example.com/vento-1.jpg',
+    },
+  ]);
+
+  __setWebhookRuntimeOverrides({
+    getContactRule: async () => 'OFF',
+  });
+
+  const result = await deliverMessage(harness, 'busco un vento hasta 17 millones');
+
+  assert.equal(result.reply, '', 'en OFF no debe enviar respuesta automática');
+  assert.equal(result.state?.search_context?.brand, 'volkswagen', 'en OFF debe seguir actualizando contexto');
+  assert.equal(result.state?.search_context?.model, 'vento', 'en OFF debe seguir escuchando el pedido');
+  assert.equal(hasDecision(harness.decisionLogs, { replySuppressed: true, suppressedMode: 'OFF' }), true, 'debe registrar que la respuesta fue suprimida');
+}
+
 async function testBlocksAutomaticMediaWithoutExplicitRequest(): Promise<void> {
   const harness = installHarness([
     {
@@ -396,6 +424,7 @@ async function run(): Promise<void> {
     await testFewKmFollowUpUsesPreviousSearch();
     await testVehicleDetailsUseLastMentionedVehicle();
     await testSafeNoStockReply();
+await testOffModeListensWithoutReplying();
     await testBlocksAutomaticMediaWithoutExplicitRequest();
     await testRealTopicChangeCutsPreviousContext();
     await testTopicChangeWithBroadSearchDoesNotReviveOldModel();
