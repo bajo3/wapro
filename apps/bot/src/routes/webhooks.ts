@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { env } from '../lib/env.js';
+import { logAiRuntimeSkip, resolveAiRuntime } from '../services/aiRuntime.js';
 import { pool } from '../services/db.js';
 import { getUsdToArs } from '../services/exchangeRate.js';
 import { evolutionSendPresence } from '../services/evolution.js';
@@ -60,7 +61,9 @@ import { logBotDecision } from '../lib/decisionLogger.js';
 import { detectBuyerConcernSignals, detectStagnation } from '../services/conversationAnalyzer.js';
 import {
   buildNoStockReply,
+  isActiveVehicleReferenceCompatible,
   isConversationKeepAliveMessage,
+  isDirectVehicleInterestMessage,
   isSearchRefinementMessage,
   isVehicleDetailsRequest,
   selectMentionedVehicle,
@@ -993,6 +996,48 @@ function buildVehicleDetailReply(item: any): string {
   ].join('\n');
 }
 
+function buildActiveVehicleSnapshot(item: any, nowIso: string): Record<string, any> {
+  return {
+    lastPresentedVehicleId: item?.id ? String(item.id) : undefined,
+    lastPresentedVehicleTitle: String(item?.name ?? '').trim() || undefined,
+    lastPresentedVehiclePriceArs: typeof item?.priceNumber === 'number' && String(item?.currency ?? 'ARS').toUpperCase() !== 'USD'
+      ? Number(item.priceNumber)
+      : undefined,
+    lastPresentedVehicleBrand: item?.brand ? String(item.brand) : undefined,
+    lastPresentedVehicleModel: item?.model ? String(item.model) : undefined,
+    lastPresentedAt: nowIso,
+  };
+}
+
+function getActivePresentedVehicle(catalog: any[], state: ConvState, now: number): any | null {
+  const activeAt = (state as any)?.lastPresentedAt ? Date.parse((state as any).lastPresentedAt) : NaN;
+  const isRecent = !Number.isNaN(activeAt) && now - activeAt < 20 * 60 * 1000;
+  const activeId = String((state as any)?.lastPresentedVehicleId ?? '').trim();
+  if (isRecent && activeId) {
+    const match = catalog.find((it: any) => String(it?.id ?? '') === activeId);
+    if (match) return match;
+  }
+
+  const lastHits = Array.isArray((state as any)?.last_hits) ? (state as any).last_hits : [];
+  const lastHitsAt = (state as any)?.last_hits_at ? Date.parse((state as any).last_hits_at) : NaN;
+  const lastHitsFresh = lastHits.length > 0 && !Number.isNaN(lastHitsAt) && now - lastHitsAt < 20 * 60 * 1000;
+  if (lastHitsFresh) {
+    const first = catalog.find((it: any) => String(it?.id ?? '') === String(lastHits[0]));
+    if (first) return first;
+  }
+  return null;
+}
+
+function buildActiveVehicleInterestReply(item: any): string {
+  const priceLine = typeof item?.priceNumber === 'number'
+    ? `, está en ${String(item?.currency ?? 'ARS').toUpperCase()} ${Number(item.priceNumber).toLocaleString('es-AR')}`
+    : '';
+  const closer = item?.image
+    ? 'Si querés, te paso más fotos o más info.'
+    : 'Si querés, te paso más info de esa unidad.';
+  return `Buenísimo. El que viste es el ${item?.name ?? 'vehículo que te mostré'}${priceLine}. ${closer}`;
+}
+
 async function findReferencedVehicle(catalog: any[], rawText: string, ctx: any): Promise<any | null> {
   const normText = normalize(rawText);
   const matches = await getVehicleMatches(catalog, rawText, { ...ctx, maxPrice: undefined }, 3);
@@ -1015,6 +1060,12 @@ function clearOperationalContextState(state: ConvState): ConvState {
   next.search_context_at = undefined;
   next.last_hits = undefined;
   next.last_hits_at = undefined;
+  next.lastPresentedVehicleId = undefined;
+  next.lastPresentedVehicleTitle = undefined;
+  next.lastPresentedVehiclePriceArs = undefined;
+  next.lastPresentedVehicleBrand = undefined;
+  next.lastPresentedVehicleModel = undefined;
+  next.lastPresentedAt = undefined;
   next.finance = undefined;
   next.agent = undefined;
   next.last_query = undefined;
@@ -1791,6 +1842,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
     const lastHitItems = lastHitsFresh
       ? catalog.filter((it: any) => lastHits.includes(it.id))
       : [];
+    const activePresentedVehicle = getActivePresentedVehicle(catalog, state, now);
     const opt = extractOptionNumber(rawText);
     const asksPriceQuick = /(precio|cuanto|vale|valor|sale)/i.test(rawText);
 
@@ -1801,7 +1853,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
         const item = catalog.find((x) => x.id === selectedId);
         if (item) {
           const detailReply = `Bien, de las que viste me quedaría con esta:\n${formatItemLine(item, opt)}\n\nSi querés, coordinamos visita, te veo financiación o te tomo la permuta.`;
-          scheduleReply(detailReply, { ...state, stage: 'idle', last_intent: 'option_selected' } as any, { imageUrl: (item as any).image ?? undefined });
+          scheduleReply(detailReply, { ...state, stage: 'idle', last_intent: 'option_selected', ...buildActiveVehicleSnapshot(item, nowIso) } as any, { imageUrl: (item as any).image ?? undefined });
           return;
         }
       }
@@ -1821,12 +1873,44 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           });
           scheduleReply(
             buildVehicleDetailReply(item),
-            { ...state, stage: 'idle', last_intent: 'vehicle_details_followup', last_hits: [item.id], last_hits_at: nowIso } as any,
+            { ...state, stage: 'idle', last_intent: 'vehicle_details_followup', last_hits: [item.id], last_hits_at: nowIso, ...buildActiveVehicleSnapshot(item, nowIso) } as any,
             { imageUrl: (item as any).image ?? undefined }
           );
           return;
         }
       }
+    }
+
+    if (
+      activePresentedVehicle &&
+      isDirectVehicleInterestMessage(rawText) &&
+      isActiveVehicleReferenceCompatible(rawText, activePresentedVehicle)
+    ) {
+      logAiRuntimeSkip(
+        resolveAiRuntime({ leadScore: Number(state.leadScore ?? 0) }),
+        'webhooks.activeVehicleFollowup',
+        'deterministic_active_vehicle_followup',
+        'active_vehicle_reference'
+      );
+      logConversationDecision({
+        continuedThread: true,
+        followUpDetected: true,
+        usedUpdatedContext: true,
+        resolvedVehicleSource: 'active_presented_vehicle',
+      });
+      scheduleReply(
+        buildActiveVehicleInterestReply(activePresentedVehicle),
+        {
+          ...state,
+          stage: 'idle',
+          last_intent: 'active_vehicle_followup',
+          last_hits: [activePresentedVehicle.id],
+          last_hits_at: nowIso,
+          ...buildActiveVehicleSnapshot(activePresentedVehicle, nowIso),
+        } as any,
+        { imageUrl: wantsVehicleMedia(rawText) ? (activePresentedVehicle as any).image ?? undefined : undefined }
+      );
+      return;
     }
 
     // ── Multi-turn refinement: if we just showed product results and user adds filters,
@@ -1853,6 +1937,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
           last_query: (state.last_query || '') + ' | refine: ' + rawText,
           last_hits: hits.map((it) => it.id).slice(0, 3),
           last_hits_at: nowIso,
+          ...buildActiveVehicleSnapshot(hits[0], nowIso),
           extracted,
           search_context: currentSearchCtx,
           search_context_at: nowIso
@@ -2182,6 +2267,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             const detailReply = buildVehicleReply(rawText, matches, currentSearchCtx);
             if (detailReply.trim()) {
               const nextState: ConvState = { ...state, stage: 'idle', last_intent: 'product_results_single', last_query: rawText, last_hits: [item.id], last_hits_at: nowIso };
+              Object.assign(nextState as any, buildActiveVehicleSnapshot(item, nowIso));
               scheduleReply(detailReply, nextState, { imageUrl: (item as any).image ?? undefined });
               return;
             }
@@ -2194,6 +2280,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               newState.last_query = rawText;
               newState.last_hits = (matches.hits.length ? matches.hits : matches.nearby).map((it) => it.id).slice(0, 3);
               newState.last_hits_at = nowIso;
+              Object.assign(newState as any, buildActiveVehicleSnapshot((matches.hits.length ? matches.hits : matches.nearby)[0], nowIso));
               // Attach the first result's photo so the user sees a preview image
               (newState as any)._firstVehicleImage = (matches.hits[0] as any)?.image ?? undefined;
             }
@@ -2329,7 +2416,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                   vehicles: catalog as any[],
                   extracted: mergedExtracted,
                   shownVehicleIds: allShownIds,
-                  maxResults: 30,
+                  maxResults: catalog.length,
                 });
                 rankedCatalog = topVehicles;
                 if (diagnosticLog) console.log(`[ranker] top3:\n${diagnosticLog}`);
@@ -2425,6 +2512,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               noStockContext: !!(newState as any)._noStockContext,
               memoryBlock: memoryBlock || undefined,
               botMemoryContext: botMemoryContextBlock,
+              activeVehicle: activePresentedVehicle,
             });
 
             // ── FIX-10: Stagnation check — force handoff if conversation is stuck ──────
@@ -2489,6 +2577,14 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 updatedAt: nowIso
               };
               (newState as any).missing_fields = agentDecision.missingFields || [];
+              if (Array.isArray(agentDecision.vehicleIds) && agentDecision.vehicleIds.length > 0) {
+                const activeFromAgent = rankedCatalog.find((it: any) => String(it?.id ?? '') === String(agentDecision.vehicleIds[0]));
+                if (activeFromAgent) {
+                  Object.assign(newState as any, buildActiveVehicleSnapshot(activeFromAgent, nowIso));
+                  newState.last_hits = agentDecision.vehicleIds.map((id: any) => String(id)).slice(0, 4);
+                  newState.last_hits_at = nowIso;
+                }
+              }
               // v3: persistir historial también cuando responde el agente estructurado
               const existingHistory = (state as any).gpt_history ?? [];
               (newState as any).gpt_history = [

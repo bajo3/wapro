@@ -30,6 +30,41 @@ export function wantsVehicleMedia(text: string): boolean {
   return /\b(foto|fotos|imagen|imagenes|video|videos|mostrame foto|mandame foto|pasame foto|me mandas una foto|tenes fotos|tenes alguna foto)\b/.test(t);
 }
 
+export function isDirectVehicleInterestMessage(text: string): boolean {
+  const t = normalize(text);
+  if (!t) return false;
+  return /\b(me interesa(?: mucho)?|me gusta|ese me gusta|este me gusta|ese auto|este auto|ese\b|este\b|el de\b|pasame mas info|pasame info|contame mas|decime mas|tenes mas fotos|tenes fotos|quiero ese)\b/.test(t);
+}
+
+export function isActiveVehicleReferenceCompatible(
+  text: string,
+  vehicle?: { name?: string; brand?: string; model?: string; priceNumber?: number; price?: number }
+): boolean {
+  const t = normalize(text);
+  if (!t || !vehicle) return false;
+
+  const vehicleTokens = normalize([vehicle.brand, vehicle.model, vehicle.name].filter(Boolean).join(' '))
+    .split(/\s+/)
+    .filter((token) => token.length >= 4);
+  if (vehicleTokens.some((token) => t.includes(token))) return true;
+
+  if (/\b(este|este auto|ese|ese auto|el de|me interesa|me gusta|contame mas|decime mas|pasame mas info|tenes mas fotos|tenes fotos)\b/.test(t)) {
+    return true;
+  }
+
+  const normalizedPrice = Number(vehicle.priceNumber ?? vehicle.price ?? 0);
+  if (normalizedPrice > 0) {
+    const rawDigits = String(text || '').replace(/[^\d]/g, '');
+    const fullPrice = String(Math.round(normalizedPrice));
+    const priceMillions = String(Math.round(normalizedPrice / 1_000_000));
+    if ((rawDigits.length >= 6 && fullPrice.includes(rawDigits)) || (priceMillions.length >= 2 && rawDigits === priceMillions)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function buildNoStockReply(options?: {
   vehicleLabel?: string;
   allowAlternatives?: boolean;

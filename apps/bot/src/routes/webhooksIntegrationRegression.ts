@@ -325,6 +325,71 @@ async function testUnknownVehicleDetailsAsksToClarifyInsteadOfAssumingStock(): P
   assert.doesNotMatch(result.reply, /seguimos con|la última vez/i, 'no debe inventar continuidad ni stock');
 }
 
+async function testDirectInterestUsesActiveVehicleInsteadOfOpenSearch(): Promise<void> {
+  const harness = installHarness([
+    {
+      id: 'c4-1',
+      brand: 'Citroen',
+      model: 'C4 Lounge',
+      name: 'Citroen C4 Lounge 2017 1.6 HDi Feel Pack',
+      year: 2017,
+      km: 87000,
+      priceNumber: 16_500_000,
+      price: 'ARS 16.500.000',
+      image: 'https://example.com/c4-1.jpg',
+    },
+  ]);
+
+  const first = await deliverMessage(harness, 'mostrame algo hasta 17 millones');
+  harness.stateStore.set('integration-test:5491100000001@s.whatsapp.net', {
+    ...first.state,
+    last_hits: ['c4-1'],
+    last_hits_at: new Date().toISOString(),
+    lastPresentedVehicleId: 'c4-1',
+    lastPresentedVehicleTitle: 'Citroen C4 Lounge 2017 1.6 HDi Feel Pack',
+    lastPresentedVehiclePriceArs: 16_500_000,
+    lastPresentedVehicleBrand: 'Citroen',
+    lastPresentedVehicleModel: 'C4 Lounge',
+    lastPresentedAt: new Date().toISOString(),
+  });
+
+  const followUp = await deliverMessage(harness, 'me interesa este auto');
+
+  assert.match(followUp.reply, /c4 lounge/i, 'debe responder sobre la unidad activa');
+  assert.match(followUp.reply, /16\.500\.000|16,500,000/i, 'debe usar el precio real del catálogo');
+  assert.doesNotMatch(followUp.reply, /auto chico|suv|trabajo|no tengo match confirmado/i, 'no debe reabrir la búsqueda');
+  assert.equal(hasDecision(harness.decisionLogs, { resolvedVehicleSource: 'active_presented_vehicle' }), true, 'debe loguear que resolvió contra la unidad activa');
+}
+
+async function testGeneralQueryWithCatalogMatchesShowsRealVehicles(): Promise<void> {
+  const harness = installHarness([
+    {
+      id: 'onix-1',
+      brand: 'Chevrolet',
+      model: 'Onix',
+      name: 'Chevrolet Onix LTZ 2018',
+      year: 2018,
+      km: 72000,
+      priceNumber: 15_900_000,
+      price: 'ARS 15.900.000',
+    },
+    {
+      id: 'etios-1',
+      brand: 'Toyota',
+      model: 'Etios',
+      name: 'Toyota Etios XLS 2017',
+      year: 2017,
+      km: 68000,
+      priceNumber: 15_700_000,
+      price: 'ARS 15.700.000',
+    },
+  ]);
+
+  const result = await deliverMessage(harness, 'busco algo chico para ciudad');
+  assert.match(result.reply, /onix|etios/i, 'debe mostrar unidades reales del catálogo');
+  assert.doesNotMatch(result.reply, /sin stock disponible|no tengo match confirmado/i, 'no debe hablar como si no tuviera catálogo real');
+}
+
 async function run(): Promise<void> {
   try {
     await testGreetingKeepsContext();
@@ -335,6 +400,8 @@ async function run(): Promise<void> {
     await testRealTopicChangeCutsPreviousContext();
     await testTopicChangeWithBroadSearchDoesNotReviveOldModel();
     await testUnknownVehicleDetailsAsksToClarifyInsteadOfAssumingStock();
+    await testDirectInterestUsesActiveVehicleInsteadOfOpenSearch();
+    await testGeneralQueryWithCatalogMatchesShowsRealVehicles();
     console.log('webhooksIntegrationRegression OK');
   } finally {
     __resetWebhookAggregators();

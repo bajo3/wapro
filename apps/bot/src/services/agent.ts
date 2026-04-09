@@ -656,7 +656,7 @@ export async function decideAgentAction(params: any & {
   botMemoryContext?: string;
 }): Promise<any | null> {
   const { loopData, leadScore, dealershipName, extracted, userMessage, history, catalog, dynamicExamples, state,
-          lastBotReply, policyContext, noStockContext, memoryBlock, botMemoryContext } = params;
+          lastBotReply, policyContext, noStockContext, memoryBlock, botMemoryContext, activeVehicle } = params;
 
   const { askGPTJson } = await import('./gpt.js');
   const { buildSalesCoachContext, buildSalesCoachSection } = await import('./salesCoach.js');
@@ -781,6 +781,18 @@ export async function decideAgentAction(params: any & {
     ? `\n${botMemoryContext.trim()}`
     : '';
 
+  const activeVehicleSection = activeVehicle
+    ? `\n── UNIDAD ACTIVA EN LA CONVERSACIÓN ──\n` +
+      `Si el usuario dice "este", "ese", "me interesa", "me gusta", "más info" o pide fotos, ` +
+      `priorizá ESTA unidad y no reabras una búsqueda amplia salvo que cambie claramente de tema.\n` +
+      `Unidad activa: ${(
+        activeVehicle.name ??
+        [activeVehicle.brand, activeVehicle.model].filter(Boolean).join(' ')
+      ) || 'unidad activa'} ` +
+      `${activeVehicle.id ? `[id:${activeVehicle.id}]` : ''}` +
+      `${typeof activeVehicle.priceNumber === 'number' ? ` — ARS ${Number(activeVehicle.priceNumber).toLocaleString('es-AR')}` : ''}`
+    : '';
+
   // Combine all intelligence sections — order matters for prompt priority
   const intelligenceSections = [
     memoryBlock,               // 0. Memoria persistente del lead (recontacto / datos previos)
@@ -792,6 +804,7 @@ export async function decideAgentAction(params: any & {
     policySection,             // 6. Política interna activa
     noStockSection,            // 7. Sin stock exacto
     botMemorySection,          // 8. Preguntas/objeciones efectivas de botMemory (Fase 2)
+    activeVehicleSection,      // 9. Unidad activa actual
   ].filter(Boolean).join('\n');
 
   const extraSections = intelligenceSections;

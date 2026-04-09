@@ -19,6 +19,13 @@ export type ConvState = {
   last_hits?: string[];
   /** ISO timestamp when last_hits were stored */
   last_hits_at?: string;
+  /** Last concrete vehicle presented as the active unit in the conversation */
+  lastPresentedVehicleId?: string;
+  lastPresentedVehicleTitle?: string;
+  lastPresentedVehiclePriceArs?: number;
+  lastPresentedVehicleBrand?: string;
+  lastPresentedVehicleModel?: string;
+  lastPresentedAt?: string;
 
   /** ISO timestamp of the last user message processed */
   last_user_at?: string;

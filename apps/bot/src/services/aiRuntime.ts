@@ -38,19 +38,30 @@ export function resolveAiRuntime(options?: {
   };
 }
 
-function formatAiTraceMessage(trace: AiRuntimeTrace, caller: string, reason: string): string {
-  return `[ai] provider=${trace.aiProvider} configuredModel=${trace.configuredModel} effectiveModel=${trace.effectiveModel} fallbackModel=${trace.fallbackModel ?? 'none'} caller=${caller} reason=${reason}`;
+function formatAiTraceMessage(
+  trace: AiRuntimeTrace,
+  caller: string,
+  reason: string,
+  options?: { aiUsed?: boolean; aiSkippedReason?: string }
+): string {
+  return `[ai] provider=${trace.aiProvider} configuredModel=${trace.configuredModel} effectiveModel=${trace.effectiveModel} fallbackModel=${trace.fallbackModel ?? 'none'} caller=${caller} reason=${reason} aiUsed=${options?.aiUsed === false ? 'false' : 'true'} aiSkippedReason=${options?.aiSkippedReason ?? 'none'}`;
 }
 
 export function logAiRuntimeStartup(trace: AiRuntimeTrace, caller: string, reason: string): void {
   const key = `${caller}|${reason}|${trace.aiProvider}|${trace.configuredModel}|${trace.effectiveModel}|${trace.fallbackModel ?? 'none'}`;
   if (loggedStartupTraces.has(key)) return;
   loggedStartupTraces.add(key);
-  console.info(formatAiTraceMessage(trace, caller, reason));
+  console.info(formatAiTraceMessage(trace, caller, reason, { aiUsed: false, aiSkippedReason: 'startup_configuration_only' }));
 }
 
 export function logAiRuntimeCall(trace: AiRuntimeTrace, caller: string, reason: string): void {
   console.info(
-    formatAiTraceMessage(trace, caller, reason)
+    formatAiTraceMessage(trace, caller, reason, { aiUsed: true })
+  );
+}
+
+export function logAiRuntimeSkip(trace: AiRuntimeTrace, caller: string, reason: string, aiSkippedReason: string): void {
+  console.info(
+    formatAiTraceMessage(trace, caller, reason, { aiUsed: false, aiSkippedReason })
   );
 }
