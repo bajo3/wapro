@@ -21,6 +21,8 @@ export type NextAction =
   | 'offer_financing'
   | 'invite_to_visit'
   | 'send_matching_options'
+  | 'clarify_or_broaden_search'
+  | 'send_category_recommendations'
   | 'clarify_currency'
   | 'handoff_to_human'
   | 'follow_up_later'
@@ -56,6 +58,16 @@ export function determineNextBestAction(
   const wantsFinancing = Boolean(extracted?.wantsFinancing || primary === 'financing_intent' || secondary === 'financing_intent');
   const ambiguousCurrency = Boolean(extracted?.ambiguousCurrency);
   const hasName = Boolean(extracted?.name);
+  const zeroExactMatches = extracted?.zeroExactMatches === true || Number(extracted?.vehiclesAfter ?? NaN) === 0;
+  const lowConfidence = Number(intent.confidence ?? 0) < 0.65 || Boolean(extracted?.lowConfidenceIntent);
+  const hasBroadContext = Boolean(
+    hasBudget ||
+    extracted?.year ||
+    extracted?.minYear ||
+    extracted?.maxYear ||
+    extracted?.bodywork ||
+    extracted?.useCase
+  );
 
   // ── Moneda ambigua: siempre aclarar antes de cualquier otra acción ────────
   if (ambiguousCurrency) {
@@ -64,6 +76,19 @@ export function determineNextBestAction(
       reason: 'El cliente mencionó un monto sin especificar si son pesos o dólares',
       priority: 5,
       suggestedMessage: 'Preguntarle si el monto mencionado es en pesos o dólares antes de mostrar opciones',
+      forHuman: false,
+      forBot: true,
+    };
+  }
+
+  if (zeroExactMatches && lowConfidence) {
+    return {
+      action: hasBroadContext ? 'send_category_recommendations' : 'clarify_or_broaden_search',
+      reason: 'La búsqueda cerrada quedó sin matches confirmados y la intención sigue siendo ambigua',
+      priority: 4,
+      suggestedMessage: hasBroadContext
+        ? 'Abrir la búsqueda por categoría o uso real en vez de insistir con filtros sin stock.'
+        : 'Hacer una sola pregunta útil para abrir la búsqueda y evitar seguir mostrando cero resultados.',
       forHuman: false,
       forBot: true,
     };

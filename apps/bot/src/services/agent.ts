@@ -21,6 +21,7 @@
 
 import { pool } from './db.js';
 import { env } from '../lib/env.js';
+import { resolveAiRuntime } from './aiRuntime.js';
 
 export interface AgentDecision {
   intent?: string;
@@ -838,7 +839,9 @@ export async function decideAgentAction(params: any & {
     history: historyArr.slice(-8),  // 8 turns of context
     model,
     maxTokens: 1100,
-    temperature: isClosingStage ? 0.35 : 0.55
+    temperature: isClosingStage ? 0.35 : 0.55,
+    traceCaller: 'agent.decideAgentAction',
+    traceReason: 'agent_decision'
   });
 
   if (!result || typeof result !== 'object') return null;
@@ -878,9 +881,8 @@ export async function decideAgentAction(params: any & {
 }
 
 export function selectModel(score?: number): string {
-  const base = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
-  const advanced = process.env.OPENAI_MODEL_ADVANCED ?? base;
-  return Number(score ?? 0) >= 60 ? advanced : base;
+  const runtime = resolveAiRuntime({ leadScore: score, preferAdvanced: Number(score ?? 0) >= 60 });
+  return runtime.effectiveModel;
 }
 
 /**

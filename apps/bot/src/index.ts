@@ -55,9 +55,11 @@ import { runAutoTrainerScan } from "./services/autoTrainer.js";
 import { loadBotMemory } from "./services/botMemory.js";
 import { computeHourlyMetrics } from "./services/metricsAggregator.js";
 import { runEvalSuite } from "./services/evalRunner.js";
+import { logAiRuntimeStartup, resolveAiRuntime } from "./services/aiRuntime.js";
 
 async function main() {
   await migrate();
+  logAiRuntimeStartup(resolveAiRuntime(), 'startup', 'startup_boot');
 
   // Carga la memoria conversacional del bot al arrancar (sin bloquear)
   try {

@@ -19,6 +19,7 @@
 
 import { pool } from './db.js';
 import { askGPTJson } from './gpt.js';
+import { resolveAiRuntime } from './aiRuntime.js';
 import { createFaq, invalidateCache } from './intelligence.js';
 import {
   autoExtractPatterns,
@@ -215,9 +216,11 @@ export async function learnFromConversation(
     const analysis = await askGPTJson<GptConversationAnalysis>({
       systemPrompt: 'Sos un supervisor de calidad de un bot de ventas. Respondés SOLO JSON válido, sin explicaciones.',
       userMessage: prompt,
-      model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
+      model: resolveAiRuntime().effectiveModel,
       maxTokens: 800,
       temperature: 0.2,
+      traceCaller: 'autoTrainer.analyzeConversation',
+      traceReason: 'auto_trainer',
     });
 
     if (!analysis || typeof analysis !== 'object') {

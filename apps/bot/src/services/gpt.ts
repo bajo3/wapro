@@ -12,6 +12,8 @@
  */
 
 import fetch from 'node-fetch';
+import { env } from '../lib/env.js';
+import { logAiRuntimeCall, resolveAiRuntime } from './aiRuntime.js';
 
 export interface GptParams {
   systemPrompt: string;
@@ -23,6 +25,8 @@ export interface GptParams {
   model?: string;
   maxTokens?: number;
   temperature?: number;
+  traceCaller?: string;
+  traceReason?: string;
 }
 
 /**
@@ -30,10 +34,12 @@ export interface GptParams {
  * está configurada la API key.
  */
 export async function askGPT(params: GptParams): Promise<string | null> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = env.openAiApiKey;
   if (!apiKey) return null;
 
-  const model = params.model ?? process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
+  const runtime = resolveAiRuntime({ requestedModel: params.model });
+  const model = runtime.effectiveModel;
+  logAiRuntimeCall(runtime, params.traceCaller ?? 'askGPT', params.traceReason ?? 'gpt');
   const maxTokens = params.maxTokens ?? 500;
   const temperature = params.temperature ?? 0.4;
 

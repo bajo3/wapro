@@ -809,7 +809,32 @@ function getNextBroadSearchQuestion(ctx: any): string {
   return getNextUsefulSearchQuestion(ctx);
 }
 
-function buildWideSearchFallback(ctx: any): string {
+function buildCategoryBroadeningPrompt(ctx: any): string {
+  if (ctx?.maxPrice && (ctx?.year || ctx?.minYear || ctx?.maxYear) && !ctx?.bodywork) {
+    return 'Si querés, lo abro por categoría y te muestro algo más chico, sedán/familiar, SUV o una opción para trabajo. ¿Cuál te sirve más?';
+  }
+  if (ctx?.bodywork && !ctx?.transmission) {
+    return 'Si querés, mantengo ese tipo de vehículo y lo abro por caja o por uso real para encontrar algo que sí haya. ¿Preferís manual, automático o te da lo mismo?';
+  }
+  return 'Si querés, en vez de cerrarlo por un modelo te lo abro por categoría: auto chico, familiar, ciudad, ruta, trabajo o primer auto. ¿Cuál te sirve más?';
+}
+
+function buildNoStockSearchSignature(ctx: any): string {
+  const signature = {
+    brand: ctx?.brand ? normalize(String(ctx.brand)) : null,
+    model: ctx?.model ? normalize(String(ctx.model)) : null,
+    bodywork: ctx?.bodywork ? normalize(String(ctx.bodywork)) : null,
+    transmission: ctx?.transmission ? normalize(String(ctx.transmission)) : null,
+    fuel: ctx?.fuel ? normalize(String(ctx.fuel)) : null,
+    maxPrice: Number(ctx?.maxPrice ?? ctx?.amount ?? 0) || null,
+    minYear: Number(ctx?.minYear ?? 0) || null,
+    maxYear: Number(ctx?.maxYear ?? ctx?.year ?? 0) || null,
+    useCase: ctx?.useCase ? normalize(String(ctx.useCase)) : null,
+  };
+  return JSON.stringify(signature);
+}
+
+function buildWideSearchFallback(ctx: any, options?: { repeatedDeadSearch?: boolean }): string {
   const filterCount = [
     ctx?.brand,
     ctx?.model,
@@ -819,8 +844,11 @@ function buildWideSearchFallback(ctx: any): string {
     ctx?.transmission,
     ctx?.fuel,
   ].filter(Boolean).length;
+  if (options?.repeatedDeadSearch) {
+    return `Con esos filtros ya me quedé sin matches confirmados. ${buildCategoryBroadeningPrompt(ctx)}`;
+  }
   if (filterCount >= 3) {
-    return buildNoStockReply();
+    return `Con esos filtros cerrados no tengo un match confirmado ahora. ${buildCategoryBroadeningPrompt(ctx)}`;
   }
   const nextQuestion = getNextBroadSearchQuestion(ctx);
   if (ctx?.maxPrice || ctx?.amount || ctx?.year || ctx?.minYear || ctx?.maxYear) {
@@ -2182,6 +2210,26 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
             // genere una respuesta más inteligente (alternativas, lista de espera, etc.).
             // Marcamos el contexto para que el agente sepa que no hubo stock.
             (newState as any)._noStockContext = true;
+            extracted.zeroExactMatches = true;
+            extracted.vehiclesAfter = 0;
+            extracted.noStockContext = true;
+            if (commercialResult.intent.confidence < 0.65) {
+              commercialResult.nextAction = {
+                action: (currentSearchCtx?.maxPrice || currentSearchCtx?.amount || currentSearchCtx?.year || currentSearchCtx?.minYear || currentSearchCtx?.maxYear || currentSearchCtx?.bodywork || currentSearchCtx?.useCase)
+                  ? 'send_category_recommendations'
+                  : 'clarify_or_broaden_search',
+                reason: 'La búsqueda cerrada quedó sin matches confirmados y conviene abrirla antes de insistir con filtros muertos',
+                priority: 4,
+                suggestedMessage: 'Abrir la búsqueda por categoría o hacer una sola pregunta útil.',
+                forHuman: false,
+                forBot: true,
+              } as any;
+            }
+            const noStockSignature = buildNoStockSearchSignature(currentSearchCtx);
+            const repeatedDeadSearch = Boolean(
+              noStockSignature && noStockSignature === String((state as any)._lastNoStockSignature ?? '')
+            );
+            (newState as any)._lastNoStockSignature = noStockSignature || undefined;
             // reply queda vacío → el código cae al agente en la rama else de shouldSearch? No,
             // shouldSearch es un else-if. Usamos el flag para mejorarlo en el agente call abajo.
             // Por ahora damos una respuesta consultiva como fallback de shouldSearch.
@@ -2192,12 +2240,12 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               : false;
             if (hasSpecificTurnEntity && isVehicleDetailsRequest(rawText) && !activeEntityEvidence) {
               const vehicleRef = formatVehicleReference(explicitTurnEntity);
-              reply = buildNoStockReply({ vehicleLabel: vehicleRef });
+              reply = `¿Te referís a ${vehicleRef} o querés que te muestre opciones parecidas que sí tenga ahora?`;
             } else if (hasSpecificTurnEntity) {
               const what = formatVehicleReference(explicitTurnEntity);
               reply = buildNoStockReply({ vehicleLabel: what });
             } else {
-              reply = buildWideSearchFallback(ctx);
+              reply = buildWideSearchFallback(ctx, { repeatedDeadSearch });
             }
             logConversationDecision({
               continuedThread: !operationalRestart,
@@ -2205,6 +2253,7 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
               usedUpdatedContext: Boolean(currentSearchCtx && hasUsefulSearchContext(currentSearchCtx)),
               resolvedVehicleSource: hasSpecificTurnEntity ? 'explicit_turn_entity' : 'search_context',
               safeNoStockReply: true,
+              repeatedDeadSearch,
             });
             newState.last_intent = 'no_match';
             newState.last_query = rawText;
@@ -2471,7 +2520,13 @@ async function handleAggregatedMessage(key: string, instance: string, remoteJid:
                 faqSummary: faqSummary || undefined
               });
 
-              const gptReply = await askGPTImpl({ systemPrompt, userMessage: rawText, history });
+              const gptReply = await askGPTImpl({
+                systemPrompt,
+                userMessage: rawText,
+                history,
+                traceCaller: 'webhooks.gptFallback',
+                traceReason: 'webhook_gpt_fallback'
+              });
 
               if (gptReply) {
                 const gptGr = applyGuardrail(gptReply, { source: 'gpt', lastBotReply });

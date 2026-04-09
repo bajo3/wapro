@@ -24,7 +24,10 @@ export const env = (() => {
     DATABASE_URL: z.string().min(1),
     // Optional: direct Supabase connection for the vehicles catalog.
     // When set, catalog reads go to Supabase instead of Railway — eliminates the sync script.
-    SUPABASE_DATABASE_URL: z.string().optional()
+    SUPABASE_DATABASE_URL: z.string().optional(),
+    OPENAI_API_KEY: z.string().optional(),
+    OPENAI_MODEL: z.string().optional(),
+    OPENAI_MODEL_ADVANCED: z.string().optional()
   });
 
   const parsed = schema.parse(process.env);
@@ -96,8 +99,9 @@ export const env = (() => {
     // ── OpenAI / GPT ──────────────────────────────────────────────────────────
     // Set OPENAI_API_KEY to enable GPT-4o intelligent fallback responses.
     // Without it the bot falls back to generic static replies.
-    openAiApiKey: process.env.OPENAI_API_KEY?.trim() || undefined,
-    openAiModel: process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini',
+    openAiApiKey: parsed.OPENAI_API_KEY?.trim() || undefined,
+    openAiModel: parsed.OPENAI_MODEL?.trim() || 'gpt-5.4-mini',
+    openAiAdvancedModel: parsed.OPENAI_MODEL_ADVANCED?.trim() || undefined,
 
     // Optional: name shown to GPT in the system prompt (e.g. "Jesús Díaz Automotores")
     dealershipName: process.env.DEALERSHIP_NAME?.trim() || undefined

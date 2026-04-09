@@ -101,6 +101,15 @@ export function generateSalesSuggestions(
   }
 
   // ── Permuta ───────────────────────────────────────────────────────────────
+  if (action === 'clarify_or_broaden_search' || action === 'send_category_recommendations') {
+    return {
+      suggestedAction: 'Abrir la búsqueda por categoría amplia o por uso, sin insistir con filtros que ya dieron sin stock.',
+      suggestedReplyStrategy: 'Hacer una sola pregunta útil o proponer categorías como auto chico, familiar, ciudad, ruta, trabajo o primer auto.',
+      urgency: 'today',
+      scriptHint: '"Con esos filtros cerrados no tengo match confirmado ahora. Si querés, lo abro por categoría: auto chico, familiar, ciudad, ruta, trabajo o primer auto."',
+    };
+  }
+
   if (hasTradeIn || action === 'ask_trade_in_details') {
     return {
       suggestedAction: 'Pedir detalles del usado: año, km, estado general.',

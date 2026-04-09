@@ -301,6 +301,30 @@ async function testRealTopicChangeCutsPreviousContext(): Promise<void> {
   assert.equal(hasDecision(harness.decisionLogs, { continuedThread: false }), true, 'debe loguear el corte real de contexto');
 }
 
+async function testTopicChangeWithBroadSearchDoesNotReviveOldModel(): Promise<void> {
+  const harness = installHarness([]);
+
+  await deliverMessage(harness, 'busco un volkswagen vento hasta 17 millones');
+  await deliverMessage(harness, 'busco otra cosa');
+  await deliverMessage(harness, 'estoy buscando algo hasta 17 millones');
+  const result = await deliverMessage(harness, 'algun 2014 - 2017');
+
+  assert.doesNotMatch(result.reply, /vento/i, 'la búsqueda nueva no debe revivir el modelo viejo');
+  assert.match(
+    result.reply,
+    /auto chico|sed[aá]n|familiar|suv|trabajo|categor[ií]a/i,
+    'sin matches exactos debe abrir la búsqueda por categoría amplia'
+  );
+}
+
+async function testUnknownVehicleDetailsAsksToClarifyInsteadOfAssumingStock(): Promise<void> {
+  const harness = installHarness([]);
+  const result = await deliverMessage(harness, 'el vento me das mas detalles?');
+
+  assert.match(result.reply, /te refer[ií]s a volkswagen vento/i, 'si el vehículo no estuvo activo debe pedir aclaración breve');
+  assert.doesNotMatch(result.reply, /seguimos con|la última vez/i, 'no debe inventar continuidad ni stock');
+}
+
 async function run(): Promise<void> {
   try {
     await testGreetingKeepsContext();
@@ -309,6 +333,8 @@ async function run(): Promise<void> {
     await testSafeNoStockReply();
     await testBlocksAutomaticMediaWithoutExplicitRequest();
     await testRealTopicChangeCutsPreviousContext();
+    await testTopicChangeWithBroadSearchDoesNotReviveOldModel();
+    await testUnknownVehicleDetailsAsksToClarifyInsteadOfAssumingStock();
     console.log('webhooksIntegrationRegression OK');
   } finally {
     __resetWebhookAggregators();
