@@ -15,6 +15,8 @@ const DEFAULT_SETTINGS = {
   handoffMessage: ""
 };
 
+type StoredItem = Record<string, any> & { id: string };
+
 async function readSetting(key: string): Promise<Setting | null> {
   return Setting.findOne({ where: { key } });
 }
@@ -47,13 +49,13 @@ function withId<T extends Record<string, any>>(item: T): T & { id: string } {
   return { ...item, id };
 }
 
-async function readList<T extends Record<string, any>>(key: string): Promise<Array<T & { id: string }>> {
+async function readList(key: string): Promise<StoredItem[]> {
   const row = await readSetting(key);
-  const list = parseJson<Array<T & { id: string }>>(row?.value, []);
+  const list = parseJson<StoredItem[]>(row?.value, []);
   return Array.isArray(list) ? list.filter(Boolean) : [];
 }
 
-async function writeList<T extends Record<string, any>>(key: string, list: Array<T & { id: string }>): Promise<void> {
+async function writeList(key: string, list: StoredItem[]): Promise<void> {
   await writeSetting(key, list);
 }
 
@@ -75,11 +77,11 @@ export async function saveBotSettings(payload: Record<string, any>): Promise<Rec
   return next;
 }
 
-export async function listPolicies(): Promise<Array<Record<string, any>>> {
+export async function listPolicies(): Promise<StoredItem[]> {
   return readList(BOT_POLICIES_KEY);
 }
 
-export async function createPolicy(payload: Record<string, any>): Promise<Record<string, any>> {
+export async function createPolicy(payload: Record<string, any>): Promise<StoredItem> {
   const current = await listPolicies();
   const next = withId({
     name: String(payload?.name || "").trim(),
@@ -95,11 +97,11 @@ export async function deletePolicy(id: string): Promise<void> {
   await writeList(BOT_POLICIES_KEY, current.filter(item => String(item.id) !== String(id)));
 }
 
-export async function listFaqs(): Promise<Array<Record<string, any>>> {
+export async function listFaqs(): Promise<StoredItem[]> {
   return readList(BOT_FAQS_KEY);
 }
 
-export async function createFaq(payload: Record<string, any>): Promise<Record<string, any>> {
+export async function createFaq(payload: Record<string, any>): Promise<StoredItem> {
   const current = await listFaqs();
   const next = withId({
     question: String(payload?.question || "").trim(),
@@ -114,11 +116,11 @@ export async function deleteFaq(id: string): Promise<void> {
   await writeList(BOT_FAQS_KEY, current.filter(item => String(item.id) !== String(id)));
 }
 
-export async function listPlaybooks(): Promise<Array<Record<string, any>>> {
+export async function listPlaybooks(): Promise<StoredItem[]> {
   return readList(BOT_PLAYBOOKS_KEY);
 }
 
-export async function createPlaybook(payload: Record<string, any>): Promise<Record<string, any>> {
+export async function createPlaybook(payload: Record<string, any>): Promise<StoredItem> {
   const current = await listPlaybooks();
   const next = withId({
     intent: String(payload?.intent || "").trim(),
