@@ -2,6 +2,19 @@ import { Router } from "express";
 import isAuth from "../middleware/isAuth";
 import AppError from "../errors/AppError";
 import { forwardBotAdmin } from "../services/BotServices/forwardBotAdmin";
+import {
+  createFaq,
+  createPlaybook,
+  createPolicy,
+  deleteFaq,
+  deletePlaybook,
+  deletePolicy,
+  getBotSettings,
+  listFaqs,
+  listPlaybooks,
+  listPolicies,
+  saveBotSettings
+} from "../services/BotServices/botCompatibilityStore";
 
 async function forward(req: any, path: string, query?: Record<string, string | number | boolean | undefined>) {
   return forwardBotAdmin({
@@ -11,6 +24,29 @@ async function forward(req: any, path: string, query?: Record<string, string | n
     query,
     context: "botIntelligenceRoutes"
   });
+}
+
+async function tryForward(
+  req: any,
+  paths: string[],
+  query?: Record<string, string | number | boolean | undefined>
+) {
+  let lastResponse: any = null;
+  let lastError: any = null;
+
+  for (const path of paths) {
+    try {
+      const response = await forward(req, path, query);
+      if (response.status !== 404) return response;
+      lastResponse = response;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (lastResponse) return lastResponse;
+  if (lastError) throw lastError;
+  return null;
 }
 
 const botIntelligenceRoutes = Router();
@@ -26,61 +62,97 @@ botIntelligenceRoutes.use((req, _res, next) => {
 
 // Settings
 botIntelligenceRoutes.get("/bot/intelligence/settings", async (req, res) => {
-  const r = await forward(req, "/admin/intelligence/settings");
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/intelligence/settings"]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.json({ settings: await getBotSettings(), source: "panel_compat" });
 });
 
 // Policies
 botIntelligenceRoutes.get("/bot/intelligence/policies", async (req, res) => {
-  const r = await forward(req, "/admin/intelligence/policies");
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/intelligence/policies"]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.json({ policies: await listPolicies(), source: "panel_compat" });
 });
 
 botIntelligenceRoutes.post("/bot/intelligence/policies", async (req, res) => {
-  const r = await forward(req, "/admin/intelligence/policies");
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/intelligence/policies"]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.status(201).json({ policy: await createPolicy(req.body || {}), source: "panel_compat" });
 });
 
 botIntelligenceRoutes.delete("/bot/intelligence/policies/:id", async (req, res) => {
-  const r = await forward(req, `/admin/intelligence/policies/${encodeURIComponent(req.params.id)}`);
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, [`/admin/intelligence/policies/${encodeURIComponent(req.params.id)}`]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  await deletePolicy(req.params.id);
+  return res.json({ ok: true, source: "panel_compat" });
 });
 
 botIntelligenceRoutes.put("/bot/intelligence/settings", async (req, res) => {
-  const r = await forward(req, "/admin/intelligence/settings");
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/intelligence/settings"]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.json({ settings: await saveBotSettings(req.body || {}), source: "panel_compat" });
 });
 
 // FAQs
 botIntelligenceRoutes.get("/bot/intelligence/faqs", async (req, res) => {
-  const r = await forward(req, "/admin/intelligence/faqs");
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/intelligence/faqs"]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.json({ faqs: await listFaqs(), source: "panel_compat" });
 });
 
 botIntelligenceRoutes.post("/bot/intelligence/faqs", async (req, res) => {
-  const r = await forward(req, "/admin/intelligence/faqs");
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/intelligence/faqs"]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.status(201).json({ faq: await createFaq(req.body || {}), source: "panel_compat" });
 });
 
 botIntelligenceRoutes.delete("/bot/intelligence/faqs/:id", async (req, res) => {
-  const r = await forward(req, `/admin/intelligence/faqs/${encodeURIComponent(req.params.id)}`);
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, [`/admin/intelligence/faqs/${encodeURIComponent(req.params.id)}`]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  await deleteFaq(req.params.id);
+  return res.json({ ok: true, source: "panel_compat" });
 });
 
 // Playbooks
 botIntelligenceRoutes.get("/bot/intelligence/playbooks", async (req, res) => {
-  const r = await forward(req, "/admin/intelligence/playbooks");
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/intelligence/playbooks"]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.json({ playbooks: await listPlaybooks(), source: "panel_compat" });
 });
 
 botIntelligenceRoutes.post("/bot/intelligence/playbooks", async (req, res) => {
-  const r = await forward(req, "/admin/intelligence/playbooks");
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/intelligence/playbooks"]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.status(201).json({ playbook: await createPlaybook(req.body || {}), source: "panel_compat" });
 });
 
 botIntelligenceRoutes.delete("/bot/intelligence/playbooks/:id", async (req, res) => {
-  const r = await forward(req, `/admin/intelligence/playbooks/${encodeURIComponent(req.params.id)}`);
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, [`/admin/intelligence/playbooks/${encodeURIComponent(req.params.id)}`]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  await deletePlaybook(req.params.id);
+  return res.json({ ok: true, source: "panel_compat" });
 });
 
 // Examples
@@ -101,10 +173,13 @@ botIntelligenceRoutes.delete("/bot/intelligence/examples/:id", async (req, res) 
 
 // Decisions
 botIntelligenceRoutes.get("/bot/intelligence/decisions", async (req, res) => {
-  const r = await forward(req, "/admin/intelligence/decisions", {
-    limit: req.query.limit ? String(req.query.limit) : undefined
-  });
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/intelligence/decisions"], {
+      limit: req.query.limit ? String(req.query.limit) : undefined
+    });
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.json({ decisions: [], source: "panel_compat" });
 });
 
 // Playground
@@ -248,10 +323,13 @@ botIntelligenceRoutes.get("/bot/trace/:messageId", async (req, res) => {
 // ─── Fase 5: Métricas ─────────────────────────────────────────────────────────
 
 botIntelligenceRoutes.get("/bot/metrics/summary", async (req, res) => {
-  const r = await forward(req, "/admin/metrics/summary", {
-    windowHours: req.query.windowHours ? String(req.query.windowHours) : undefined
-  });
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/metrics/summary"], {
+      windowHours: req.query.windowHours ? String(req.query.windowHours) : undefined
+    });
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.json({ summary: null, source: "panel_compat" });
 });
 
 botIntelligenceRoutes.get("/bot/metrics/timeseries", async (req, res) => {
@@ -262,34 +340,52 @@ botIntelligenceRoutes.get("/bot/metrics/timeseries", async (req, res) => {
 });
 
 botIntelligenceRoutes.get("/bot/metrics/alerts", async (req, res) => {
-  const r = await forward(req, "/admin/metrics/alerts");
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/metrics/alerts"]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.json({ alerts: [], source: "panel_compat" });
 });
 
 botIntelligenceRoutes.post("/bot/metrics/alerts/:id/resolve", async (req, res) => {
-  const r = await forward(req, `/admin/metrics/alerts/${encodeURIComponent(req.params.id)}/resolve`);
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, [`/admin/metrics/alerts/${encodeURIComponent(req.params.id)}/resolve`]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.json({ ok: true, source: "panel_compat" });
 });
 
 // ─── Fase 5: Health check ─────────────────────────────────────────────────────
 
 botIntelligenceRoutes.get("/bot/health/bot", async (req, res) => {
-  const r = await forward(req, "/admin/health/bot");
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/health/bot", "/admin/health"]);
+    if (r && r.status !== 404) {
+      const data = r.data?.health ? r.data : { health: r.data };
+      return res.status(r.status).json(data);
+    }
+  } catch {}
+  return res.json({ health: null, source: "panel_compat" });
 });
 
 // ─── Fase 5: Evaluaciones ─────────────────────────────────────────────────────
 
 botIntelligenceRoutes.get("/bot/eval/runs", async (req, res) => {
-  const r = await forward(req, "/admin/eval/runs", {
-    limit: req.query.limit ? String(req.query.limit) : undefined
-  });
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/eval/runs"], {
+      limit: req.query.limit ? String(req.query.limit) : undefined
+    });
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.json({ runs: [], source: "panel_compat" });
 });
 
 botIntelligenceRoutes.post("/bot/eval/run", async (req, res) => {
-  const r = await forward(req, "/admin/eval/run");
-  return res.status(r.status).json(r.data);
+  try {
+    const r = await tryForward(req, ["/admin/eval/run"]);
+    if (r && r.status !== 404) return res.status(r.status).json(r.data);
+  } catch {}
+  return res.json({ ok: false, result: null, source: "panel_compat" });
 });
 
 export default botIntelligenceRoutes;

@@ -18,6 +18,7 @@ import PipelineStage from "../models/PipelineStage";
 import TicketStageHistory from "../models/TicketStageHistory";
 import Quotation from "../models/Quotation";
 import AgentFeedback from "../models/AgentFeedback";
+import { resolveDatabaseUrl } from "../config/resolveDatabaseUrl";
 
 // eslint-disable-next-line
 const dbConfig = require("../config/database");
@@ -27,7 +28,7 @@ const dbConfig = require("../config/database");
  * Sequelize v5 doesn't support a top-level `url` key in config, so we
  * instantiate with the URI string when available.
  */
-const rawDbUrl = process.env.DATABASE_URL;
+const rawDbUrl = resolveDatabaseUrl();
 const sequelize = rawDbUrl
   ? new Sequelize(rawDbUrl, {
       dialect: "postgres",

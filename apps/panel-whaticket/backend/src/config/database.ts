@@ -1,4 +1,5 @@
 require("../bootstrap");
+const { resolveDatabaseUrl } = require("./resolveDatabaseUrl");
 
 const pool = {
   max: Number(process.env.DB_POOL_MAX || 2),
@@ -10,7 +11,12 @@ const pool = {
 // Si DATABASE_URL está seteada (Railway, Supabase, Heroku, etc.),
 // el CLI de Sequelize la usa directamente via use_env_variable.
 // Esto garantiza que CLI y runtime apunten a la misma DB.
-module.exports = process.env.DATABASE_URL
+const databaseUrl = resolveDatabaseUrl();
+if (databaseUrl) {
+  process.env.DATABASE_URL = databaseUrl;
+}
+
+module.exports = databaseUrl
   ? {
       use_env_variable: "DATABASE_URL",
       dialect: "postgres",
