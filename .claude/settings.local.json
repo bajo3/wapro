@@ -43,7 +43,8 @@
       "mcp__claude_ai_Supabase__apply_migration",
       "mcp__claude_ai_Supabase__execute_sql",
       "Bash(ls /c/Users/Usuario/Desktop/Feli/Feli-web/wapro/apps/panel-whaticket/backend/src/bootstrap*)",
-      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(k,':',v\\) for k,v in d.get\\('scripts',{}\\).items\\(\\)]\")"
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(k,':',v\\) for k,v in d.get\\('scripts',{}\\).items\\(\\)]\")",
+      "mcp__claude_ai_Supabase__get_project"
     ]
   }
 }
