@@ -53,4 +53,4 @@ ENV NODE_ENV=production
 EXPOSE 3000
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "dist/server.js"]
+CMD ["sh", "-c", "node_modules/.bin/sequelize db:migrate && node dist/server.js"]

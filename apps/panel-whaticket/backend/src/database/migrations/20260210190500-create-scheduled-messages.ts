@@ -1,68 +1,32 @@
-import { QueryInterface, DataTypes } from "sequelize";
+import { QueryInterface } from "sequelize";
 
 module.exports = {
   up: async (queryInterface: QueryInterface) => {
-    await queryInterface.createTable("ScheduledMessages", {
-      id: {
-        type: DataTypes.INTEGER,
-        primaryKey: true,
-        autoIncrement: true,
-        allowNull: false
-      },
-      ticketId: {
-        type: DataTypes.INTEGER,
-        references: { model: "Tickets", key: "id" },
-        onUpdate: "CASCADE",
-        onDelete: "SET NULL",
-        allowNull: true
-      },
-      contactId: {
-        type: DataTypes.INTEGER,
-        references: { model: "Contacts", key: "id" },
-        onUpdate: "CASCADE",
-        onDelete: "SET NULL",
-        allowNull: true
-      },
-      userId: {
-        type: DataTypes.INTEGER,
-        references: { model: "Users", key: "id" },
-        onUpdate: "CASCADE",
-        onDelete: "SET NULL",
-        allowNull: true
-      },
-      body: {
-        type: DataTypes.TEXT,
-        allowNull: false
-      },
-      mediaUrl: {
-        type: DataTypes.TEXT,
-        allowNull: true
-      },
-      sendAt: {
-        type: DataTypes.DATE,
-        allowNull: false
-      },
-      status: {
-        type: DataTypes.STRING,
-        allowNull: false,
-        defaultValue: "PENDING"
-      },
-      lastError: {
-        type: DataTypes.TEXT,
-        allowNull: true
-      },
-      createdAt: {
-        type: DataTypes.DATE(6),
-        allowNull: false
-      },
-      updatedAt: {
-        type: DataTypes.DATE(6),
-        allowNull: false
-      }
-    });
+    // IF NOT EXISTS: seguro si la migración 120000 ya corrió en este entorno
+    await queryInterface.sequelize.query(`
+      CREATE TABLE IF NOT EXISTS "ScheduledMessages" (
+        "id"        SERIAL PRIMARY KEY,
+        "ticketId"  INTEGER REFERENCES "Tickets"("id") ON UPDATE CASCADE ON DELETE SET NULL,
+        "contactId" INTEGER REFERENCES "Contacts"("id") ON UPDATE CASCADE ON DELETE SET NULL,
+        "userId"    INTEGER REFERENCES "Users"("id") ON UPDATE CASCADE ON DELETE SET NULL,
+        "body"      TEXT NOT NULL,
+        "mediaUrl"  TEXT,
+        "sendAt"    TIMESTAMP WITH TIME ZONE NOT NULL,
+        "status"    VARCHAR(255) NOT NULL DEFAULT 'PENDING',
+        "lastError" TEXT,
+        "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL,
+        "updatedAt" TIMESTAMP WITH TIME ZONE NOT NULL
+      )
+    `);
 
-    await queryInterface.addIndex("ScheduledMessages", ["sendAt"]);
-    await queryInterface.addIndex("ScheduledMessages", ["status"]);
+    await queryInterface.sequelize.query(`
+      CREATE INDEX IF NOT EXISTS "scheduled_messages_send_at_idx"
+        ON "ScheduledMessages" ("sendAt")
+    `);
+    await queryInterface.sequelize.query(`
+      CREATE INDEX IF NOT EXISTS "scheduled_messages_status_idx"
+        ON "ScheduledMessages" ("status")
+    `);
   },
 
   down: async (queryInterface: QueryInterface) => {
