@@ -167,8 +167,8 @@ async function main() {
           ? (firstHit.name || `${firstHit.brand ?? ''} ${firstHit.model ?? ''}`.trim() || query)
           : query;
         const followupText = firstHit
-          ? `Hola 👋 ¿seguís interesado/a en el ${vehicleRef}? Todavía lo tenemos disponible. ¿Querés que te pase más info o coordinar una visita?`
-          : `Hola 👋 ¿seguís buscando ${query}? Por cualquier consulta estamos acá.`;
+          ? `Hola, ¿seguís viendo el ${vehicleRef}? Todavía lo tenemos. Si querés coordinar algo o te quedó alguna duda, avisame.`
+          : `Hola, ¿seguís buscando ${query}? Por cualquier consulta estamos.`;
         try {
           await sendTextAndPersist(instance, remoteJid, followupText);
           const iso = new Date().toISOString();

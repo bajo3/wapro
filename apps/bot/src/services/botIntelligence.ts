@@ -2,9 +2,9 @@
  * botIntelligence.ts — Inteligencia comercial del bot automotriz.
  *
  * Arquitectura:
- *  1. extract()       → GPT extrae intención + entidades del mensaje
- *  2. decide()        → lógica de negocio decide qué hacer con eso
- *  3. respond()       → construye respuesta humana y comercial
+ *  1. extractIntent() → GPT extrae intención + entidades del mensaje (con contexto de autos mostrados)
+ *  2. decide()        → lógica de negocio decide qué hacer
+ *  3. composeResponse() → GPT escribe una respuesta humana y comercial
  *
  * Reglas duras anti-invención:
  *  - Solo muestra autos que existen en el catálogo real
@@ -12,9 +12,10 @@
  *  - Si falta dato → pregunta
  *  - Si no hay match → lo dice y propone alternativa
  *  - Si la API de crédito falla → lo dice sin inventar cuotas
+ *  - No manda links de MercadoLibre como respuesta principal
  */
 
-import { getCatalog, searchCatalog, formatItemLine } from './catalog.js';
+import { getCatalog, formatItemLine } from './catalog.js';
 import { askGPT } from './gpt.js';
 import { getCreditQuote, formatCreditPlans } from './creditService.js';
 import { detectHotLead, notifyHotLead } from './hotLead.js';
@@ -30,7 +31,7 @@ export interface Extracted {
     | 'trade_in'        // tiene un usado para entregar
     | 'advisor'         // pide hablar con persona
     | 'visit'           // quiere ir a ver
-    | 'specific'        // pregunta por un auto puntual (menciona ID o título exacto)
+    | 'specific'        // pregunta por un auto puntual (menciona nombre, índice o referencia)
     | 'refine'          // refina búsqueda anterior
     | 'alternatives'    // pide alternativas
     | 'reset'           // cambia de idea / busca algo diferente
@@ -55,18 +56,26 @@ export interface Extracted {
   wantsAdvisor?: boolean;
   urgency?: 'low' | 'high';
   name?: string;            // si el cliente se presentó
+  /**
+   * ID del auto seleccionado cuando el cliente hace referencia a uno de los
+   * mostrados en el turno anterior (ej: "el 207", "el primero", "esa blanca").
+   * GPT lo resuelve usando el contexto de opciones_mostradas en el historial.
+   */
+  selectedVehicleId?: string;
 }
 
 export interface IntelligenceResult {
   reply: string;
   newState: Partial<ConvState>;
   isHot?: boolean;
+  /** URLs de fotos a enviar después del mensaje de texto (máx 5) */
+  imagesToSend?: string[];
 }
 
 // ── Extractor de intención (GPT) ───────────────────────────────────────────────
 
 const EXTRACTION_PROMPT = `Sos un extractor de datos para un bot de ventas de autos.
-Dado un mensaje de WhatsApp, devolvé SOLO un JSON con estos campos (omití los que no apliquen):
+Dado un mensaje de WhatsApp y el contexto previo, devolvé SOLO un JSON con estos campos (omití los que no apliquen):
 {
   "intent": "search|credit_quote|trade_in|advisor|visit|specific|refine|alternatives|reset|greeting|farewell|complaint|unsure|other",
   "brand": string,
@@ -84,7 +93,8 @@ Dado un mensaje de WhatsApp, devolvé SOLO un JSON con estos campos (omití los 
   "wantsVisit": boolean,
   "wantsAdvisor": boolean,
   "urgency": "low"|"high",
-  "name": string
+  "name": string,
+  "selectedVehicleId": string
 }
 
 Reglas:
@@ -98,11 +108,14 @@ Reglas:
 - Si está enojado, reclama, insulta → intent = complaint
 - Si es un saludo inicial sin dato → intent = greeting
 - Si "no sé qué quiero", "qué me recomendás" → intent = unsure
-- maxPrice: si dice "hasta X" o "con X" → eso es el tope
+- maxPrice: si dice "hasta X" o "con X" o "por X" → eso es el tope
+- Si hay opciones_mostradas en el contexto Y el cliente hace referencia a una por número ordinal
+  ("el primero", "el 2", "ese", "esa blanca", "el de 17", "la primera opción") → resolver cuál
+  es y poner su id en selectedVehicleId. El intent en ese caso es "specific".
 - Devolvé SOLO el JSON, sin texto extra`;
 
-async function extractIntent(message: string, history: string[]): Promise<Extracted> {
-  const historyContext = history.slice(-4).join('\n');
+async function extractIntent(message: string, historyLines: string[]): Promise<Extracted> {
+  const historyContext = historyLines.slice(-6).join('\n');
   const prompt = historyContext
     ? `Contexto previo:\n${historyContext}\n\nMensaje actual: "${message}"`
     : `Mensaje: "${message}"`;
@@ -128,10 +141,12 @@ async function extractIntent(message: string, history: string[]): Promise<Extrac
 
 // ── Filtro de catálogo ─────────────────────────────────────────────────────────
 
-function filterCatalog(catalog: CatalogItem[], ctx: Extracted & { search_context?: ConvState['search_context'] }): CatalogItem[] {
+function filterCatalog(
+  catalog: CatalogItem[],
+  ctx: Extracted & { search_context?: ConvState['search_context'] }
+): CatalogItem[] {
   const sc = ctx.search_context ?? {};
 
-  // Merge: lo explícito del mensaje tiene prioridad sobre contexto acumulado
   const brand        = ctx.brand        ?? sc.brand;
   const model        = ctx.model        ?? sc.model;
   const maxPrice     = ctx.maxPrice     ?? sc.maxPrice;
@@ -174,7 +189,7 @@ function filterCatalog(catalog: CatalogItem[], ctx: Extracted & { search_context
     return true;
   });
 
-  // Si no hay match exacto, relajar filtros año/transmisión para dar alternativas
+  // Si no hay match exacto, relajar filtros de año/transmisión para dar alternativas
   if (results.length === 0 && (brand || model)) {
     results = catalog.filter(item => {
       if (!item.inStock) return false;
@@ -184,33 +199,145 @@ function filterCatalog(catalog: CatalogItem[], ctx: Extracted & { search_context
     });
   }
 
-  return results.slice(0, 4);
+  return results.slice(0, 5);
 }
 
-// ── Composer de respuesta ──────────────────────────────────────────────────────
+// ── Selección contextual determinística ───────────────────────────────────────
+
+/**
+ * Intenta resolver cuál auto eligió el cliente basándose en tokens del mensaje.
+ * Esto es un backup determinístico para cuando GPT no resuelve selectedVehicleId.
+ */
+function resolveVehicleByText(
+  text: string,
+  hitsDetail: NonNullable<ConvState['last_hits_detail']>
+): NonNullable<ConvState['last_hits_detail']>[number] | null {
+  const t = text.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+
+  // Por índice ordinal ("el 1", "el primero", "la primera", "opción 2", "el tercero")
+  const ordinals: Record<string, number> = {
+    'primer': 0, 'primero': 0, 'primera': 0, 'uno': 0,
+    'segun': 1, 'segundo': 1, 'segunda': 1, 'dos': 1,
+    'tercer': 2, 'tercero': 2, 'tercera': 2, 'tres': 2,
+    'cuart': 3, 'cuarto': 3, 'cuarta': 3, 'cuatro': 3,
+    'quint': 4, 'quinto': 4, 'quinta': 4, 'cinco': 4,
+  };
+  for (const [word, idx] of Object.entries(ordinals)) {
+    if (t.includes(word) && hitsDetail[idx]) return hitsDetail[idx];
+  }
+
+  // Por número directo ("el 1", "opción 3")
+  const numMatch = t.match(/\b([1-5])\b/);
+  if (numMatch) {
+    const idx = parseInt(numMatch[1], 10) - 1;
+    if (hitsDetail[idx]) return hitsDetail[idx];
+  }
+
+  // Por modelo/marca mencioada en el mensaje
+  const tokens = t.split(/\s+/).filter(tok => tok.length > 2);
+  let bestMatch: NonNullable<ConvState['last_hits_detail']>[number] | null = null;
+  let bestScore = 0;
+
+  for (const hit of hitsDetail) {
+    const nameTokens = (hit.name + ' ' + (hit.brand ?? '') + ' ' + (hit.model ?? ''))
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .split(/\s+/)
+      .filter(tok => tok.length > 2);
+
+    const score = tokens.filter(tok => nameTokens.some(n => n.includes(tok) || tok.includes(n))).length;
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = hit;
+    }
+  }
+
+  // Solo lo usamos si hay al menos 1 token que matchea y el candidato es claro
+  return bestScore >= 1 ? bestMatch : null;
+}
+
+// ── Compositor de respuesta (GPT) ──────────────────────────────────────────────
 
 const RESPONSE_SYSTEM = `Sos el asistente de ventas de una concesionaria de autos en Argentina.
-Tu objetivo es ayudar al cliente a encontrar el auto que necesita y avanzar hacia la venta.
+Tu objetivo es avanzar la venta. No solo contestar.
 
-Tono: natural, directo, argentino, comercial. Ni robot ni chamuyo.
-Respuestas cortas. Frases simples. Sin listas largas si no hace falta.
-Cuando tenés match real → ir al punto. Cuando no → proponer salida.
-Nunca inventar precio, stock, cuotas ni disponibilidad.
-Nunca decir algo que no esté en el contexto de abajo.`;
+TONO: directo, argentino, comercial. Ni robot ni chamuyo.
+- Respuestas cortas (2-4 líneas en general, nunca más de 6).
+- Sin frases vacías: nada de "¡Con gusto!", "Acá estoy para ayudarte", "Gracias por tu consulta", "Como asistente virtual", "Te comparto".
+- Sin listas de más de 5 ítems.
+- Cerrá siempre con una pregunta o acción concreta.
+- Usá "vos" no "usted".
 
-async function composeResponse(action: string, data: Record<string, any>, history: string[]): Promise<string> {
-  const historyCtx = history.slice(-6).join('\n');
-  const userMessage = `Acción: ${action}\nDatos:\n${JSON.stringify(data, null, 2)}\n${historyCtx ? `\nHistorial reciente:\n${historyCtx}` : ''}`;
+REGLAS DURAS:
+- Nunca inventar precio, stock, cuotas ni disponibilidad.
+- Nunca usar datos que no estén en el contexto que te pasan.
+- Si no tenés el dato, decilo y ofrecé el siguiente paso.
+- No mandes links de MercadoLibre como respuesta principal.
+- No repitas preguntas que el cliente ya respondió.
+
+POR ACCIÓN:
+mostrar_resultados → Listá las opciones con nombre, año y precio. Sin texto de relleno antes. Cerrá preguntando cuál le interesa o si quiere fotos/cuotas de alguno.
+mostrar_auto_puntual → Describí ese auto con lo que tenés (precio, año, km, motor, color si hay). Decí que te mandás fotos. Preguntá si quiere verlo o calcular cuotas.
+sin_match → Decí que no tenés exactamente eso. Ofrecé la alternativa más cercana si la hay. No inventes.
+derivar_humano → Decí que lo pasás con alguien del equipo. No sigas vendiendo.
+credit_sin_auto → Preguntá sobre qué auto calculamos. Solo eso.
+credit_sin_entrega → Preguntá cuánto pone de entrega. Solo eso.
+mostrar_cuotas → Mostrá los planes de cuotas reales. Aclará que son estimados y que el asesor confirma el número final. Preguntá si quiere avanzar.
+permuta → Pedí modelo, año y km del usado. No des valuación. Decí que lo evalúa el equipo.
+coordinar_visita → Decí que lo pasás con el equipo para coordinar. No des horarios si no los tenés.
+saludo_inicial → Saludá breve. Preguntá qué está buscando o cuál es su presupuesto.
+despedida → Cierre cálido, muy breve. Sin nueva pregunta comercial.
+indeciso_sin_contexto → UNA sola pregunta: para qué lo usa y cuánto tiene pensado gastar.
+reclamo → Empatía breve + derivar a asesor. No intentes resolver.
+consulta_general → Respondé con lo que tenés disponible en el contexto. Sé concreto.
+
+FRASES QUE SÍ:
+- "Bien, hoy tengo estas opciones:"
+- "Dale, de ese te paso más detalle."
+- "Ese lo tengo así:"
+- "Si querés te mando fotos de ese."
+- "¿Cuánto ponés de entrega para calcular bien?"
+- "¿Ese te cierra o preferís ver otro?"
+- "Lo paso con alguien del equipo para coordinar."
+- "¿Para qué lo vas a usar principalmente?"
+
+FRASES PROHIBIDAS:
+"Estoy aquí para ayudarte" / "Te comparto la siguiente información" / "Como asistente virtual"
+"Gracias por tu consulta" / "¡Con gusto!" / "Aquí tienes" / "¡Perfecto!" / "¡Claro que sí!"
+
+EJEMPLOS FEW-SHOT:
+ENTRADA: mostrar_resultados con 3 autos
+SALIDA: "Bien, hoy tengo estas opciones:\n1. Cronos 2023 — ARS 18.500.000 (0 km · manual · nafta)\n2. Onix Plus 2022 — ARS 16.800.000 (45.000 km · manual · nafta)\n3. Corsa Classic 2015 — ARS 9.200.000 (82.000 km · manual · nafta)\n¿Cuál te interesa más? Te paso fotos y detalle del que elijas."
+
+ENTRADA: mostrar_auto_puntual
+SALIDA: "Ese lo tengo así: [nombre], [año], [km], [motor/combustible]. Precio: [precio]. Te mando las fotos. ¿Querés calcular cuotas o coordinar una visita?"
+
+ENTRADA: derivar_humano
+SALIDA: "Dale, te paso con alguien del equipo que te atiende directo."
+
+ENTRADA: credit_sin_entrega para un auto de $20M
+SALIDA: "Para el [auto] a $20.000.000, ¿cuánto ponés de entrega? Con eso te calculo los planes."
+
+ENTRADA: despedida
+SALIDA: "Dale, cualquier duda estamos. ¡Éxitos!"
+
+ENTRADA: indeciso_sin_contexto
+SALIDA: "Para ayudarte bien: ¿para qué lo vas a usar y cuánto tenés pensado gastar?"`;
+
+async function composeResponse(action: string, data: Record<string, any>, historyLines: string[]): Promise<string> {
+  const historyCtx = historyLines.slice(-6).join('\n');
+  const userMessage = `Acción: ${action}\nDatos:\n${JSON.stringify(data, null, 2)}${historyCtx ? `\n\nContexto conversación:\n${historyCtx}` : ''}`;
 
   const reply = await askGPT({
     systemPrompt: RESPONSE_SYSTEM,
     userMessage,
-    maxTokens: 350,
-    temperature: 0.6,
+    maxTokens: 400,
+    temperature: 0.65,
     traceCaller: 'botIntelligence.composeResponse',
   });
 
-  return reply ?? 'Perdón, hubo un problema técnico. Probá de vuelta en un momento.';
+  return reply ?? 'Hubo un problema técnico. Probá de vuelta en un momento.';
 }
 
 // ── Engine principal ───────────────────────────────────────────────────────────
@@ -222,22 +349,32 @@ export async function processMessage(params: {
   state: ConvState;
 }): Promise<IntelligenceResult> {
   const { instance, remoteJid, message, state } = params;
-  const history = buildHistory(state);
+  const historyLines = buildHistory(state);
 
-  // 1. Extraer intención
-  const extracted = await extractIntent(message, history);
+  // 1. Extraer intención (con contexto de autos mostrados para resolver referencias)
+  const extracted = await extractIntent(message, historyLines);
 
-  // 2. Detectar lead caliente (antes de decidir, para no perder contexto)
+  // 2. Si GPT no resolvió selectedVehicleId pero hay hits previos, intentar resolución determinística
+  if (
+    !extracted.selectedVehicleId &&
+    (extracted.intent === 'specific' || extracted.intent === 'refine') &&
+    state.last_hits_detail?.length
+  ) {
+    const resolved = resolveVehicleByText(message, state.last_hits_detail);
+    if (resolved) extracted.selectedVehicleId = resolved.id;
+  }
+
+  // 3. Detectar lead caliente (corre en paralelo, no bloquea)
   const hotResult = detectHotLead(message, state);
   if (hotResult.isHot) {
     notifyHotLead({ instance, remoteJid, state, lastMessage: message, signals: hotResult.signals })
       .catch(() => {});
   }
 
-  // 3. Decidir y responder
-  const result = await decide(extracted, state, message, history);
+  // 4. Decidir y responder
+  const result = await decide(extracted, state, message, historyLines);
 
-  // 4. Actualizar estado
+  // 5. Actualizar estado
   const newState: Partial<ConvState> = {
     ...state,
     last_intent: extracted.intent,
@@ -246,19 +383,20 @@ export async function processMessage(params: {
     leadScore: Math.min(100, (state.leadScore ?? 0) + hotResult.score),
   };
 
-  // Acumular contexto de búsqueda (resetear si el cliente cambia de idea)
   if (extracted.intent === 'reset') {
     newState.search_context = {};
     newState.last_hits = [];
+    newState.last_hits_detail = [];
     newState.last_query = message;
   } else if (['search', 'refine', 'unsure'].includes(extracted.intent)) {
     newState.search_context = mergeSearchContext(state.search_context, extracted);
     newState.last_query = message;
   }
 
-  if (result.hitIds?.length) {
+  if (result.hitIds?.length && result.hitsDetail?.length) {
     newState.last_hits = result.hitIds;
     newState.last_hits_at = new Date().toISOString();
+    newState.last_hits_detail = result.hitsDetail;
   }
 
   if (result.presentedVehicle) {
@@ -277,6 +415,7 @@ export async function processMessage(params: {
     reply: result.reply,
     newState: newState as ConvState,
     isHot: hotResult.isHot,
+    imagesToSend: result.imagesToSend,
   };
 }
 
@@ -285,37 +424,39 @@ export async function processMessage(params: {
 interface DecideResult {
   reply: string;
   hitIds?: string[];
+  hitsDetail?: ConvState['last_hits_detail'];
   presentedVehicle?: CatalogItem;
+  imagesToSend?: string[];
 }
 
 async function decide(
   ex: Extracted,
   state: ConvState,
   rawMessage: string,
-  history: string[]
+  historyLines: string[]
 ): Promise<DecideResult> {
 
   // Derivar a humano inmediatamente
   if (ex.intent === 'advisor' || ex.wantsAdvisor) {
-    const reply = await composeResponse('derivar_humano', { mensaje: rawMessage }, history);
+    const reply = await composeResponse('derivar_humano', { mensaje: rawMessage }, historyLines);
     return { reply };
   }
 
-  // Reclamo → empatía + derivación, sin intentar resolver
+  // Reclamo
   if (ex.intent === 'complaint') {
-    const reply = await composeResponse('reclamo', { mensaje: rawMessage }, history);
+    const reply = await composeResponse('reclamo', { mensaje: rawMessage }, historyLines);
     return { reply };
   }
 
   // Despedida
   if (ex.intent === 'farewell') {
-    const reply = await composeResponse('despedida', { mensaje: rawMessage }, history);
+    const reply = await composeResponse('despedida', { mensaje: rawMessage }, historyLines);
     return { reply };
   }
 
-  // Saludo inicial
+  // Saludo inicial (sin historial previo)
   if (ex.intent === 'greeting' && !state.last_intent) {
-    const reply = await composeResponse('saludo_inicial', {}, history);
+    const reply = await composeResponse('saludo_inicial', {}, historyLines);
     return { reply };
   }
 
@@ -323,8 +464,8 @@ async function decide(
   if (ex.intent === 'trade_in') {
     const reply = await composeResponse('permuta', {
       mensaje: rawMessage,
-      nota: 'Pedir modelo, año y km del usado. No dar valuación. Ofrecer que lo evalúa un asesor.'
-    }, history);
+      nota: 'Pedir modelo, año y km del usado. No dar valuación. Asesor evalúa.',
+    }, historyLines);
     return { reply };
   }
 
@@ -333,36 +474,44 @@ async function decide(
     const auto = state.lastPresentedVehicleTitle ?? state.last_query ?? 'el auto';
     const reply = await composeResponse('coordinar_visita', {
       auto,
-      nota: 'Confirmar el auto y coordinar con asesor. No dar horarios específicos si no los tenés.'
-    }, history);
+      nota: 'Confirmar el auto y coordinar con el equipo. No dar horarios específicos.',
+    }, historyLines);
     return { reply };
   }
 
   // Crédito / cuotas
   if (ex.intent === 'credit_quote' || ex.downPayment) {
-    return await handleCredit(ex, state, rawMessage, history);
+    return await handleCredit(ex, state, rawMessage, historyLines);
+  }
+
+  // Auto puntual elegido de los mostrados (referencia contextual)
+  if (ex.selectedVehicleId) {
+    return await handleSpecificById(ex.selectedVehicleId, state, rawMessage, historyLines);
+  }
+
+  // Búsqueda específica de un modelo puntual (intent=specific con brand/model)
+  if (ex.intent === 'specific' && (ex.brand || ex.model)) {
+    return await handleSearch(ex, state, historyLines);
   }
 
   // Indeciso / pide recomendación
   if (ex.intent === 'unsure') {
-    // Si ya hay contexto de búsqueda, mostrar opciones
     const sc = state.search_context;
     if (sc && (sc.brand || sc.maxPrice || sc.bodywork || sc.useCase)) {
-      return await handleSearch(ex, state, history);
+      return await handleSearch(ex, state, historyLines);
     }
-    // Si no hay contexto, hacer UNA pregunta concreta
     const reply = await composeResponse('indeciso_sin_contexto', {
-      nota: 'Hacer UNA sola pregunta: uso + presupuesto. Conciso.'
-    }, history);
+      nota: 'UNA sola pregunta: uso + presupuesto. Nada más.',
+    }, historyLines);
     return { reply };
   }
 
-  // Búsqueda / refinamiento / reset
-  if (['search', 'refine', 'reset', 'specific', 'alternatives'].includes(ex.intent)) {
-    return await handleSearch(ex, state, history);
+  // Búsqueda / refinamiento / reset / alternativas
+  if (['search', 'refine', 'reset', 'alternatives'].includes(ex.intent)) {
+    return await handleSearch(ex, state, historyLines);
   }
 
-  // Fallback: dejar que GPT maneje con contexto completo
+  // Fallback con contexto completo
   const catalog = await getCatalog();
   const topItems = filterCatalog(catalog, { ...ex, search_context: state.search_context });
   const catalogCtx = topItems.length
@@ -373,73 +522,139 @@ async function decide(
     mensaje: rawMessage,
     catalogo: catalogCtx,
     estado: summarizeState(state),
-  }, history);
+  }, historyLines);
   return { reply };
+}
+
+// ── Handler: auto puntual por ID (referencia contextual) ──────────────────────
+
+async function handleSpecificById(
+  vehicleId: string,
+  state: ConvState,
+  rawMessage: string,
+  historyLines: string[]
+): Promise<DecideResult> {
+  const catalog = await getCatalog();
+  const vehicle = catalog.find(v => v.id === vehicleId);
+
+  if (!vehicle) {
+    // El ID del estado ya no existe en el catálogo (puede haberse vendido)
+    const reply = await composeResponse('sin_match', {
+      busqueda: { id: vehicleId },
+      nota: 'El auto referenciado ya no está disponible. Ofrecer alternativas.',
+      alternativas: catalog.filter(i => i.inStock).slice(0, 3).map((v, i) => formatItemLine(v, i)).join('\n'),
+    }, historyLines);
+    return { reply };
+  }
+
+  const lineDetalle = buildVehicleDetail(vehicle);
+  const reply = await composeResponse('mostrar_auto_puntual', {
+    auto: lineDetalle,
+    nota: 'Describí este auto puntual. Mencioná que enviás las fotos. Preguntá si quiere verlo o calcular cuotas.',
+  }, historyLines);
+
+  return {
+    reply,
+    presentedVehicle: vehicle,
+    imagesToSend: vehicle.images?.slice(0, 5) ?? (vehicle.image ? [vehicle.image] : []),
+  };
 }
 
 // ── Handler: búsqueda ──────────────────────────────────────────────────────────
 
-async function handleSearch(ex: Extracted, state: ConvState, history: string[]): Promise<DecideResult> {
+async function handleSearch(ex: Extracted, state: ConvState, historyLines: string[]): Promise<DecideResult> {
   const catalog = await getCatalog();
   const hits = filterCatalog(catalog, { ...ex, search_context: state.search_context });
 
   if (hits.length === 0) {
-    // Sin match — buscar alternativas más amplias
     const alternatives = catalog.filter(i => i.inStock).slice(0, 3);
     const altLines = alternatives.map((v, i) => formatItemLine(v, i)).join('\n');
     const reply = await composeResponse('sin_match', {
       busqueda: ex,
       alternativas: altLines || 'No hay stock disponible en este momento.',
-      nota: 'Decir que no hay match exacto. Ofrecer alternativas sin mentir sobre disponibilidad.',
-    }, history);
+      nota: 'Decir que no hay match exacto. Ofrecer alternativas sin mentir.',
+    }, historyLines);
     return { reply };
+  }
+
+  // Si es un solo resultado, tratarlo como auto puntual
+  if (hits.length === 1) {
+    const vehicle = hits[0];
+    const lineDetalle = buildVehicleDetail(vehicle);
+    const reply = await composeResponse('mostrar_auto_puntual', {
+      auto: lineDetalle,
+      nota: 'Solo hay un resultado. Presentarlo bien. Preguntar si quiere fotos, cuotas o verlo.',
+    }, historyLines);
+    return {
+      reply,
+      hitIds: [vehicle.id],
+      hitsDetail: [{ idx: 0, id: vehicle.id, name: vehicle.name, brand: vehicle.brand, model: vehicle.model, priceNumber: vehicle.priceNumber, currency: vehicle.currency, images: vehicle.images }],
+      presentedVehicle: vehicle,
+      imagesToSend: vehicle.images?.slice(0, 5) ?? (vehicle.image ? [vehicle.image] : []),
+    };
   }
 
   const hitLines = hits.map((v, i) => formatItemLine(v, i)).join('\n');
   const reply = await composeResponse('mostrar_resultados', {
     resultados: hitLines,
     cantidad: hits.length,
-    nota: hits.length === 1
-      ? 'Hay un solo match. Presentarlo bien. Cerrar preguntando si quiere cuotas o verlo.'
-      : 'Mostrar opciones concretas. Cerrar preguntando cuál le interesa más.',
-  }, history);
+    nota: 'Mostrar opciones numeradas concretas. Cerrar preguntando cuál le interesa o si quiere fotos/cuotas de alguno.',
+  }, historyLines);
+
+  const hitsDetail: ConvState['last_hits_detail'] = hits.map((v, i) => ({
+    idx: i,
+    id: v.id,
+    name: v.name,
+    brand: v.brand,
+    model: v.model,
+    priceNumber: v.priceNumber,
+    currency: v.currency,
+    images: v.images,
+  }));
 
   return {
     reply,
     hitIds: hits.map(h => h.id),
+    hitsDetail,
     presentedVehicle: hits[0],
   };
 }
 
 // ── Handler: crédito ───────────────────────────────────────────────────────────
 
-async function handleCredit(ex: Extracted, state: ConvState, rawMessage: string, history: string[]): Promise<DecideResult> {
+async function handleCredit(
+  ex: Extracted,
+  state: ConvState,
+  rawMessage: string,
+  historyLines: string[]
+): Promise<DecideResult> {
   const vehicle = state.lastPresentedVehicleTitle
-    ? { title: state.lastPresentedVehicleTitle, price: state.lastPresentedVehiclePriceArs, year: Number(state.lastPresentedAt?.slice(0,4)) || new Date().getFullYear() }
+    ? {
+        title: state.lastPresentedVehicleTitle,
+        price: state.lastPresentedVehiclePriceArs,
+        year: Number(state.lastPresentedAt?.slice(0, 4)) || new Date().getFullYear(),
+      }
     : null;
 
-  // Si no tenemos auto ni precio → preguntar
   if (!vehicle?.price && !ex.maxPrice) {
     const reply = await composeResponse('credit_sin_auto', {
-      nota: 'Preguntar sobre qué auto están calculando las cuotas, o pedir precio del auto.',
-    }, history);
+      nota: 'Preguntar sobre qué auto están calculando las cuotas.',
+    }, historyLines);
     return { reply };
   }
 
   const vehiclePrice = vehicle?.price ?? ex.maxPrice!;
   const downPayment = ex.downPayment ?? state.finance?.downPayment;
 
-  // Si no tenemos entrega → preguntar
   if (!downPayment) {
     const reply = await composeResponse('credit_sin_entrega', {
       auto: vehicle?.title ?? 'el auto seleccionado',
-      precio: `$${Math.round(vehiclePrice).toLocaleString('es-AR')}`,
+      precio: `${vehicle?.price ? (vehicle.price > 10000 ? 'ARS' : 'USD') : 'ARS'} ${Math.round(vehiclePrice).toLocaleString('es-AR')}`,
       nota: 'Preguntar cuánto puede poner de entrega. Solo eso.',
-    }, history);
+    }, historyLines);
     return { reply };
   }
 
-  // Intentamos cotizar
   const vehicleYear = vehicle?.year
     ? (typeof vehicle.year === 'number' ? vehicle.year : new Date().getFullYear())
     : new Date().getFullYear();
@@ -452,17 +667,16 @@ async function handleCredit(ex: Extracted, state: ConvState, rawMessage: string,
         nota: creditResult.detail,
         sugerencias: 'Mayor entrega, otro vehículo, o hablar con asesor.',
         auto: vehicle?.title ?? rawMessage,
-      }, history);
+      }, historyLines);
       return { reply };
     }
     if (creditResult.reason === 'invalid_input') {
-      const reply = await composeResponse('credit_dato_invalido', { detalle: creditResult.detail }, history);
+      const reply = await composeResponse('credit_dato_invalido', { detalle: creditResult.detail }, historyLines);
       return { reply };
     }
-    // api_error
     const reply = await composeResponse('credit_api_error', {
       nota: 'No se pudo consultar la API de crédito. Sugerir hablar con asesor para cotización real.',
-    }, history);
+    }, historyLines);
     return { reply };
   }
 
@@ -470,20 +684,45 @@ async function handleCredit(ex: Extracted, state: ConvState, rawMessage: string,
   const reply = await composeResponse('mostrar_cuotas', {
     cuotas: cuotasTexto,
     auto: vehicle?.title ?? 'el vehículo',
-    entrega: `$${Math.round(downPayment).toLocaleString('es-AR')}`,
-    nota: 'Mostrar cuotas reales. Aclarar que son estimadas y que el asesor confirma. Preguntar si quiere avanzar.',
-  }, history);
+    entrega: `ARS ${Math.round(downPayment).toLocaleString('es-AR')}`,
+    nota: 'Mostrar cuotas reales. Aclarar que son estimadas y el asesor confirma. Preguntar si quiere avanzar.',
+  }, historyLines);
   return { reply };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * buildHistory — construye el contexto conversacional para GPT.
+ *
+ * Incluye los autos mostrados en el turno anterior numerados con sus IDs,
+ * para que el extractor pueda resolver referencias como "el 207", "la primera".
+ */
 function buildHistory(state: ConvState): string[] {
   const lines: string[] = [];
-  if (state.last_query)   lines.push(`Cliente buscó: ${state.last_query}`);
-  if (state.last_intent)  lines.push(`Última intención: ${state.last_intent}`);
-  if (state.lastPresentedVehicleTitle)
-    lines.push(`Último auto mostrado: ${state.lastPresentedVehicleTitle}`);
+  if (state.last_query) lines.push(`Cliente buscó: ${state.last_query}`);
+  if (state.last_intent) lines.push(`Última intención detectada: ${state.last_intent}`);
+
+  if (state.last_hits_detail?.length) {
+    lines.push('Opciones_mostradas en el turno anterior:');
+    for (const h of state.last_hits_detail) {
+      const price = h.priceNumber
+        ? `${h.currency ?? 'ARS'} ${h.priceNumber.toLocaleString('es-AR')}`
+        : '';
+      lines.push(`  ${h.idx + 1}. ${h.name}${price ? ' — ' + price : ''} [id:${h.id}]`);
+    }
+  } else if (state.lastPresentedVehicleTitle) {
+    lines.push(`Auto presentado: ${state.lastPresentedVehicleTitle}${state.lastPresentedVehiclePriceArs ? ' — ARS ' + state.lastPresentedVehiclePriceArs.toLocaleString('es-AR') : ''} [id:${state.lastPresentedVehicleId ?? '?'}]`);
+  }
+
+  if (state.search_context?.maxPrice) {
+    const curr = state.search_context.currency ?? 'ARS';
+    lines.push(`Presupuesto máximo declarado: ${curr} ${state.search_context.maxPrice.toLocaleString('es-AR')}`);
+  }
+  if (state.search_context?.useCase) {
+    lines.push(`Uso declarado: ${state.search_context.useCase}`);
+  }
+
   return lines;
 }
 
@@ -493,6 +732,23 @@ function summarizeState(state: ConvState): string {
   if (state.lastPresentedVehicleTitle) parts.push(`auto visto: ${state.lastPresentedVehicleTitle}`);
   if (state.leadScore) parts.push(`score: ${state.leadScore}`);
   return parts.join(' | ') || 'sin contexto previo';
+}
+
+/** Formatea el detalle completo de un auto para composeResponse */
+function buildVehicleDetail(v: CatalogItem): string {
+  const parts: string[] = [v.name];
+  if (v.year) parts.push(String(v.year));
+  if (v.isNew) parts.push('0 km');
+  else if (typeof v.km === 'number') parts.push(`${Math.round(v.km).toLocaleString('es-AR')} km`);
+  if (v.transmission) parts.push(v.transmission);
+  if (v.fuel) parts.push(v.fuel);
+  if (v.engine) parts.push(v.engine);
+  if (v.color) parts.push(v.color);
+  if (v.version) parts.push(v.version);
+  const priceStr = v.priceNumber
+    ? `${v.currency ?? 'ARS'} ${v.priceNumber.toLocaleString('es-AR')}`
+    : null;
+  return parts.join(' · ') + (priceStr ? ` — Precio: ${priceStr}` : '');
 }
 
 function mergeSearchContext(

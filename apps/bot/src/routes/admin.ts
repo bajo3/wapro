@@ -29,6 +29,7 @@ import {
 } from '../services/demands.js';
 import { getCatalogDebug } from '../services/catalog.js';
 import { runMeliSync } from '../services/meliSync.js';
+import { getBotReplyMode, setBotReplyMode } from '../services/botReplyGate.js';
 
 export const adminRouter = Router();
 
@@ -134,6 +135,20 @@ adminRouter.get('/demands/scan/debug', async (_req, res) => {
 adminRouter.post('/demands/cache/clear', async (_req, res) => {
   clearVehicleSourceCache();
   res.json({ ok: true });
+});
+
+// ── Bot reply mode (switch global) ─────────────────────────────────────────────
+adminRouter.get('/bot-mode', (_req, res) => {
+  res.json({ ok: true, mode: getBotReplyMode() });
+});
+
+adminRouter.post('/bot-mode', (req: Request, res: Response) => {
+  const { mode } = req.body;
+  if (mode !== 'on' && mode !== 'silent') {
+    return res.status(400).json({ ok: false, error: 'mode must be "on" or "silent"' });
+  }
+  setBotReplyMode(mode);
+  return res.json({ ok: true, mode });
 });
 
 // ── MercadoLibre sync ──────────────────────────────────────────────────────────

@@ -19,6 +19,17 @@ export type ConvState = {
   last_hits?: string[];
   /** ISO timestamp when last_hits were stored */
   last_hits_at?: string;
+  /** Detalle completo de los últimos autos mostrados (para resolver referencias como "el 207", "la primera") */
+  last_hits_detail?: Array<{
+    idx: number;
+    id: string;
+    name: string;
+    brand?: string;
+    model?: string;
+    priceNumber?: number;
+    currency?: string;
+    images?: string[];
+  }>;
   /** Last concrete vehicle presented as the active unit in the conversation */
   lastPresentedVehicleId?: string;
   lastPresentedVehicleTitle?: string;

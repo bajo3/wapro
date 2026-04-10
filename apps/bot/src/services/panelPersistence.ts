@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { evolutionSendImage, evolutionSendText } from './evolution.js';
+import { isBotReplyEnabled } from './botReplyGate.js';
 
 // ─── BOT_ADMIN_TOKEN guard ────────────────────────────────────────────────────
 // Reads directly from process.env (not env.ts) so this assertion is meaningful
@@ -286,6 +287,13 @@ export async function sendTextAndPersist(
   const number = extractNumber(remoteJid);
   const body = String(text || '').trim();
   if (!number || !body) return;
+
+  // ── Gate central de bot replies ───────────────────────────────────────────
+  if (!isBotReplyEnabled()) {
+    console.log(`[bot] reply blocked: bot disabled (silent mode) → ${number}`);
+    return;
+  }
+
   await evolutionSendText(instance, number, body);
   await persistBotOutboundMessage({
     instance,
@@ -314,6 +322,13 @@ export async function sendImageAndPersist(
   const url = String(imageUrl || '').trim();
   const text = String(caption || '').trim();
   if (!number || !url) return;
+
+  // ── Gate central de bot replies ───────────────────────────────────────────
+  if (!isBotReplyEnabled()) {
+    console.log(`[bot] image blocked: bot disabled (silent mode) → ${number}`);
+    return;
+  }
+
   await evolutionSendImage(instance, number, url, text || undefined);
   await persistBotOutboundMessage({
     instance,

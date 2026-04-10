@@ -8,7 +8,7 @@ import { env } from '../lib/env.js';
 import { getState, setState, seenDedupe, markDedupe } from '../services/state.js';
 import { getContactRule } from '../services/contacts.js';
 import { getConversationRule } from '../services/rules.js';
-import { sendTextAndPersist } from '../services/panelPersistence.js';
+import { sendTextAndPersist, sendImageAndPersist } from '../services/panelPersistence.js';
 import { getSocket } from '../services/socket.js';
 import { processMessage } from '../services/botIntelligence.js';
 
@@ -60,7 +60,8 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
     getConversationRule(instance, remoteJid).catch(() => null),
     getContactRule(number).catch(() => null),
   ]);
-  if (convRule === 'OFF' || contactRule === 'OFF') return;
+  // OFF y HUMAN_ONLY bloquean respuestas automáticas del bot
+  if (convRule === 'OFF' || convRule === 'HUMAN_ONLY' || contactRule === 'OFF' || contactRule === 'HUMAN_ONLY') return;
 
   // Extraer texto
   const msgContent = message.message ?? {};
@@ -88,8 +89,17 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
       console.error('[webhook] setState error:', e)
     );
 
-    // Enviar respuesta
+    // Enviar respuesta de texto
     await sendTextAndPersist(instance, remoteJid, result.reply);
+
+    // Enviar fotos si las hay (hasta 5, secuencial para no saturar WhatsApp)
+    if (result.imagesToSend?.length) {
+      for (const imageUrl of result.imagesToSend.slice(0, 5)) {
+        await sendImageAndPersist(instance, remoteJid, imageUrl).catch(e =>
+          console.error(`[webhook] error sending image to ${remoteJid}:`, e?.message ?? e)
+        );
+      }
+    }
 
     // Emitir al panel
     const sock = getSocket();

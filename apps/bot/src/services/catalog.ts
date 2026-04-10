@@ -87,6 +87,8 @@ export type CatalogItem = {
 
   url?: string;
   image?: string;
+  /** Hasta 5 URLs de fotos del vehículo (para enviar por WhatsApp) */
+  images?: string[];
 
   category?: string;
   description?: string; // limpio, sin hashtags ni prefijos
@@ -393,6 +395,10 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
       const url = row.permalink ? String(row.permalink) : undefined;
       const pics = parsePictures((row as any).pictures);
       const image = normalizeImageUrl(pics[0] ?? pics[1], url);
+      const images = pics
+        .slice(0, 5)
+        .map(p => normalizeImageUrl(p, undefined))
+        .filter((u): u is string => Boolean(u));
       const parts: string[] = [];
       if (year) parts.push(String(year));
       if (isNew) parts.push('0 km');
@@ -411,6 +417,7 @@ async function loadVehiclesFromDb(timeoutMs: number): Promise<CatalogItem[]> {
         inStock: true,
         url,
         image,
+        images: images.length > 0 ? images : undefined,
         category: brand || 'autos',
         description,
         descriptionRaw: undefined,
@@ -967,6 +974,11 @@ export function searchCatalog(items: CatalogItem[], q: string, limit = 5): Catal
   return scored;
 }
 
+/**
+ * Formatea una línea de catálogo para pasar como contexto a GPT.
+ * No incluye URL por defecto para evitar que el modelo la repita
+ * en la respuesta al cliente (y evitar links de MercadoLibre como muleta).
+ */
 export function formatItemLine(item: CatalogItem, idx: number) {
   const price =
     typeof item.priceNumber === "number"
@@ -975,12 +987,9 @@ export function formatItemLine(item: CatalogItem, idx: number) {
         ? `— ${item.priceText}`
         : "";
 
-  const url = item.url ? `\n${item.url}` : "";
-
   const specs = (() => {
     const parts: string[] = [];
     if (item.year) parts.push(String(item.year));
-    // 0km explícito > km numérico
     if (item.isNew) {
       parts.push("0 km");
     } else if (typeof item.km === "number" && Number.isFinite(item.km)) {
@@ -995,5 +1004,5 @@ export function formatItemLine(item: CatalogItem, idx: number) {
     return parts.length ? `\n${parts.join(" · ")}` : "";
   })();
 
-  return `${idx}) ${item.name} ${price}`.trim() + specs + url;
+  return `${idx + 1}) ${item.name} ${price}`.trim() + specs;
 }
