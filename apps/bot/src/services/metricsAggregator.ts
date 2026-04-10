@@ -10,7 +10,7 @@
  *  - getMetricsSummary() y getActiveAlerts() son de solo lectura (panel)
  */
 
-import { pool } from './db.js';
+import { pool, supabasePool } from './db.js';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -383,7 +383,7 @@ export async function resolveAlert(alertId: number): Promise<void> {
 
 export async function getBotHealthCheck(instanceName: string): Promise<BotHealthCheck> {
   const [catalogRes, metricsRes, alertsRes, lastHourRes] = await Promise.allSettled([
-    pool.query(`SELECT COUNT(*) AS cnt FROM vehicles WHERE is_active = TRUE`),
+    (supabasePool ?? pool).query(`SELECT COUNT(*) AS cnt FROM vehicles WHERE is_active = TRUE`),
     getMetricsSummary(instanceName, 1),  // última hora
     getActiveAlerts(instanceName),
     pool.query(
