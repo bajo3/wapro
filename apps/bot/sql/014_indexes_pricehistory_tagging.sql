@@ -28,14 +28,6 @@ CREATE INDEX IF NOT EXISTS idx_bot_messages_dedupe_received
 -- not in bot-DB. Indexes are managed by the wapro project.
 
 -- Learning captures: por estado y score para selección few-shot (ya en 013 pero con IF NOT EXISTS)
-CREATE INDEX IF NOT EXISTS idx_learning_captures_status_score
-  ON bot_learning_captures(status, auto_score DESC);
-
-CREATE INDEX IF NOT EXISTS idx_learning_captures_intent_score
-  ON bot_learning_captures(intent, auto_score DESC)
-  WHERE intent IS NOT NULL;
-
-
 -- ─── 2. HISTORIAL DE PRECIOS ──────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS vehicle_price_history (

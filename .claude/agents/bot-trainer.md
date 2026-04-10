@@ -44,7 +44,7 @@ Convertir errores, conversaciones reales y conocimiento del negocio en artefacto
 |-----------|-----------|---------|
 | Prompt del agente | `agent.ts` → `buildAgentSystemPrompt()` | instrucciones base del bot |
 | Few-shot examples | Tabla `bot_examples` | ejemplos de buenas respuestas por intención |
-| FAQs | Tabla `bot_learning_captures` → promovidas por `autoTrainer` | respuestas a preguntas frecuentes |
+| FAQs | Flujo legacy removido | respuestas a preguntas frecuentes |
 | Policies | `shared/BOT_RESPONSE_POLICY.md` | reglas de conversación |
 | Playbooks | `.claude/skills/` | guías de comportamiento por situación |
 | Evaluations | `.claude/evaluations/` | casos de prueba para validar mejoras |
