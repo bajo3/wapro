@@ -24,21 +24,8 @@ CREATE INDEX IF NOT EXISTS idx_bot_conversations_updated
 CREATE INDEX IF NOT EXISTS idx_bot_messages_dedupe_received
   ON bot_messages_dedupe(received_at DESC);
 
--- Vehicles: búsqueda por marca/modelo/año para catálogo
-CREATE INDEX IF NOT EXISTS idx_vehicles_brand_model
-  ON public.vehicles(brand, model)
-  WHERE status = 'active';
-
-CREATE INDEX IF NOT EXISTS idx_vehicles_year_price
-  ON public.vehicles(year, price)
-  WHERE status = 'active';
-
-CREATE INDEX IF NOT EXISTS idx_vehicles_status
-  ON public.vehicles(status);
-
-CREATE INDEX IF NOT EXISTS idx_vehicles_updated_at
-  ON public.vehicles(updated_at DESC)
-  WHERE updated_at IS NOT NULL;
+-- Vehicles indexes removed: vehicles table now lives in wapro-DB (SUPABASE_DATABASE_URL),
+-- not in bot-DB. Indexes are managed by the wapro project.
 
 -- Learning captures: por estado y score para selección few-shot (ya en 013 pero con IF NOT EXISTS)
 CREATE INDEX IF NOT EXISTS idx_learning_captures_status_score
