@@ -1,5 +1,3 @@
-import { getIntelligenceSettings } from './intelligence.js';
-
 export type FinanceInput = {
   price: number;
   downPayment: number;
@@ -16,18 +14,8 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-export async function getFinanceApr(): Promise<number> {
-  // Priority:
-  // 1) bot_intelligence_settings.value.financeApr
-  // 2) env FINANCE_APR (decimal)
-  // 3) default 0.75 (75% anual)
-  try {
-    const s = await getIntelligenceSettings();
-    const v = Number((s as any)?.financeApr);
-    if (Number.isFinite(v) && v > 0 && v < 10) return v;
-  } catch {
-    // ignore
-  }
+export function getFinanceApr(): number {
+  // Priority: env FINANCE_APR (decimal) → default 0.75 (75% anual)
   const envApr = Number((process.env as any).FINANCE_APR);
   if (Number.isFinite(envApr) && envApr > 0 && envApr < 10) return envApr;
   return 0.75;
