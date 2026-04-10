@@ -1,9 +1,7 @@
 /**
- * admin.ts — Minimal admin routes post-cleanup.
- *
+ * admin.ts — Minimal admin routes.
  * Covers: Evolution bootstrap, contact rules, conversation rules,
  * vehicle demands, catalog debug, meli-sync trigger.
- * All old intelligence/training/metrics endpoints removed.
  */
 
 import { Router } from 'express';
@@ -36,9 +34,7 @@ export const adminRouter = Router();
 
 function requireAdmin(req: any, res: any, next: any) {
   const token = String(req.header('x-admin-token') ?? '');
-  if (!token || token !== env.adminToken) {
-    return res.status(401).json({ ok: false });
-  }
+  if (!token || token !== env.adminToken) return res.status(401).json({ ok: false });
   return next();
 }
 
@@ -46,13 +42,16 @@ adminRouter.use(requireAdmin);
 
 // ── Evolution bootstrap ────────────────────────────────────────────────────────
 adminRouter.post('/bootstrap', async (req: Request, res: Response) => {
-  if (!env.publicUrl) {
-    return res.status(400).json({ ok: false, message: 'BOT_PUBLIC_URL not set' });
-  }
+  if (!env.publicUrl) return res.status(400).json({ ok: false, message: 'BOT_PUBLIC_URL not set' });
   try {
     const instance = env.instanceName;
-    await evolutionCreateInstance(instance);
-    const connectResult = await evolutionConnect(instance, `${env.publicUrl}/webhooks/${instance}`);
+    const webhookUrl = `${env.publicUrl}/webhooks/${instance}`;
+    await evolutionCreateInstance({
+      instanceName: instance,
+      webhookUrl,
+      webhookSecret: env.webhookSecret,
+    });
+    const connectResult = await evolutionConnect(instance);
     return res.json({ ok: true, ...connectResult });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: e?.message });
@@ -70,12 +69,9 @@ adminRouter.get('/health', async (_req: Request, res: Response) => {
 });
 
 // ── Contact rules ──────────────────────────────────────────────────────────────
-adminRouter.get('/contact-rules', async (_req, res) => {
-  res.json(await listContactRules());
-});
+adminRouter.get('/contact-rules', async (_req, res) => { res.json(await listContactRules()); });
 adminRouter.post('/contact-rules', async (req, res) => {
-  const { number, botMode } = req.body;
-  await setContactRule(number, botMode);
+  await setContactRule(req.body.number, req.body.botMode);
   res.json({ ok: true });
 });
 adminRouter.delete('/contact-rules/:number', async (req, res) => {
@@ -84,38 +80,31 @@ adminRouter.delete('/contact-rules/:number', async (req, res) => {
 });
 
 // ── Conversation rules ─────────────────────────────────────────────────────────
-adminRouter.get('/conversation-rules', async (_req, res) => {
-  res.json(await listConversationRules());
-});
+adminRouter.get('/conversation-rules', async (_req, res) => { res.json(await listConversationRules()); });
 adminRouter.post('/conversation-rules', async (req, res) => {
   const { instance, remoteJid, botMode, notes } = req.body;
   await setConversationRule(instance, remoteJid, botMode, notes);
   res.json({ ok: true });
 });
 adminRouter.delete('/conversation-rules', async (req, res) => {
-  const { instance, remoteJid } = req.body;
-  await deleteConversationRule(instance, remoteJid);
+  await deleteConversationRule(req.body.instance, req.body.remoteJid);
   res.json({ ok: true });
 });
 
 // ── Catalog debug ──────────────────────────────────────────────────────────────
 adminRouter.get('/catalog/debug', async (_req, res) => {
-  try {
-    const debug = await getCatalogDebug();
-    return res.json({ ok: true, ...debug });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e?.message });
-  }
+  try { return res.json({ ok: true, ...(await getCatalogDebug()) }); }
+  catch (e: any) { return res.status(500).json({ ok: false, error: e?.message }); }
 });
 
 // ── Vehicle demands ────────────────────────────────────────────────────────────
 adminRouter.get('/demands', async (req, res) => {
-  const instance = String(req.query.instance ?? env.instanceName);
-  res.json(await listVehicleDemands(instance));
+  const status = (req.query.status as any) ?? 'open';
+  const limit = req.query.limit ? Number(req.query.limit) : undefined;
+  res.json(await listVehicleDemands({ status, limit }));
 });
 adminRouter.post('/demands', async (req, res) => {
-  const demand = await createVehicleDemand(req.body);
-  res.json({ ok: true, demand });
+  res.json({ ok: true, demand: await createVehicleDemand(req.body) });
 });
 adminRouter.patch('/demands/:id', async (req, res) => {
   await updateVehicleDemand(Number(req.params.id), req.body);
@@ -133,17 +122,14 @@ adminRouter.get('/demands/:id/recontacts', async (req, res) => {
 });
 adminRouter.post('/demands/scan', async (req, res) => {
   const since = req.body.since ? new Date(req.body.since) : new Date(Date.now() - 10 * 60_000);
-  const threshold = Number(req.body.threshold ?? 0.45);
-  const result = await scanRecentVehiclesForDemandMatches({ since, threshold });
+  const result = await scanRecentVehiclesForDemandMatches({ since, threshold: Number(req.body.threshold ?? 0.45) });
   res.json({ ok: true, ...result });
 });
 adminRouter.post('/demands/recontact', async (_req, res) => {
-  const r = await runRecontactJob();
-  res.json({ ok: true, ...r });
+  res.json({ ok: true, ...(await runRecontactJob()) });
 });
 adminRouter.get('/demands/scan/debug', async (_req, res) => {
-  const debug = await getDemandVehicleScanDebug();
-  res.json({ ok: true, ...debug });
+  res.json({ ok: true, ...(await getDemandVehicleScanDebug()) });
 });
 adminRouter.post('/demands/cache/clear', async (_req, res) => {
   clearVehicleSourceCache();
@@ -152,9 +138,8 @@ adminRouter.post('/demands/cache/clear', async (_req, res) => {
 
 // ── MercadoLibre sync ──────────────────────────────────────────────────────────
 adminRouter.post('/meli/sync', async (_req, res) => {
-  if (!process.env.MELI_CLIENT_ID || !process.env.MELI_CLIENT_SECRET) {
+  if (!process.env.MELI_CLIENT_ID || !process.env.MELI_CLIENT_SECRET)
     return res.status(400).json({ ok: false, error: 'MELI credentials not configured' });
-  }
   runMeliSync().catch((e) => console.error('[meliSync] manual trigger error:', e));
   return res.json({ ok: true, message: 'Sync started in background' });
 });

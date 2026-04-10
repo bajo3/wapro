@@ -1,25 +1,23 @@
 /**
- * webhooks.ts — Minimal stub post-cleanup.
- *
- * Receives Evolution API webhooks, deduplicates, logs, updates state.
- * AI intelligence layer has been removed — rebuild from scratch here.
+ * webhooks.ts — Recibe mensajes de Evolution, corre la inteligencia, responde.
  */
 
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { env } from '../lib/env.js';
-import { pool } from '../services/db.js';
 import { getState, setState, seenDedupe, markDedupe } from '../services/state.js';
 import { getContactRule } from '../services/contacts.js';
 import { getConversationRule } from '../services/rules.js';
+import { sendTextAndPersist } from '../services/panelPersistence.js';
 import { getSocket } from '../services/socket.js';
+import { processMessage } from '../services/botIntelligence.js';
 
 export const webhookRouter = Router();
 
-// ── Auth middleware ────────────────────────────────────────────────────────────
+// ── Auth ───────────────────────────────────────────────────────────────────────
 function requireWebhookAuth(req: Request, res: Response, next: any) {
-  const apiKey = req.header('apikey') ?? (req.query.apikey as string);
-  if (env.webhookApiKey && apiKey !== env.webhookApiKey) {
+  const secret = req.header('x-bot-secret') ?? (req.query.secret as string);
+  if (env.webhookSecret && secret !== env.webhookSecret) {
     return res.status(401).json({ ok: false });
   }
   return next();
@@ -27,58 +25,82 @@ function requireWebhookAuth(req: Request, res: Response, next: any) {
 
 webhookRouter.use(requireWebhookAuth);
 
-// ── Main webhook handler ───────────────────────────────────────────────────────
+// ── Main handler ───────────────────────────────────────────────────────────────
 webhookRouter.post('/:instance', async (req: Request, res: Response) => {
+  // Responder inmediatamente a Evolution
   res.status(200).json({ ok: true });
 
   const instance = req.params.instance;
   const body = req.body ?? {};
   const event = body.event as string;
 
-  if (event !== 'messages.upsert') return;
+  if (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT') return;
 
   const data = body.data ?? {};
-  const message = Array.isArray(data.messages) ? data.messages[0] : data;
+  const messages: any[] = Array.isArray(data.messages) ? data.messages : [data];
+  const message = messages[0];
   if (!message) return;
 
   const key = message.key ?? {};
   const remoteJid: string = key.remoteJid ?? '';
-  const fromMe: boolean = key.fromMe ?? false;
-  const msgId: string = key.id ?? '';
+  const fromMe: boolean   = key.fromMe ?? false;
+  const msgId: string     = key.id ?? '';
 
   if (!remoteJid || fromMe) return;
+  // Ignorar grupos
+  if (remoteJid.endsWith('@g.us')) return;
 
   // Dedup
-  if (await seenDedupe(instance, msgId)) return;
-  await markDedupe(instance, msgId);
+  if (await seenDedupe(msgId)) return;
+  await markDedupe(msgId, instance, remoteJid, 'inbound');
 
-  // Check rules
-  const number = remoteJid.split('@')[0];
+  // Reglas on/off
+  const number = remoteJid.replace(/[^0-9]/g, '');
   const [convRule, contactRule] = await Promise.all([
     getConversationRule(instance, remoteJid).catch(() => null),
     getContactRule(number).catch(() => null),
   ]);
   if (convRule === 'OFF' || contactRule === 'OFF') return;
 
-  // Extract text
+  // Extraer texto
   const msgContent = message.message ?? {};
-  const text: string =
+  const text: string = (
     msgContent.conversation ||
     msgContent.extendedTextMessage?.text ||
     msgContent.imageMessage?.caption ||
-    '';
+    msgContent.videoMessage?.caption ||
+    ''
+  ).trim();
 
-  console.log(`[webhook] ${instance} | ${remoteJid} | "${text.slice(0, 80)}"`);
+  if (!text) return;
 
-  // Update state
-  const state = (await getState(instance, remoteJid).catch(() => null)) ?? {};
-  await setState(instance, remoteJid, {
-    ...state,
-    lastUserAt: new Date().toISOString(),
-    lastUserMsg: text.slice(0, 500),
-  }).catch(() => {});
+  console.log(`[webhook] ${instance} | ${number} | "${text.slice(0, 80)}"`);
 
-  // Emit to panel
-  const sock = getSocket();
-  sock?.emit('message.received', { instance, remoteJid, text });
+  try {
+    // Estado actual
+    const state = await getState(instance, remoteJid).catch(() => ({}));
+
+    // Inteligencia
+    const result = await processMessage({ instance, remoteJid, message: text, state });
+
+    // Guardar nuevo estado
+    await setState(instance, remoteJid, result.newState as any).catch((e) =>
+      console.error('[webhook] setState error:', e)
+    );
+
+    // Enviar respuesta
+    await sendTextAndPersist(instance, remoteJid, result.reply);
+
+    // Emitir al panel
+    const sock = getSocket();
+    sock?.emit('bot.reply', {
+      instance,
+      remoteJid,
+      text: result.reply,
+      isHot: result.isHot ?? false,
+    });
+
+  } catch (err: any) {
+    console.error(`[webhook] processing error for ${remoteJid}:`, err?.message ?? err);
+  }
 });
