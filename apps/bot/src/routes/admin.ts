@@ -151,6 +151,211 @@ adminRouter.post('/bot-mode', (req: Request, res: Response) => {
   return res.json({ ok: true, mode });
 });
 
+// ── Intelligence / Playground / Learning ──────────────────────────────────────
+// These stubs prevent the panel from receiving 404s on routes it forwards to the
+// bot via forwardBotAdmin(). The panel's botIntelligenceRoutes uses tryForward()
+// with local compat fallback for intelligence/* and decisions, but uses forward()
+// (no fallback) for playground and learning/* — those cause hard 502s without these.
+
+adminRouter.post('/playground/run', async (req: Request, res: Response) => {
+  // Minimal playground: echo back the input with a not-implemented marker.
+  // Panel already handles the case where the bot doesn't have a real playground.
+  const text = String((req.body as any)?.text ?? '');
+  return res.json({
+    ok: false,
+    error: 'playground_not_available',
+    message: 'El bot no tiene playground runtime activo. Configurá OPENAI_API_KEY para habilitarlo.',
+    input: text
+  });
+});
+
+adminRouter.get('/intelligence/settings', async (_req: Request, res: Response) => {
+  return res.json({ settings: {}, source: 'bot_stub' });
+});
+
+adminRouter.put('/intelligence/settings', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, settings: {}, source: 'bot_stub' });
+});
+
+adminRouter.get('/intelligence/policies', async (_req: Request, res: Response) => {
+  return res.json({ policies: [], source: 'bot_stub' });
+});
+
+adminRouter.post('/intelligence/policies', async (_req: Request, res: Response) => {
+  return res.status(201).json({ policy: null, source: 'bot_stub' });
+});
+
+adminRouter.delete('/intelligence/policies/:id', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, source: 'bot_stub' });
+});
+
+adminRouter.get('/intelligence/faqs', async (_req: Request, res: Response) => {
+  return res.json({ faqs: [], source: 'bot_stub' });
+});
+
+adminRouter.post('/intelligence/faqs', async (_req: Request, res: Response) => {
+  return res.status(201).json({ faq: null, source: 'bot_stub' });
+});
+
+adminRouter.delete('/intelligence/faqs/:id', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, source: 'bot_stub' });
+});
+
+adminRouter.get('/intelligence/playbooks', async (_req: Request, res: Response) => {
+  return res.json({ playbooks: [], source: 'bot_stub' });
+});
+
+adminRouter.post('/intelligence/playbooks', async (_req: Request, res: Response) => {
+  return res.status(201).json({ playbook: null, source: 'bot_stub' });
+});
+
+adminRouter.delete('/intelligence/playbooks/:id', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, source: 'bot_stub' });
+});
+
+adminRouter.get('/intelligence/examples', async (_req: Request, res: Response) => {
+  return res.json({ examples: [], source: 'bot_stub' });
+});
+
+adminRouter.post('/intelligence/examples', async (_req: Request, res: Response) => {
+  return res.status(201).json({ example: null, source: 'bot_stub' });
+});
+
+adminRouter.delete('/intelligence/examples/:id', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, source: 'bot_stub' });
+});
+
+adminRouter.get('/intelligence/decisions', async (_req: Request, res: Response) => {
+  return res.json({ decisions: [], source: 'bot_stub' });
+});
+
+// Learning stubs — forward() (no local fallback) requires these to return 2xx
+adminRouter.get('/learning/stats', async (_req: Request, res: Response) => {
+  return res.json({
+    stats: {
+      total_captures: 0,
+      approved: 0,
+      pending: 0,
+      has_human_feedback: 0,
+      avg_auto_score: null,
+      promoted: 0,
+      has_outcome: 0,
+      errors: 0
+    },
+    source: 'bot_stub'
+  });
+});
+
+adminRouter.get('/learning/captures', async (_req: Request, res: Response) => {
+  return res.json({ rows: [], total: 0, source: 'bot_stub' });
+});
+
+adminRouter.get('/learning/captures/:id', async (req: Request, res: Response) => {
+  return res.status(404).json({ ok: false, error: 'capture_not_found', source: 'bot_stub' });
+});
+
+adminRouter.post('/learning/feedback', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, source: 'bot_stub' });
+});
+
+adminRouter.post('/learning/promote/:id', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, source: 'bot_stub' });
+});
+
+adminRouter.post('/learning/outcome', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, source: 'bot_stub' });
+});
+
+adminRouter.post('/learning/flag/:id', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, source: 'bot_stub' });
+});
+
+adminRouter.get('/learning/examples/preview', async (_req: Request, res: Response) => {
+  return res.json({ block: '', count: 0, source: 'bot_stub' });
+});
+
+adminRouter.get('/learning/memory', async (_req: Request, res: Response) => {
+  return res.json({ rows: [], total: 0, source: 'bot_stub' });
+});
+
+adminRouter.get('/learning/memory/summary', async (_req: Request, res: Response) => {
+  return res.json({ summary: [], source: 'bot_stub' });
+});
+
+adminRouter.patch('/learning/memory/:id', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, source: 'bot_stub' });
+});
+
+adminRouter.post('/learning/memory/extract', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, extracted: 0, source: 'bot_stub' });
+});
+
+adminRouter.post('/learning/memory', async (_req: Request, res: Response) => {
+  return res.status(201).json({ ok: true, source: 'bot_stub' });
+});
+
+// Trace stubs
+adminRouter.get('/trace', async (_req: Request, res: Response) => {
+  return res.json({ rows: [], total: 0, source: 'bot_stub' });
+});
+
+adminRouter.get('/trace/:messageId', async (_req: Request, res: Response) => {
+  return res.status(404).json({ ok: false, source: 'bot_stub' });
+});
+
+// Metrics stubs
+adminRouter.get('/metrics/summary', async (_req: Request, res: Response) => {
+  return res.json({ summary: null, source: 'bot_stub' });
+});
+
+adminRouter.get('/metrics/timeseries', async (_req: Request, res: Response) => {
+  return res.json({ rows: [], source: 'bot_stub' });
+});
+
+adminRouter.get('/metrics/alerts', async (_req: Request, res: Response) => {
+  return res.json({ alerts: [], source: 'bot_stub' });
+});
+
+adminRouter.post('/metrics/alerts/:id/resolve', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, source: 'bot_stub' });
+});
+
+// Eval stubs
+adminRouter.get('/eval/runs', async (_req: Request, res: Response) => {
+  return res.json({ runs: [], source: 'bot_stub' });
+});
+
+adminRouter.post('/eval/run', async (_req: Request, res: Response) => {
+  return res.json({ ok: false, result: null, source: 'bot_stub' });
+});
+
+// Tests stubs
+adminRouter.get('/tests/cases', async (_req: Request, res: Response) => {
+  return res.json({ cases: [], source: 'bot_stub' });
+});
+
+adminRouter.post('/tests/cases', async (_req: Request, res: Response) => {
+  return res.status(201).json({ ok: true, source: 'bot_stub' });
+});
+
+adminRouter.delete('/tests/cases/:id', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, source: 'bot_stub' });
+});
+
+adminRouter.post('/tests/run', async (_req: Request, res: Response) => {
+  return res.json({ ok: true, results: [], source: 'bot_stub' });
+});
+
+// Health sub-route
+adminRouter.get('/health/bot', async (_req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query('SELECT COUNT(*) AS cnt FROM bot_conversations');
+    return res.json({ ok: true, health: { status: 'ok', conversations: Number(rows[0].cnt) } });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, health: { status: 'error', error: e?.message } });
+  }
+});
+
 // ── MercadoLibre sync ──────────────────────────────────────────────────────────
 adminRouter.post('/meli/sync', async (_req, res) => {
   if (!process.env.MELI_CLIENT_ID || !process.env.MELI_CLIENT_SECRET)

@@ -56,6 +56,16 @@ async function main() {
   await migrate();
   logAiRuntimeStartup(resolveAiRuntime(), 'startup', 'startup_boot');
 
+  // ── Startup validation — Evolution instance ───────────────────────────────────
+  // Log the effective instance name and URL so ops can immediately verify the config.
+  // EVOLUTION_INSTANCE must be set to the exact instance name registered in Evolution API.
+  // A 404 from sendText means this value doesn't match what Evolution has registered.
+  if (!env.instanceName) {
+    console.error('[bot] CRITICAL: EVOLUTION_INSTANCE is not set — bot cannot send messages');
+  } else {
+    console.log(`[bot] Evolution instance: "${env.instanceName}" | URL: ${env.evolutionUrl}`);
+  }
+
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", 1);

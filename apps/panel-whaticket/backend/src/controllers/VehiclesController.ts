@@ -618,6 +618,14 @@ export const remove = async (req: Request, res: Response): Promise<Response> => 
     }
 
     const idCol = source.map.id;
+
+    // Desvincular cotizaciones antes de eliminar para evitar FK violation.
+    // quotations siempre está en la DB del panel (Sequelize/Railway) — nunca en Supabase.
+    await sequelize.query(
+      `UPDATE "public"."quotations" SET "vehicle_id" = NULL WHERE "vehicle_id" = :id`,
+      { replacements: { id } }
+    );
+
     const deleted = await catalogMutate(
       `DELETE FROM "${source.schema}"."${source.table}" WHERE "${idCol}" = :id`,
       { id }
@@ -627,8 +635,12 @@ export const remove = async (req: Request, res: Response): Promise<Response> => 
     }
 
     return res.json({ ok: true, deleted: id });
-  } catch (err) {
+  } catch (err: any) {
     console.error("[vehicles#remove] error", err);
+    // FK violation residual (otra tabla referencia el vehicle) → 409 controlado
+    if (err?.original?.code === "23503" || err?.code === "23503" || String(err?.message ?? "").includes("violates foreign key")) {
+      return res.status(409).json({ ok: false, error: "vehicle_has_references", detail: err.message });
+    }
     const msg = err instanceof Error ? err.message : String(err);
     return res.status(500).json({ ok: false, error: msg });
   }

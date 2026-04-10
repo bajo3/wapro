@@ -315,6 +315,14 @@ async function listVehiclesForScan(since?: Date) {
     order by ${map.updatedAt ? `${qi(map.updatedAt)} desc nulls last,` : ''} ${qi(map.id)} desc
     limit 2000
   `;
+  // Pre-filter diagnostic: count total rows (ignoring since/status filters) so
+  // "vehicles=0" logs are actionable — shows whether the table is empty vs filtered.
+  let totalInTable = -1;
+  try {
+    const countR = await vehicleQuery(`SELECT COUNT(*) AS cnt FROM ${qi(schema)}.${qi(table)}`, []);
+    totalInTable = Number(countR.rows[0]?.cnt ?? -1);
+  } catch { /* best-effort */ }
+
   const r = await vehicleQuery(sql, params);
   const rows = (r.rows ?? []).map((row: any) => ({
     id: String(row.id),
@@ -330,14 +338,20 @@ async function listVehiclesForScan(since?: Date) {
     transmission: row.transmission,
     fuel: row.fuel
   }));
+
+  const sinceLabel = since ? since.toISOString() : 'all';
+  const updatedAtFilter = since && map.updatedAt ? `updatedAt>=${sinceLabel}` : 'no-since-filter';
+
   if (rows.length > 0) {
     lastGoodVehicleScan = { at: Date.now(), rows };
   } else if (lastGoodVehicleScan.rows.length && Date.now() - lastGoodVehicleScan.at < LAST_GOOD_SCAN_TTL_MS) {
-    console.warn(`[demands] scan returned 0 vehicles from ${schema}.${table}; reusing last good scan (${lastGoodVehicleScan.rows.length})`);
-    console.log(`[demands] scan source=${schema}.${table} vehicles=${lastGoodVehicleScan.rows.length} since=${since ? since.toISOString() : 'all'} strategy=last-good-cache`);
+    console.warn(`[demands] scan 0 from ${schema}.${table} (total_in_table=${totalInTable} filter=${updatedAtFilter} status_col=${statusCol ?? 'none'}); reusing last good scan (${lastGoodVehicleScan.rows.length})`);
+    console.log(`[demands] scan source=${schema}.${table} vehicles=${lastGoodVehicleScan.rows.length} since=${sinceLabel} strategy=last-good-cache`);
     return lastGoodVehicleScan.rows;
+  } else if (rows.length === 0) {
+    console.warn(`[demands] vehicles=0 source=${schema}.${table} total_in_table=${totalInTable} filter=${updatedAtFilter} status_col=${statusCol ?? 'none'} updatedAt_col=${map.updatedAt ?? 'none'} vehiclePool_is_supabase=${vehiclePool !== pool}`);
   }
-  console.log(`[demands] scan source=${schema}.${table} vehicles=${rows.length} since=${since ? since.toISOString() : 'all'} strategy=full-inventory`);
+  console.log(`[demands] scan source=${schema}.${table} vehicles=${rows.length} since=${sinceLabel} strategy=full-inventory`);
   return rows;
 }
 
