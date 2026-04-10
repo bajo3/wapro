@@ -55,6 +55,7 @@ interface MeliItem {
   currency_id: string;
   status: string;
   permalink: string;
+  thumbnail?: string;
   pictures: MeliPicture[];
   attributes: MeliAttribute[];
   seller_id: number;
@@ -101,7 +102,13 @@ function attrValue(attrs: MeliAttribute[], id: string): string | null {
 
 function mapItem(item: MeliItem): VehicleRow {
   const attrs = item.attributes ?? [];
-  const images = (item.pictures ?? []).map((p) => p.secure_url ?? p.url);
+
+  const rawPictures = item.pictures ?? [];
+  console.log(`[meliSync] ML pictures for ${item.id}: ${rawPictures.length}`);
+  let images: string[] = rawPictures.map((p) => p.url).filter(Boolean);
+  if (images.length === 0 && item.thumbnail) {
+    images = [item.thumbnail];
+  }
 
   const raw: Record<string, string | null> = {};
   for (const [meliId, field] of Object.entries(ATTR_MAP)) {
