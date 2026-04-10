@@ -56,6 +56,7 @@ import { loadBotMemory } from "./services/botMemory.js";
 import { computeHourlyMetrics } from "./services/metricsAggregator.js";
 import { runEvalSuite } from "./services/evalRunner.js";
 import { logAiRuntimeStartup, resolveAiRuntime } from "./services/aiRuntime.js";
+import { runMeliSync } from "./services/meliSync.js";
 
 async function main() {
   await migrate();
@@ -352,6 +353,38 @@ async function main() {
       evalJobRunning = false;
     }
   }, 6 * 60 * 60 * 1000); // cada 6 horas
+
+  // ─── MercadoLibre sync ────────────────────────────────────────────────────────
+  // Sincroniza publicaciones activas de ML → vehicles cada 3 horas.
+  // Solo corre si MELI_CLIENT_ID y MELI_CLIENT_SECRET están seteados.
+  const MELI_SYNC_MS = 3 * 60 * 60 * 1000;
+  let meliSyncRunning = false;
+
+  if (process.env.MELI_CLIENT_ID && process.env.MELI_CLIENT_SECRET) {
+    // Primera corrida: 1 minuto después del boot
+    setTimeout(async () => {
+      try {
+        console.log('[meliSync] initial sync on startup...');
+        await runMeliSync();
+      } catch (e) {
+        console.error('[meliSync] startup sync error:', e);
+      }
+    }, 60_000);
+
+    setInterval(async () => {
+      if (meliSyncRunning) return;
+      meliSyncRunning = true;
+      try {
+        await runMeliSync();
+      } catch (e) {
+        console.error('[meliSync] periodic sync error:', e);
+      } finally {
+        meliSyncRunning = false;
+      }
+    }, MELI_SYNC_MS);
+  } else {
+    console.warn('[meliSync] MELI_CLIENT_ID or MELI_CLIENT_SECRET not set — sync disabled');
+  }
 }
 
 main().catch((e) => {

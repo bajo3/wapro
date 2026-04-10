@@ -21,9 +21,21 @@ import AgentFeedback from "../models/AgentFeedback";
 
 // eslint-disable-next-line
 const dbConfig = require("../config/database");
-// import dbConfig from "../config/database";
 
-const sequelize = new Sequelize(dbConfig);
+/**
+ * If DATABASE_URL is set, use it directly (Supabase pooler, Railway, etc.).
+ * Sequelize v5 doesn't support a top-level `url` key in config, so we
+ * instantiate with the URI string when available.
+ */
+const rawDbUrl = process.env.DATABASE_URL;
+const sequelize = rawDbUrl
+  ? new Sequelize(rawDbUrl, {
+      dialect: "postgres",
+      dialectOptions: { ssl: { rejectUnauthorized: false } },
+      logging: false,
+      pool: dbConfig.pool
+    })
+  : new Sequelize(dbConfig);
 
 const models = [
   User,

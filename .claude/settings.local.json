@@ -34,7 +34,14 @@
       "Bash(find /c/Users/felip/OneDrive/Escritorio/Feli Web/wapro -name *.sql -o -name *migration* -o -name *schema*)",
       "Bash(find '/c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/bot' -maxdepth 3 -name *.sql)",
       "Bash(grep:*)",
-      "Bash(cd /c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend)"
+      "Bash(cd /c/Users/felip/OneDrive/Escritorio/Feli Web/wapro/apps/panel-whaticket/backend)",
+      "mcp__claude_ai_Supabase__list_projects",
+      "mcp__claude_ai_Supabase__list_tables",
+      "Bash(claude mcp:*)",
+      "mcp__railway-pg__search_objects",
+      "mcp__railway-pg__execute_sql",
+      "mcp__claude_ai_Supabase__apply_migration",
+      "mcp__claude_ai_Supabase__execute_sql"
     ]
   }
 }
