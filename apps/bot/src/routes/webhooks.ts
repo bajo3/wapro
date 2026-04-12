@@ -89,14 +89,22 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
       console.error('[webhook] setState error:', e)
     );
 
+    // Usar siempre env.instanceName como instancia de envío — el req.params.instance
+    // es el path del webhook URL y puede diferir del nombre real de la instancia en Evolution.
+    const sendInstance = env.instanceName;
+    console.log(`[send] evolution instance=${sendInstance} to=${remoteJid}`);
+
     // Enviar respuesta de texto
-    await sendTextAndPersist(instance, remoteJid, result.reply);
+    await sendTextAndPersist(sendInstance, remoteJid, result.reply).catch(e => {
+      console.error(`[send] evolution instance=${sendInstance} failed status=${e?.message ?? e}`);
+      throw e;
+    });
 
     // Enviar fotos si las hay (hasta 5, secuencial para no saturar WhatsApp)
     if (result.imagesToSend?.length) {
       for (const imageUrl of result.imagesToSend.slice(0, 5)) {
-        await sendImageAndPersist(instance, remoteJid, imageUrl).catch(e =>
-          console.error(`[webhook] error sending image to ${remoteJid}:`, e?.message ?? e)
+        await sendImageAndPersist(sendInstance, remoteJid, imageUrl).catch(e =>
+          console.error(`[send] evolution instance=${sendInstance} image failed to ${remoteJid}:`, e?.message ?? e)
         );
       }
     }
