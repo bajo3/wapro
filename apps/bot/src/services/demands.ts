@@ -291,67 +291,67 @@ async function listVehiclesForScan(since?: Date) {
     map.fuel ? `${qi(map.fuel)} as fuel` : `NULL::text as fuel`
   ];
 
-  const params: any[] = [];
-  const whereClauses: string[] = [];
-
   // Only match active/available vehicles — same filter catalog.ts uses
   const statusCol = source.columns.find(c => ['status', 'estado'].includes(c.toLowerCase()));
-  if (statusCol) {
-    whereClauses.push(`(${qi(statusCol)} is null or btrim(${qi(statusCol)}::text) = '' or lower(${qi(statusCol)}::text) not in ('inactive', 'archived', 'deleted', 'sold', 'paused'))`);
+  const statusFilter = statusCol
+    ? `(${qi(statusCol)} is null or btrim(${qi(statusCol)}::text) = '' or lower(${qi(statusCol)}::text) not in ('inactive', 'archived', 'deleted', 'sold', 'paused'))`
+    : null;
+
+  const runQuery = async (applySince: boolean) => {
+    const params: any[] = [];
+    const whereClauses: string[] = [];
+    if (statusFilter) whereClauses.push(statusFilter);
+    if (applySince && since && map.updatedAt) {
+      params.push(since.toISOString());
+      whereClauses.push(`${qi(map.updatedAt)} >= $${params.length}`);
+    }
+    const whereExpr = whereClauses.length ? `where ${whereClauses.join(' and ')}` : '';
+    const sql = `
+      select ${fields.join(', ')}
+      from ${qi(schema)}.${qi(table)}
+      ${whereExpr}
+      order by ${map.updatedAt ? `${qi(map.updatedAt)} desc nulls last,` : ''} ${qi(map.id)} desc
+      limit 2000
+    `;
+    const r = await vehicleQuery(sql, params);
+    return (r.rows ?? []).map((row: any) => ({
+      id: String(row.id),
+      title: buildVehicleTitle(row),
+      brand: row.brand,
+      model: row.model,
+      year: row.year ? Number(row.year) : null,
+      price: row.price == null ? null : Number(row.price),
+      currency: String(row.currency || 'ARS').toUpperCase(),
+      slug: row.slug,
+      permalink: row.permalink,
+      pictures: row.pictures,
+      transmission: row.transmission,
+      fuel: row.fuel
+    }));
+  };
+
+  const usedSince = Boolean(since && map.updatedAt);
+  let rows = await runQuery(true);
+
+  console.log(`[demands] scan source=${schema}.${table} updatedAt_col=${map.updatedAt ?? 'none'} status_col=${statusCol ?? 'none'} since=${since ? since.toISOString() : 'all'} fetched_incremental=${rows.length} vehiclePool_is_supabase=${vehiclePool !== pool}`);
+
+  // Bootstrap fallback: if incremental scan returned 0 and we have no prior cache,
+  // do a full scan (no since filter) so demands can match against the full inventory.
+  if (rows.length === 0 && usedSince && !lastGoodVehicleScan.rows.length) {
+    rows = await runQuery(false);
+    console.log(`[demands] scan bootstrap full-scan fallback fetched_full=${rows.length} source=${schema}.${table}`);
   }
-
-  // Apply since filter only if the table has an updatedAt column
-  if (since && map.updatedAt) {
-    params.push(since.toISOString());
-    whereClauses.push(`${qi(map.updatedAt)} >= $${params.length}`);
-  }
-
-  const whereExpr = whereClauses.length ? `where ${whereClauses.join(' and ')}` : '';
-
-  const sql = `
-    select ${fields.join(', ')}
-    from ${qi(schema)}.${qi(table)}
-    ${whereExpr}
-    order by ${map.updatedAt ? `${qi(map.updatedAt)} desc nulls last,` : ''} ${qi(map.id)} desc
-    limit 2000
-  `;
-  // Pre-filter diagnostic: count total rows (ignoring since/status filters) so
-  // "vehicles=0" logs are actionable — shows whether the table is empty vs filtered.
-  let totalInTable = -1;
-  try {
-    const countR = await vehicleQuery(`SELECT COUNT(*) AS cnt FROM ${qi(schema)}.${qi(table)}`, []);
-    totalInTable = Number(countR.rows[0]?.cnt ?? -1);
-  } catch { /* best-effort */ }
-
-  const r = await vehicleQuery(sql, params);
-  const rows = (r.rows ?? []).map((row: any) => ({
-    id: String(row.id),
-    title: buildVehicleTitle(row),
-    brand: row.brand,
-    model: row.model,
-    year: row.year ? Number(row.year) : null,
-    price: row.price == null ? null : Number(row.price),
-    currency: String(row.currency || 'ARS').toUpperCase(),
-    slug: row.slug,
-    permalink: row.permalink,
-    pictures: row.pictures,
-    transmission: row.transmission,
-    fuel: row.fuel
-  }));
-
-  const sinceLabel = since ? since.toISOString() : 'all';
-  const updatedAtFilter = since && map.updatedAt ? `updatedAt>=${sinceLabel}` : 'no-since-filter';
 
   if (rows.length > 0) {
     lastGoodVehicleScan = { at: Date.now(), rows };
+    console.log(`[demands] scan source=${schema}.${table} vehicles=${rows.length} since=${since ? since.toISOString() : 'all'} strategy=${usedSince ? 'incremental' : 'full-inventory'}`);
   } else if (lastGoodVehicleScan.rows.length && Date.now() - lastGoodVehicleScan.at < LAST_GOOD_SCAN_TTL_MS) {
-    console.warn(`[demands] scan 0 from ${schema}.${table} (total_in_table=${totalInTable} filter=${updatedAtFilter} status_col=${statusCol ?? 'none'}); reusing last good scan (${lastGoodVehicleScan.rows.length})`);
-    console.log(`[demands] scan source=${schema}.${table} vehicles=${lastGoodVehicleScan.rows.length} since=${sinceLabel} strategy=last-good-cache`);
+    console.warn(`[demands] scan 0 from ${schema}.${table} status_col=${statusCol ?? 'none'}; reusing last good scan (${lastGoodVehicleScan.rows.length})`);
+    console.log(`[demands] scan source=${schema}.${table} vehicles=${lastGoodVehicleScan.rows.length} since=${since ? since.toISOString() : 'all'} strategy=last-good-cache`);
     return lastGoodVehicleScan.rows;
-  } else if (rows.length === 0) {
-    console.warn(`[demands] vehicles=0 source=${schema}.${table} total_in_table=${totalInTable} filter=${updatedAtFilter} status_col=${statusCol ?? 'none'} updatedAt_col=${map.updatedAt ?? 'none'} vehiclePool_is_supabase=${vehiclePool !== pool}`);
+  } else {
+    console.warn(`[demands] scan source=${schema}.${table} vehicles=0 since=${since ? since.toISOString() : 'all'} — no active vehicles found and no cache available`);
   }
-  console.log(`[demands] scan source=${schema}.${table} vehicles=${rows.length} since=${sinceLabel} strategy=full-inventory`);
   return rows;
 }
 
@@ -556,9 +556,12 @@ function mapRecontactRow(row: any): DemandRecontact {
 export function getDemandVehicleScanDebug() {
   return {
     vehiclePoolIsSameAsMainPool: vehiclePool === pool,
+    vehiclePool_is_supabase: vehiclePool !== pool,
     hasSupabasePool: Boolean(supabasePool),
     vehicleSourceCached: Boolean(vehicleSourceCache.source),
     vehicleSourceTable: vehicleSourceCache.source ? `${vehicleSourceCache.source.schema}.${vehicleSourceCache.source.table}` : null,
+    updatedAt_col: vehicleSourceCache.source?.map?.updatedAt ?? null,
+    status_col: vehicleSourceCache.source?.columns?.find((c: string) => ['status', 'estado'].includes(c.toLowerCase())) ?? null,
     vehicleSourceCachedAt: vehicleSourceCache.at ? new Date(vehicleSourceCache.at).toISOString() : null,
     lastGoodVehicleScanCount: lastGoodVehicleScan.rows.length,
     lastGoodVehicleScanAt: lastGoodVehicleScan.at ? new Date(lastGoodVehicleScan.at).toISOString() : null
