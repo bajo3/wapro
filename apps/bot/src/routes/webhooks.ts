@@ -59,24 +59,39 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
   });
   console.log(`[webhook] instance resolved: ${instance} (resolved_from=${resolvedFrom})`);
 
-  if (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT') return;
+  if (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT') {
+    console.log(`[webhook] skipped event=${event} instance=${instance}`);
+    return;
+  }
 
   const data = body.data ?? {};
   const messages: any[] = Array.isArray(data.messages) ? data.messages : [data];
   const message = messages[0];
-  if (!message) return;
+  if (!message) {
+    console.log(`[webhook] skipped reason=no_message instance=${instance}`);
+    return;
+  }
 
   const key = message.key ?? {};
   const remoteJid: string = key.remoteJid ?? '';
   const fromMe: boolean   = key.fromMe ?? false;
   const msgId: string     = key.id ?? '';
 
-  if (!remoteJid || fromMe) return;
+  if (!remoteJid || fromMe) {
+    console.log(`[webhook] skipped reason=${!remoteJid ? 'no_remoteJid' : 'fromMe'} instance=${instance}`);
+    return;
+  }
   // Ignorar grupos
-  if (remoteJid.endsWith('@g.us')) return;
+  if (remoteJid.endsWith('@g.us')) {
+    console.log(`[webhook] skipped reason=group jid=${remoteJid}`);
+    return;
+  }
 
   // Dedup
-  if (await seenDedupe(msgId)) return;
+  if (await seenDedupe(msgId)) {
+    console.log(`[webhook] skipped reason=dedupe msgId=${msgId}`);
+    return;
+  }
   await markDedupe(msgId, instance, remoteJid, 'inbound');
 
   // Reglas on/off
@@ -86,7 +101,10 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
     getContactRule(number).catch(() => null),
   ]);
   // OFF y HUMAN_ONLY bloquean respuestas automáticas del bot
-  if (convRule === 'OFF' || convRule === 'HUMAN_ONLY' || contactRule === 'OFF' || contactRule === 'HUMAN_ONLY') return;
+  if (convRule === 'OFF' || convRule === 'HUMAN_ONLY' || contactRule === 'OFF' || contactRule === 'HUMAN_ONLY') {
+    console.log(`[webhook] skipped reason=rule_block convRule=${convRule} contactRule=${contactRule} jid=${remoteJid}`);
+    return;
+  }
 
   // Extraer texto
   const msgContent = message.message ?? {};
@@ -98,9 +116,12 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
     ''
   ).trim();
 
-  if (!text) return;
+  if (!text) {
+    console.log(`[webhook] skipped reason=no_text jid=${remoteJid} msgType=${Object.keys(msgContent).join(',')}`);
+    return;
+  }
 
-  console.log(`[webhook] ${instance} | ${number} | "${text.slice(0, 80)}"`);
+  console.log(`[webhook] received from=${number} instance=${instance} text="${text.slice(0, 80)}"`);
 
   try {
     // Estado actual
@@ -109,13 +130,20 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
     // Inteligencia
     const result = await processMessage({ instance, remoteJid, message: text, state });
 
+    console.log(`[ai] response ready length=${result.reply?.length ?? 0} isHot=${result.isHot ?? false}`);
+
     // Guardar nuevo estado
     await setState(instance, remoteJid, result.newState as any).catch((e) =>
       console.error('[webhook] setState error:', e)
     );
 
+    // Normalizar jid (garantizar @s.whatsapp.net)
+    const normalizedJid = remoteJid.includes('@') ? remoteJid : `${remoteJid}@s.whatsapp.net`;
+
+    console.log(`[send] to=${normalizedJid} instance=${instance} payload_ready=true`);
+
     // Enviar respuesta de texto usando la instancia ya resuelta al inicio del handler
-    await sendTextAndPersist(instance, remoteJid, result.reply).catch(e => {
+    await sendTextAndPersist(instance, normalizedJid, result.reply).catch(e => {
       console.error(`[send] evolution instance=${instance} failed status=${e?.message ?? e}`);
       throw e;
     });
@@ -123,8 +151,8 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
     // Enviar fotos si las hay (hasta 5, secuencial para no saturar WhatsApp)
     if (result.imagesToSend?.length) {
       for (const imageUrl of result.imagesToSend.slice(0, 5)) {
-        await sendImageAndPersist(instance, remoteJid, imageUrl).catch(e =>
-          console.error(`[send] evolution instance=${instance} image failed to ${remoteJid}:`, e?.message ?? e)
+        await sendImageAndPersist(instance, normalizedJid, imageUrl).catch(e =>
+          console.error(`[send] evolution instance=${instance} image failed to ${normalizedJid}:`, e?.message ?? e)
         );
       }
     }

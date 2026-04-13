@@ -286,7 +286,10 @@ export async function sendTextAndPersist(
   const remoteJid = normalizeRemoteJid(remoteJidOrNumber);
   const number = extractNumber(remoteJid);
   const body = String(text || '').trim();
-  if (!number || !body) return;
+  if (!number || !body) {
+    console.warn(`[send] sendTextAndPersist skipped reason=${!number ? 'no_number' : 'empty_text'} instance=${instance} input=${remoteJidOrNumber}`);
+    return;
+  }
 
   // ── Gate central de bot replies ───────────────────────────────────────────
   if (!isBotReplyEnabled()) {

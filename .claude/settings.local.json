@@ -49,7 +49,9 @@
       "Bash(./node_modules/.bin/tsc -p tsconfig.json --noEmit)",
       "Bash(node node_modules/typescript/bin/tsc -p apps/bot/tsconfig.json --noEmit)",
       "Bash(node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit)",
-      "Bash(npx --yes tsc -p tsconfig.json --noEmit)"
+      "Bash(npx --yes tsc -p tsconfig.json --noEmit)",
+      "Bash(npx --no tsc -p tsconfig.json --noEmit)",
+      "Bash(node node_modules/typescript/lib/tsc.js -p tsconfig.json --noEmit)"
     ]
   }
 }

@@ -102,6 +102,7 @@ export async function evolutionSendText(instanceName: string, to: string, text: 
   // Evolution SendTextDto expects: { number: string, text: string }
   const body = { number: to, text };
   const url = `${env.evolutionUrl}/message/sendText/${encodeURIComponent(instanceName)}`;
+  console.log(`[send] POST ${url} instance=${instanceName} to=${to} text_len=${text.length}`);
   let attempt = 0;
   let lastErr: any = null;
 
@@ -113,9 +114,13 @@ export async function evolutionSendText(instanceName: string, to: string, text: 
       body: JSON.stringify(body)
     });
 
-    if (r.ok) return data;
+    if (r.ok) {
+      console.log(`[send] success status=${r.status} instance=${instanceName} to=${to}`);
+      return data;
+    }
 
     const msg = typeof data?.message === "string" ? data.message : JSON.stringify(maskSensitive(data));
+    console.error(`[send] failed status=${r.status} instance=${instanceName} to=${to} body=${JSON.stringify(maskSensitive(data))}`);
     lastErr = new Error(`Evolution sendText failed (${r.status}): ${msg}`);
 
     if (attempt < 2 && isRetriableStatus(r.status)) {
