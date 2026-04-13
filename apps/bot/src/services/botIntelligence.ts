@@ -27,7 +27,8 @@ import type { CatalogItem } from './catalog.js';
 
 export interface Extracted {
   intent:
-    | 'search'          // busca autos
+    | 'search'          // busca autos con filtros específicos
+    | 'catalog'         // quiere ver el catálogo completo / todas las opciones
     | 'credit_quote'    // quiere cuotas / financiar
     | 'trade_in'        // tiene un usado para entregar
     | 'advisor'         // pide hablar con persona
@@ -36,7 +37,7 @@ export interface Extracted {
     | 'refine'          // refina búsqueda anterior
     | 'alternatives'    // pide alternativas
     | 'reset'           // cambia de idea / busca algo diferente
-    | 'greeting'        // saludo inicial
+    | 'greeting'        // saludo
     | 'farewell'        // chau / gracias
     | 'complaint'       // enojo / reclamo
     | 'unsure'          // indeciso, pide recomendación
@@ -78,7 +79,7 @@ export interface IntelligenceResult {
 const EXTRACTION_PROMPT = `Sos un extractor de datos para un bot de ventas de autos.
 Dado un mensaje de WhatsApp y el contexto previo, devolvé SOLO un JSON con estos campos (omití los que no apliquen):
 {
-  "intent": "search|credit_quote|trade_in|advisor|visit|specific|refine|alternatives|reset|greeting|farewell|complaint|unsure|other",
+  "intent": "search|catalog|credit_quote|trade_in|advisor|visit|specific|refine|alternatives|reset|greeting|farewell|complaint|unsure|other",
   "brand": string,
   "model": string,
   "year": number,
@@ -105,9 +106,10 @@ Reglas:
 - Si menciona "asesor", "humano", "persona", "hablar con alguien" → wantsAdvisor = true
 - Si dice "cambio", "tengo un usado", "lo entrego" → intent = trade_in
 - Si cambia completamente de búsqueda → intent = reset
+- Si pide ver el catálogo, todas las opciones, todos los autos, qué tienen disponible (sin filtro específico) → intent = catalog
 - Si dice "chau", "gracias", "lo pienso" → intent = farewell
 - Si está enojado, reclama, insulta → intent = complaint
-- Si es un saludo inicial sin dato → intent = greeting
+- Si es un saludo (hola, buenas, buen día, etc.) → intent = greeting, siempre, independientemente del historial
 - Si "no sé qué quiero", "qué me recomendás" → intent = unsure
 - maxPrice: si dice "hasta X" o "con X" o "por X" → eso es el tope
 - Si hay opciones_mostradas en el contexto Y el cliente hace referencia a una por número ordinal
@@ -203,6 +205,18 @@ function filterCatalog(
   return results.slice(0, 5);
 }
 
+// ── Detección rápida de reset/catálogo (sin GPT) ─────────────────────────────
+// Frases que siempre reinician contexto, independientemente de lo que GPT clasifique.
+const RESET_RE = /^(hola+|buen[ao]s?(\s*(d[ií]as?|tardes?|noches?))?|arrancamos?\s*de\s*nuevo|empecemos?\s*de\s*nuevo|quiero\s*ver\s*otra\s*cosa|busco\s*otra\s*cosa|estoy\s*buscando\s*otra\s*cosa|cambio\s*de\s*b[uú]squeda)[\s!?.]*$/i;
+const CATALOG_RE = /mostrame?\s*(el\s*)?cat[aá]logo|me\s*pod[eé]s?\s*mostrar\s*(el\s*)?cat[aá]logo|que\s*(autos?|veh[ií]culos?|opciones?)\s*(ten[eé]s?|hay|tienen?)|pasame?\s*(el\s*)?cat[aá]logo|quiero\s*ver\s*(las?\s*)?opciones?|qu[eé]\s*(tienen?|tenes?\s*disponible)/i;
+
+function detectResetOrCatalog(message: string): 'reset' | 'catalog' | null {
+  const m = message.trim();
+  if (RESET_RE.test(m)) return 'reset';
+  if (CATALOG_RE.test(m)) return 'catalog';
+  return null;
+}
+
 // ── Selección contextual determinística ───────────────────────────────────────
 
 /**
@@ -288,6 +302,9 @@ mostrar_cuotas → Mostrá los planes de cuotas reales. Aclará que son estimado
 permuta → Pedí modelo, año y km del usado. No des valuación. Decí que lo evalúa el equipo.
 coordinar_visita → Decí que lo pasás con el equipo para coordinar. No des horarios si no los tenés.
 saludo_inicial → Saludá breve. Preguntá qué está buscando o cuál es su presupuesto.
+saludo_retorno → El cliente vuelve a saludar con conversación previa. Retomá fresco sin mencionar lo anterior. Preguntá qué está buscando ahora.
+catalogo_general → Mostrá las opciones disponibles. Cerrá con UNA pregunta de navegación (marca, tipo o presupuesto). No hagas lista de más de 5.
+cambio_de_busqueda → El cliente quiere buscar otra cosa. Confirmá que arrancás de cero. Preguntá qué busca ahora.
 despedida → Cierre cálido, muy breve. Sin nueva pregunta comercial.
 indeciso_sin_contexto → UNA sola pregunta: para qué lo usa y cuánto tiene pensado gastar.
 reclamo → Empatía breve + derivar a asesor. No intentes resolver.
@@ -352,10 +369,23 @@ export async function processMessage(params: {
   const { instance, remoteJid, message, state } = params;
   const historyLines = buildHistory(state);
 
-  // 1. Extraer intención (con contexto de autos mostrados para resolver referencias)
+  // 1. Pre-chequeo rápido sin GPT para reset/catálogo obvios
+  const fastOverride = detectResetOrCatalog(message);
+
+  // 2. Extraer intención (con contexto de autos mostrados para resolver referencias)
   const extracted = await extractIntent(message, historyLines);
 
-  // 2. Si GPT no resolvió selectedVehicleId pero hay hits previos, intentar resolución determinística
+  // Pre-chequeo tiene prioridad sobre GPT para reset/greeting/catalog
+  if (fastOverride === 'reset' && extracted.intent !== 'farewell' && extracted.intent !== 'advisor') {
+    extracted.intent = extracted.intent === 'greeting' ? 'greeting' : 'reset';
+  } else if (fastOverride === 'catalog') {
+    extracted.intent = 'catalog';
+  }
+
+  const isContextReset = ['greeting', 'reset', 'catalog'].includes(extracted.intent);
+  console.info(`[bot] intent=${extracted.intent} reset_detected=${isContextReset} catalog_intent=${extracted.intent === 'catalog'} fast_override=${fastOverride ?? 'none'} msg="${message.slice(0, 50)}"`);
+
+  // 3. Si GPT no resolvió selectedVehicleId pero hay hits previos, intentar resolución determinística
   if (
     !extracted.selectedVehicleId &&
     (extracted.intent === 'specific' || extracted.intent === 'refine') &&
@@ -384,11 +414,19 @@ export async function processMessage(params: {
     leadScore: Math.min(100, (state.leadScore ?? 0) + hotResult.score),
   };
 
-  if (extracted.intent === 'reset') {
+  if (isContextReset) {
+    // Limpiar TODO el contexto previo — vehículo enfocado, hits, filtros, query
     newState.search_context = {};
     newState.last_hits = [];
     newState.last_hits_detail = [];
-    newState.last_query = message;
+    newState.last_query = undefined;
+    newState.lastPresentedVehicleId    = undefined;
+    newState.lastPresentedVehicleTitle = undefined;
+    newState.lastPresentedVehiclePriceArs = undefined;
+    newState.lastPresentedVehicleBrand = undefined;
+    newState.lastPresentedVehicleModel = undefined;
+    newState.lastPresentedAt           = undefined;
+    console.info(`[bot] previous_context_cleared=true reason=${extracted.intent} response_mode=${extracted.intent === 'catalog' ? 'catalog' : extracted.intent === 'greeting' ? 'greeting' : 'reset'}`);
   } else if (['search', 'refine', 'unsure'].includes(extracted.intent)) {
     newState.search_context = mergeSearchContext(state.search_context, extracted);
     newState.last_query = message;
@@ -418,6 +456,21 @@ export async function processMessage(params: {
     isHot: hotResult.isHot,
     imagesToSend: result.imagesToSend,
   };
+}
+
+// ── Handler: catálogo / exploración ───────────────────────────────────────────
+
+async function handleCatalog(historyLines: string[]): Promise<DecideResult> {
+  const catalog = await getCatalog();
+  const available = catalog.filter(i => i.inStock);
+  const { rate: usdRate } = await getUsdToArs();
+  const sample = available.slice(0, 5).map((v, i) => formatItemLine(v, i, usdRate)).join('\n');
+  const reply = await composeResponse('catalogo_general', {
+    total_disponibles: available.length,
+    muestra: sample || 'Sin stock disponible en este momento.',
+    nota: 'Mostrar muestra y cerrar con UNA pregunta de navegación (marca, tipo o presupuesto). No hagas lista de más de 5.',
+  }, historyLines);
+  return { reply };
 }
 
 // ── Decision engine ────────────────────────────────────────────────────────────
@@ -455,9 +508,21 @@ async function decide(
     return { reply };
   }
 
-  // Saludo inicial (sin historial previo)
-  if (ex.intent === 'greeting' && !state.last_intent) {
-    const reply = await composeResponse('saludo_inicial', {}, historyLines);
+  // Saludo — siempre reinicia, con o sin historial previo
+  if (ex.intent === 'greeting') {
+    const action = state.last_intent ? 'saludo_retorno' : 'saludo_inicial';
+    const reply = await composeResponse(action, {}, historyLines);
+    return { reply };
+  }
+
+  // Catálogo explícito — muestra opciones disponibles con pregunta de navegación
+  if (ex.intent === 'catalog') {
+    return await handleCatalog(historyLines);
+  }
+
+  // Reset / cambio de búsqueda — limpia contexto y vuelve a exploración
+  if (ex.intent === 'reset') {
+    const reply = await composeResponse('cambio_de_busqueda', { mensaje: rawMessage }, historyLines);
     return { reply };
   }
 
@@ -507,8 +572,8 @@ async function decide(
     return { reply };
   }
 
-  // Búsqueda / refinamiento / reset / alternativas
-  if (['search', 'refine', 'reset', 'alternatives'].includes(ex.intent)) {
+  // Búsqueda / refinamiento / alternativas
+  if (['search', 'refine', 'alternatives'].includes(ex.intent)) {
     return await handleSearch(ex, state, historyLines);
   }
 
