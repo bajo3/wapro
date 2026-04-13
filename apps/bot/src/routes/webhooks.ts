@@ -14,6 +14,23 @@ import { processMessage } from '../services/botIntelligence.js';
 
 export const webhookRouter = Router();
 
+// ── Instance resolution ────────────────────────────────────────────────────────
+// Priority: body.instance > body.instanceName > req.params (if not literal
+// "evolution") > env.instanceName
+function resolveInstance(params: {
+  bodyInstance?: string;
+  paramInstance?: string;
+  envInstance: string;
+}): { instance: string; resolvedFrom: string } {
+  if (params.bodyInstance && params.bodyInstance.trim()) {
+    return { instance: params.bodyInstance.trim(), resolvedFrom: 'body_instance' };
+  }
+  if (params.paramInstance && params.paramInstance !== 'evolution') {
+    return { instance: params.paramInstance, resolvedFrom: 'webhook_param' };
+  }
+  return { instance: params.envInstance, resolvedFrom: 'env_fallback' };
+}
+
 // ── Auth ───────────────────────────────────────────────────────────────────────
 function requireWebhookAuth(req: Request, res: Response, next: any) {
   const secret = req.header('x-bot-secret') ?? (req.query.secret as string);
@@ -26,13 +43,21 @@ function requireWebhookAuth(req: Request, res: Response, next: any) {
 webhookRouter.use(requireWebhookAuth);
 
 // ── Main handler ───────────────────────────────────────────────────────────────
+// Handles both /:instance (real name) and /evolution (legacy compatibility)
 webhookRouter.post('/:instance', async (req: Request, res: Response) => {
   // Responder inmediatamente a Evolution
   res.status(200).json({ ok: true });
 
-  const instance = req.params.instance;
   const body = req.body ?? {};
   const event = body.event as string;
+
+  // Resolve the real Evolution instance name before any processing
+  const { instance, resolvedFrom } = resolveInstance({
+    bodyInstance: body.instance ?? body.instanceName,
+    paramInstance: req.params.instance,
+    envInstance: env.instanceName,
+  });
+  console.log(`[webhook] instance resolved: ${instance} (resolved_from=${resolvedFrom})`);
 
   if (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT') return;
 
@@ -89,25 +114,17 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
       console.error('[webhook] setState error:', e)
     );
 
-    // Preferir el nombre de instancia del webhook incoming (req.params.instance):
-    // Evolution pone en la URL exactamente el instanceName con el que está registrada,
-    // así que es la fuente más confiable. Fallback a env.instanceName si el param llega vacío.
-    const webhookInstance = instance; // ya es req.params.instance
-    const sendInstance = webhookInstance || env.instanceName;
-    const resolvedFrom = webhookInstance ? 'webhook_param' : 'env';
-    console.log(`[send] evolution instance=${sendInstance} resolved_from=${resolvedFrom} to=${remoteJid}`);
-
-    // Enviar respuesta de texto
-    await sendTextAndPersist(sendInstance, remoteJid, result.reply).catch(e => {
-      console.error(`[send] evolution instance=${sendInstance} failed status=${e?.message ?? e}`);
+    // Enviar respuesta de texto usando la instancia ya resuelta al inicio del handler
+    await sendTextAndPersist(instance, remoteJid, result.reply).catch(e => {
+      console.error(`[send] evolution instance=${instance} failed status=${e?.message ?? e}`);
       throw e;
     });
 
     // Enviar fotos si las hay (hasta 5, secuencial para no saturar WhatsApp)
     if (result.imagesToSend?.length) {
       for (const imageUrl of result.imagesToSend.slice(0, 5)) {
-        await sendImageAndPersist(sendInstance, remoteJid, imageUrl).catch(e =>
-          console.error(`[send] evolution instance=${sendInstance} image failed to ${remoteJid}:`, e?.message ?? e)
+        await sendImageAndPersist(instance, remoteJid, imageUrl).catch(e =>
+          console.error(`[send] evolution instance=${instance} image failed to ${remoteJid}:`, e?.message ?? e)
         );
       }
     }
