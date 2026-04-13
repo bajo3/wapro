@@ -979,13 +979,19 @@ export function searchCatalog(items: CatalogItem[], q: string, limit = 5): Catal
  * No incluye URL por defecto para evitar que el modelo la repita
  * en la respuesta al cliente (y evitar links de MercadoLibre como muleta).
  */
-export function formatItemLine(item: CatalogItem, idx: number) {
-  const price =
-    typeof item.priceNumber === "number"
-      ? `— ${item.currency ?? "ARS"} ${Number(item.priceNumber).toLocaleString("es-AR")}`
-      : item.priceText
-        ? `— ${item.priceText}`
-        : "";
+export function formatItemLine(item: CatalogItem, idx: number, usdToArs?: number) {
+  const price = (() => {
+    if (typeof item.priceNumber === "number") {
+      const isUsd = (item.currency ?? "ARS").toUpperCase() === "USD";
+      if (isUsd && usdToArs && usdToArs > 0) {
+        const ars = Math.round(item.priceNumber * usdToArs);
+        console.info(`[catalog] USD→ARS conversion: ${item.name} USD ${item.priceNumber} × ${usdToArs} = ARS ${ars}`);
+        return `— ARS ${ars.toLocaleString("es-AR")}`;
+      }
+      return `— ${item.currency ?? "ARS"} ${Number(item.priceNumber).toLocaleString("es-AR")}`;
+    }
+    return item.priceText ? `— ${item.priceText}` : "";
+  })();
 
   const specs = (() => {
     const parts: string[] = [];

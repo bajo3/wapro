@@ -16,6 +16,7 @@
  */
 
 import { getCatalog, formatItemLine } from './catalog.js';
+import { getUsdToArs } from './exchangeRate.js';
 import { askGPT } from './gpt.js';
 import { getCreditQuote, formatCreditPlans } from './creditService.js';
 import { detectHotLead, notifyHotLead } from './hotLead.js';
@@ -514,8 +515,9 @@ async function decide(
   // Fallback con contexto completo
   const catalog = await getCatalog();
   const topItems = filterCatalog(catalog, { ...ex, search_context: state.search_context });
+  const { rate: usdRate } = await getUsdToArs();
   const catalogCtx = topItems.length
-    ? topItems.map((v, i) => formatItemLine(v, i)).join('\n')
+    ? topItems.map((v, i) => formatItemLine(v, i, usdRate)).join('\n')
     : 'Sin vehículos disponibles para ese criterio.';
 
   const reply = await composeResponse('consulta_general', {
@@ -539,10 +541,11 @@ async function handleSpecificById(
 
   if (!vehicle) {
     // El ID del estado ya no existe en el catálogo (puede haberse vendido)
+    const { rate: usdRateAlt } = await getUsdToArs();
     const reply = await composeResponse('sin_match', {
       busqueda: { id: vehicleId },
       nota: 'El auto referenciado ya no está disponible. Ofrecer alternativas.',
-      alternativas: catalog.filter(i => i.inStock).slice(0, 3).map((v, i) => formatItemLine(v, i)).join('\n'),
+      alternativas: catalog.filter(i => i.inStock).slice(0, 3).map((v, i) => formatItemLine(v, i, usdRateAlt)).join('\n'),
     }, historyLines);
     return { reply };
   }
@@ -565,10 +568,11 @@ async function handleSpecificById(
 async function handleSearch(ex: Extracted, state: ConvState, historyLines: string[]): Promise<DecideResult> {
   const catalog = await getCatalog();
   const hits = filterCatalog(catalog, { ...ex, search_context: state.search_context });
+  const { rate: usdRate } = await getUsdToArs();
 
   if (hits.length === 0) {
     const alternatives = catalog.filter(i => i.inStock).slice(0, 3);
-    const altLines = alternatives.map((v, i) => formatItemLine(v, i)).join('\n');
+    const altLines = alternatives.map((v, i) => formatItemLine(v, i, usdRate)).join('\n');
     const reply = await composeResponse('sin_match', {
       busqueda: ex,
       alternativas: altLines || 'No hay stock disponible en este momento.',
@@ -594,7 +598,7 @@ async function handleSearch(ex: Extracted, state: ConvState, historyLines: strin
     };
   }
 
-  const hitLines = hits.map((v, i) => formatItemLine(v, i)).join('\n');
+  const hitLines = hits.map((v, i) => formatItemLine(v, i, usdRate)).join('\n');
   const reply = await composeResponse('mostrar_resultados', {
     resultados: hitLines,
     cantidad: hits.length,
