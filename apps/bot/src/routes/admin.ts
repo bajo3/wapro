@@ -91,6 +91,13 @@ adminRouter.delete('/conversation-rules', async (req, res) => {
   await deleteConversationRule(req.body.instance, req.body.remoteJid);
   res.json({ ok: true });
 });
+// DELETE con path params — usado por el panel: DELETE /admin/conversation-rules/:instance/:remoteJid
+adminRouter.delete('/conversation-rules/:instance/:remoteJid', async (req: Request, res: Response) => {
+  const instance = decodeURIComponent(req.params.instance);
+  const remoteJid = decodeURIComponent(req.params.remoteJid);
+  await deleteConversationRule(instance, remoteJid);
+  res.json({ ok: true });
+});
 
 // ── Catalog debug ──────────────────────────────────────────────────────────────
 adminRouter.get('/catalog/debug', async (_req, res) => {
@@ -227,6 +234,10 @@ adminRouter.delete('/intelligence/examples/:id', async (_req: Request, res: Resp
 
 adminRouter.get('/intelligence/decisions', async (_req: Request, res: Response) => {
   return res.json({ decisions: [], source: 'bot_stub' });
+});
+
+adminRouter.post('/intelligence/episodes/ingest', async (_req: Request, res: Response) => {
+  return res.status(201).json({ ok: true, ingested: 0, source: 'bot_stub' });
 });
 
 // Learning stubs — forward() (no local fallback) requires these to return 2xx
