@@ -34,7 +34,9 @@ function resolveInstance(params: {
 // ── Auth ───────────────────────────────────────────────────────────────────────
 function requireWebhookAuth(req: Request, res: Response, next: any) {
   const secret = req.header('x-bot-secret') ?? (req.query.secret as string);
+  console.log(`[webhook] incoming path=${req.path} has_secret_header=${!!secret} secret_configured=${!!env.webhookSecret}`);
   if (env.webhookSecret && secret !== env.webhookSecret) {
+    console.warn(`[webhook] auth rejected — secret mismatch. Check Evolution webhook header x-bot-secret matches BOT_WEBHOOK_SECRET`);
     return res.status(401).json({ ok: false });
   }
   return next();
