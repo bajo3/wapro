@@ -89,10 +89,13 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
       console.error('[webhook] setState error:', e)
     );
 
-    // Usar siempre env.instanceName como instancia de envío — el req.params.instance
-    // es el path del webhook URL y puede diferir del nombre real de la instancia en Evolution.
-    const sendInstance = env.instanceName;
-    console.log(`[send] evolution instance=${sendInstance} to=${remoteJid}`);
+    // Preferir el nombre de instancia del webhook incoming (req.params.instance):
+    // Evolution pone en la URL exactamente el instanceName con el que está registrada,
+    // así que es la fuente más confiable. Fallback a env.instanceName si el param llega vacío.
+    const webhookInstance = instance; // ya es req.params.instance
+    const sendInstance = webhookInstance || env.instanceName;
+    const resolvedFrom = webhookInstance ? 'webhook_param' : 'env';
+    console.log(`[send] evolution instance=${sendInstance} resolved_from=${resolvedFrom} to=${remoteJid}`);
 
     // Enviar respuesta de texto
     await sendTextAndPersist(sendInstance, remoteJid, result.reply).catch(e => {

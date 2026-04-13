@@ -333,13 +333,14 @@ async function listVehiclesForScan(since?: Date) {
   const usedSince = Boolean(since && map.updatedAt);
   let rows = await runQuery(true);
 
-  console.log(`[demands] scan source=${schema}.${table} updatedAt_col=${map.updatedAt ?? 'none'} status_col=${statusCol ?? 'none'} since=${since ? since.toISOString() : 'all'} fetched_incremental=${rows.length} vehiclePool_is_supabase=${vehiclePool !== pool}`);
+  console.log(`[demands] source=${schema}.${table} active_vehicles=${rows.length} filters: status=${statusCol ?? 'none'} updated_at>=${since ? since.toISOString() : 'all'} updatedAt_col=${map.updatedAt ?? 'none'} vehiclePool_is_supabase=${vehiclePool !== pool}`);
 
-  // Bootstrap fallback: if incremental scan returned 0 and we have no prior cache,
-  // do a full scan (no since filter) so demands can match against the full inventory.
+  // Bootstrap fallback: si el scan incremental devuelve 0 y no hay cache previa,
+  // hacer full scan sin filtro de fecha para que demands tenga inventario completo
+  // desde el primer arranque del proceso.
   if (rows.length === 0 && usedSince && !lastGoodVehicleScan.rows.length) {
     rows = await runQuery(false);
-    console.log(`[demands] scan bootstrap full-scan fallback fetched_full=${rows.length} source=${schema}.${table}`);
+    console.log(`[demands] bootstrap full-scan fallback source=${schema}.${table} active_vehicles=${rows.length} filters: status=${statusCol ?? 'none'} updated_at>=all`);
   }
 
   if (rows.length > 0) {
@@ -350,7 +351,7 @@ async function listVehiclesForScan(since?: Date) {
     console.log(`[demands] scan source=${schema}.${table} vehicles=${lastGoodVehicleScan.rows.length} since=${since ? since.toISOString() : 'all'} strategy=last-good-cache`);
     return lastGoodVehicleScan.rows;
   } else {
-    console.warn(`[demands] scan source=${schema}.${table} vehicles=0 since=${since ? since.toISOString() : 'all'} — no active vehicles found and no cache available`);
+    console.warn(`[demands] scan source=${schema}.${table} vehicles=0 since=${since ? since.toISOString() : 'all'} — no active vehicles found and no cache available. Check: 1) vehiclePool DB URL, 2) status column values (expected: available/active/null), 3) table has rows`);
   }
   return rows;
 }

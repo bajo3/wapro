@@ -257,8 +257,8 @@ async function upsertVehicles(vehicles: VehicleRow[]): Promise<number> {
 
 // ── Main sync ──────────────────────────────────────────────────────────────────
 
-export async function runMeliSync(): Promise<void> {
-  console.log('[meliSync] Starting sync...');
+export async function runMeliSync(opts?: { closePool?: boolean }): Promise<void> {
+  console.log('[meliSync] sync start');
 
   try {
     const userId = await getMeliUserId();
@@ -266,7 +266,10 @@ export async function runMeliSync(): Promise<void> {
 
     const itemIds = await getMeliItems(userId);
     console.log(`[meliSync] Found ${itemIds.length} items`);
-    if (itemIds.length === 0) return;
+    if (itemIds.length === 0) {
+      console.log('[meliSync] sync complete vehicles=0');
+      return;
+    }
 
     const items = await getMeliItemDetail(itemIds);
     console.log(`[meliSync] Fetched detail for ${items.length} items`);
@@ -274,12 +277,18 @@ export async function runMeliSync(): Promise<void> {
     const vehicles = items.map(mapItem);
     const count = await upsertVehicles(vehicles);
 
-    console.log(`[meliSync] Done — upserted ${count} vehicles`);
+    console.log(`[meliSync] sync complete vehicles=${count}`);
   } catch (err) {
     console.error('[meliSync] Sync failed:', err);
     process.exitCode = 1;
   } finally {
-    if (_pool) await _pool.end();
+    // Solo cerrar el pool si se pidió explícitamente (entry point standalone).
+    // Cuando runMeliSync corre como cron dentro del proceso del bot, NO cerrar
+    // el pool singleton — destruirlo causa "Cannot use a pool after calling end".
+    if (opts?.closePool && _pool) {
+      await _pool.end();
+      _pool = null;
+    }
   }
 }
 
@@ -289,5 +298,5 @@ export async function runMeliSync(): Promise<void> {
 const isMain = process.argv[1]?.endsWith('meliSync.js') ||
                process.argv[1]?.endsWith('meliSync.ts');
 if (isMain) {
-  runMeliSync().then(() => process.exit(process.exitCode ?? 0));
+  runMeliSync({ closePool: true }).then(() => process.exit(process.exitCode ?? 0));
 }

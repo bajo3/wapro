@@ -7,7 +7,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { env } from '../lib/env.js';
-import { evolutionCreateInstance, evolutionConnect } from '../services/evolution.js';
+import { evolutionCreateInstance, evolutionConnect, maskSensitive } from '../services/evolution.js';
 import { pool } from '../services/db.js';
 import { listContactRules, setContactRule, deleteContactRule } from '../services/contacts.js';
 import {
@@ -53,7 +53,7 @@ adminRouter.post('/bootstrap', async (req: Request, res: Response) => {
       webhookSecret: env.webhookSecret,
     });
     const connectResult = await evolutionConnect(instance);
-    return res.json({ ok: true, ...connectResult });
+    return res.json({ ok: true, ...maskSensitive(connectResult) });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: e?.message });
   }

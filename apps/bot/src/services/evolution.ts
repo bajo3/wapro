@@ -1,6 +1,23 @@
 import fetch from "node-fetch";
 import { env } from "../lib/env.js";
 
+/** Elimina campos sensibles de respuestas Evolution antes de loguear */
+export function maskSensitive(data: any): any {
+  if (!data || typeof data !== 'object') return data;
+  const SENSITIVE = ['qrcode', 'base64', 'code', 'token', 'apikey', 'api_key', 'hash', 'secret'];
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (SENSITIVE.some(s => k.toLowerCase().includes(s))) {
+      out[k] = '***';
+    } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+      out[k] = maskSensitive(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 async function fetchJsonWithTimeout(url: string, opts: any) {
   const controller = new AbortController();
   const timeoutMs = Number.isFinite(env.evolutionFetchTimeoutMs) ? env.evolutionFetchTimeoutMs : 8000;
@@ -60,7 +77,7 @@ export async function evolutionCreateInstance(params: {
     body: JSON.stringify(body)
   });
   if (!r.ok) {
-    const msg = typeof data?.message === "string" ? data.message : JSON.stringify(data);
+    const msg = typeof data?.message === "string" ? data.message : JSON.stringify(maskSensitive(data));
     throw new Error(`Evolution createInstance failed (${r.status}): ${msg}`);
   }
   return data as any;
@@ -75,7 +92,7 @@ export async function evolutionConnect(instanceName: string) {
     }
   );
   if (!r.ok) {
-    const msg = typeof data?.message === "string" ? data.message : JSON.stringify(data);
+    const msg = typeof data?.message === "string" ? data.message : JSON.stringify(maskSensitive(data));
     throw new Error(`Evolution connect failed (${r.status}): ${msg}`);
   }
   return data;
@@ -98,7 +115,7 @@ export async function evolutionSendText(instanceName: string, to: string, text: 
 
     if (r.ok) return data;
 
-    const msg = typeof data?.message === "string" ? data.message : JSON.stringify(data);
+    const msg = typeof data?.message === "string" ? data.message : JSON.stringify(maskSensitive(data));
     lastErr = new Error(`Evolution sendText failed (${r.status}): ${msg}`);
 
     if (attempt < 2 && isRetriableStatus(r.status)) {
@@ -170,7 +187,7 @@ export async function evolutionSendMedia(params: {
 
     if (r.ok) return data;
 
-    const msg = typeof data?.message === "string" ? data.message : JSON.stringify(data);
+    const msg = typeof data?.message === "string" ? data.message : JSON.stringify(maskSensitive(data));
     lastErr = new Error(`Evolution sendMedia failed (${r.status}): ${msg}`);
 
     if (attempt < 2 && isRetriableStatus(r.status)) {
