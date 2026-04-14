@@ -292,7 +292,7 @@ export class KafkaController extends EventController implements EventControllerI
       server_url: serverUrl,
       date_time: dateTime,
       sender,
-      apikey: apiKey,
+      apikey: apiKey ? '***redacted***' : undefined,
       timestamp: Date.now(),
     };
 

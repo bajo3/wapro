@@ -138,7 +138,7 @@ export class WebsocketController extends EventController implements EventControl
       server_url: serverUrl,
       date_time: dateTime,
       sender,
-      apikey: apiKey,
+      apikey: apiKey ? '***redacted***' : undefined,
     };
 
     if (configService.get<Websocket>('WEBSOCKET')?.GLOBAL_EVENTS) {

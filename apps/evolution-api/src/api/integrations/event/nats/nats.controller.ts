@@ -73,7 +73,7 @@ export class NatsController extends EventController implements EventControllerIn
       server_url: serverUrl,
       date_time: dateTime,
       sender,
-      apikey: apiKey,
+      apikey: apiKey ? '***redacted***' : undefined,
     };
 
     // Instância específica

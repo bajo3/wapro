@@ -333,26 +333,35 @@ async function listVehiclesForScan(since?: Date) {
   const usedSince = Boolean(since && map.updatedAt);
   let rows = await runQuery(true);
 
-  console.log(`[demands] source=${schema}.${table} active_vehicles=${rows.length} demands_incremental_changes=${usedSince ? rows.length : 'n/a'} filters: status=${statusCol ?? 'none'} updated_at>=${since ? since.toISOString() : 'all'} updatedAt_col=${map.updatedAt ?? 'none'} vehiclePool_is_supabase=${vehiclePool !== pool}`);
-
-  // Si el scan incremental trajo 0 filas (no hubo cambios desde `since`):
-  // NO reemplazar el pool con vacío. Hacer full scan para obtener inventario actual.
-  // Esto cubre tanto el bootstrap inicial como los ciclos donde el TTL del cache expiró.
+  // Si el incremental trajo 0 filas (no hubo cambios desde `since`):
+  // 1. Si hay cache válido dentro del TTL → reusarlo sin hacer full scan (ciclo normal sin cambios)
+  // 2. Si no hay cache o expiró → full scan para obtener inventario actual (bootstrap o refresco)
   if (rows.length === 0 && usedSince) {
+    const cacheAge = Date.now() - lastGoodVehicleScan.at;
+    const cacheValid = lastGoodVehicleScan.rows.length > 0 && cacheAge < LAST_GOOD_SCAN_TTL_MS;
+
+    if (cacheValid) {
+      // Ciclo normal: 0 cambios incrementales, pero el inventario base sigue vigente
+      console.log(`[demands] incremental_changes=0 cache_reused=true cache_vehicles=${lastGoodVehicleScan.rows.length} cache_age_min=${Math.round(cacheAge / 60_000)} source=${schema}.${table}`);
+      return lastGoodVehicleScan.rows;
+    }
+
+    // Cache expirado o bootstrap: necesitamos full scan
+    const fallbackReason = !lastGoodVehicleScan.rows.length ? 'bootstrap' : 'cache_expired';
     rows = await runQuery(false);
-    const fallbackReason = !lastGoodVehicleScan.rows.length ? 'bootstrap' : 'ttl_expired_or_no_changes';
-    console.log(`[demands] demands_pool_reused=false demands_fallback_reason=${fallbackReason} full-scan fallback source=${schema}.${table} active_vehicles=${rows.length} filters: status=${statusCol ?? 'none'} updated_at>=all`);
+    console.log(`[demands] incremental_changes=0 full_scan_reason=${fallbackReason} active_vehicles=${rows.length} source=${schema}.${table} status_col=${statusCol ?? 'none'}`);
+  } else if (usedSince) {
+    console.log(`[demands] incremental_changes=${rows.length} source=${schema}.${table}`);
   }
 
   if (rows.length > 0) {
     lastGoodVehicleScan = { at: Date.now(), rows };
-    console.log(`[demands] scan source=${schema}.${table} vehicles=${rows.length} since=${since ? since.toISOString() : 'all'} strategy=${usedSince ? 'incremental' : 'full-inventory'}`);
+    console.log(`[demands] scan_complete source=${schema}.${table} active_vehicles=${rows.length} strategy=${usedSince ? 'incremental' : 'full-inventory'}`);
   } else if (lastGoodVehicleScan.rows.length && Date.now() - lastGoodVehicleScan.at < LAST_GOOD_SCAN_TTL_MS) {
-    console.warn(`[demands] demands_pool_reused=true demands_fallback_reason=full_scan_also_empty status_col=${statusCol ?? 'none'}; reusing last good scan (${lastGoodVehicleScan.rows.length})`);
-    console.log(`[demands] scan source=${schema}.${table} vehicles=${lastGoodVehicleScan.rows.length} since=${since ? since.toISOString() : 'all'} strategy=last-good-cache`);
+    console.warn(`[demands] full_scan_empty cache_reused=true cache_vehicles=${lastGoodVehicleScan.rows.length} source=${schema}.${table} — check status column values`);
     return lastGoodVehicleScan.rows;
   } else {
-    console.warn(`[demands] scan source=${schema}.${table} vehicles=0 since=${since ? since.toISOString() : 'all'} — no active vehicles found and no cache available. Check: 1) vehiclePool DB URL, 2) status column values (expected: available/active/null), 3) table has rows`);
+    console.warn(`[demands] scan_empty source=${schema}.${table} — no active vehicles found and no cache. Check: 1) vehiclePool DB URL, 2) status column values, 3) table has rows`);
   }
   return rows;
 }

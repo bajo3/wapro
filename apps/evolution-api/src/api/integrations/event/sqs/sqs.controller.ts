@@ -79,7 +79,6 @@ export class SqsController extends EventController implements EventControllerInt
       },
     };
 
-    console.log('*** payload: ', payload);
     return this.prisma[this.name].upsert(payload);
   }
 
@@ -138,7 +137,7 @@ export class SqsController extends EventController implements EventControllerInt
           server_url: serverUrl,
           date_time: dateTime,
           sender,
-          apikey: apiKey,
+          apikey: apiKey ? '***redacted***' : undefined,
         };
 
         const jsonStr = JSON.stringify(message);
@@ -209,7 +208,7 @@ export class SqsController extends EventController implements EventControllerInt
     if (enable) {
       const sqsConfig = configService.get<Sqs>('SQS');
       const eventsFinded = await this.listQueues(prefixName);
-      console.log('eventsFinded', eventsFinded);
+      this.logger.debug(`eventsFinded count=${eventsFinded.length}`);
 
       for (const event of events) {
         const normalizedEvent =

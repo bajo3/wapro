@@ -241,7 +241,7 @@ export class RabbitmqController extends EventController implements EventControll
       server_url: serverUrl,
       date_time: dateTime,
       sender,
-      apikey: apiKey,
+      apikey: apiKey ? '***redacted***' : undefined,
     };
 
     if (instanceRabbitmq?.enabled && this.amqpChannel) {

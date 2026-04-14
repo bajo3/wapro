@@ -1196,7 +1196,7 @@ export class BaileysStartupService extends ChannelStartupService {
                   data: { name: received.pushName },
                 });
               } catch {
-                console.log(`Chat insert record ignored: ${received.key.remoteJid} - ${this.instanceId}`);
+                this.logger.debug(`Chat insert record ignored: instance=${this.instanceId}`);
               }
             }
           }
@@ -1736,7 +1736,7 @@ export class BaileysStartupService extends ChannelStartupService {
               try {
                 await this.prismaRepository.chat.update({ where: { id: existingChat.id }, data: chatToInsert });
               } catch {
-                console.log(`Chat insert record ignored: ${chatToInsert.remoteJid} - ${chatToInsert.instanceId}`);
+                this.logger.debug(`Chat insert record ignored: instance=${chatToInsert.instanceId}`);
               }
             }
           }
