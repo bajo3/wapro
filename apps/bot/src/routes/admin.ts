@@ -149,12 +149,12 @@ adminRouter.get('/bot-mode', (_req, res) => {
   res.json({ ok: true, mode: getBotReplyMode() });
 });
 
-adminRouter.post('/bot-mode', (req: Request, res: Response) => {
+adminRouter.post('/bot-mode', async (req: Request, res: Response) => {
   const { mode } = req.body;
   if (mode !== 'on' && mode !== 'silent') {
     return res.status(400).json({ ok: false, error: 'mode must be "on" or "silent"' });
   }
-  setBotReplyMode(mode);
+  await setBotReplyMode(mode);
   return res.json({ ok: true, mode });
 });
 
@@ -181,11 +181,11 @@ adminRouter.get('/intelligence/settings', (_req: Request, res: Response) => {
   return res.json({ settings: { botEnabled: mode === 'on' }, source: 'bot_stub' });
 });
 
-adminRouter.put('/intelligence/settings', (req: Request, res: Response) => {
+adminRouter.put('/intelligence/settings', async (req: Request, res: Response) => {
   const body = req.body as any;
   const s = body?.settings ?? body ?? {};
   if (typeof s.botEnabled === 'boolean') {
-    setBotReplyMode(s.botEnabled ? 'on' : 'silent');
+    await setBotReplyMode(s.botEnabled ? 'on' : 'silent');
   }
   const mode = getBotReplyMode();
   return res.json({ ok: true, settings: { botEnabled: mode === 'on' }, source: 'bot_stub' });

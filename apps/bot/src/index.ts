@@ -51,9 +51,11 @@ import { scanRecentVehiclesForDemandMatches, runRecontactJob } from "./services/
 import { sendTextAndPersist } from "./services/panelPersistence.js";
 import { logAiRuntimeStartup, resolveAiRuntime } from "./services/aiRuntime.js";
 import { runMeliSync } from "./services/meliSync.js";
+import { loadBotReplyMode } from "./services/botReplyGate.js";
 
 async function main() {
   await migrate();
+  await loadBotReplyMode();
   logAiRuntimeStartup(resolveAiRuntime(), 'startup', 'startup_boot');
 
   // ── Startup validation — Evolution instance ───────────────────────────────────
