@@ -26,11 +26,9 @@ const isAuthApi = async (
       throw new AppError("ERR_SESSION_EXPIRED", 401);
     }
   } catch (err) {
-    console.log(err);
-    throw new AppError(
-      "Invalid token. We'll try to assign a new one on next request",
-      403
-    );
+    if (err instanceof AppError) throw err;
+    console.warn(`[auth] auth_error_type=api_token_lookup_failed auth_route=${req.path}`);
+    throw new AppError("ERR_SESSION_EXPIRED", 401);
   }
 
   return next();

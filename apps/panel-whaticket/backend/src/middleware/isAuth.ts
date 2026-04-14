@@ -1,4 +1,4 @@
-import { verify } from "jsonwebtoken";
+import { verify, TokenExpiredError, JsonWebTokenError } from "jsonwebtoken";
 import { Request, Response, NextFunction } from "express";
 
 import AppError from "../errors/AppError";
@@ -30,10 +30,16 @@ const isAuth = (req: Request, res: Response, next: NextFunction): void => {
       profile
     };
   } catch (err) {
-    throw new AppError(
-      "Invalid token. We'll try to assign a new one on next request",
-      403
-    );
+    if (err instanceof TokenExpiredError) {
+      // Token expirado — expected case, warn only with type (no stack trace)
+      console.warn(`[auth] auth_error_type=token_expired auth_route=${req.path}`);
+      throw new AppError("ERR_SESSION_EXPIRED", 401);
+    }
+    if (err instanceof JsonWebTokenError) {
+      console.warn(`[auth] auth_error_type=invalid_token auth_route=${req.path}`);
+      throw new AppError("ERR_SESSION_EXPIRED", 401);
+    }
+    throw new AppError("ERR_SESSION_EXPIRED", 401);
   }
 
   return next();

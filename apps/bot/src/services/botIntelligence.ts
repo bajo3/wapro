@@ -202,18 +202,22 @@ function filterCatalog(
     });
   }
 
-  return results.slice(0, 5);
+  return results.slice(0, 12);
 }
 
 // ── Detección rápida de reset/catálogo (sin GPT) ─────────────────────────────
 // Frases que siempre reinician contexto, independientemente de lo que GPT clasifique.
 const RESET_RE = /^(hola+|buen[ao]s?(\s*(d[ií]as?|tardes?|noches?))?|arrancamos?\s*de\s*nuevo|empecemos?\s*de\s*nuevo|quiero\s*ver\s*otra\s*cosa|busco\s*otra\s*cosa|estoy\s*buscando\s*otra\s*cosa|cambio\s*de\s*b[uú]squeda)[\s!?.]*$/i;
 const CATALOG_RE = /mostrame?\s*(el\s*)?cat[aá]logo|me\s*pod[eé]s?\s*mostrar\s*(el\s*)?cat[aá]logo|que\s*(autos?|veh[ií]culos?|opciones?)\s*(ten[eé]s?|hay|tienen?)|pasame?\s*(el\s*)?cat[aá]logo|quiero\s*ver\s*(las?\s*)?opciones?|qu[eé]\s*(tienen?|tenes?\s*disponible)/i;
+const CATALOG_MORE_RE = /m[aá]s\s*opciones|mostrame?\s*m[aá]s|segu[ií]|que\s*m[aá]s\s*(ten[eé]s?|hay)|otros?\s*(autos?|veh[ií]culos?)|ver\s*m[aá]s|m[aá]s\s*autos?/i;
 
-function detectResetOrCatalog(message: string): 'reset' | 'catalog' | null {
+const CATALOG_PAGE_SIZE = 10;
+
+function detectResetOrCatalog(message: string): 'reset' | 'catalog' | 'catalog_more' | null {
   const m = message.trim();
   if (RESET_RE.test(m)) return 'reset';
   if (CATALOG_RE.test(m)) return 'catalog';
+  if (CATALOG_MORE_RE.test(m)) return 'catalog_more';
   return null;
 }
 
@@ -380,6 +384,8 @@ export async function processMessage(params: {
     extracted.intent = extracted.intent === 'greeting' ? 'greeting' : 'reset';
   } else if (fastOverride === 'catalog') {
     extracted.intent = 'catalog';
+  } else if (fastOverride === 'catalog_more' && state.catalog_offset != null && state.catalog_offset > 0) {
+    extracted.intent = 'catalog';
   }
 
   const isContextReset = ['greeting', 'reset', 'catalog'].includes(extracted.intent);
@@ -402,8 +408,19 @@ export async function processMessage(params: {
       .catch(() => {});
   }
 
+  // Catalog offset: reset si es catálogo nuevo, conservar si es "más opciones"
+  let effectiveState = state;
+  if (extracted.intent === 'catalog') {
+    const isCatalogMore = fastOverride === 'catalog_more';
+    if (!isCatalogMore) {
+      // Fresh catalog request — always start from page 0
+      effectiveState = { ...state, catalog_offset: 0 };
+    }
+    // catalog_more: mantener state.catalog_offset tal como está
+  }
+
   // 4. Decidir y responder
-  const result = await decide(extracted, state, message, historyLines);
+  const result = await decide(extracted, effectiveState, message, historyLines);
 
   // 5. Actualizar estado
   const newState: Partial<ConvState> = {
@@ -426,6 +443,12 @@ export async function processMessage(params: {
     newState.lastPresentedVehicleBrand = undefined;
     newState.lastPresentedVehicleModel = undefined;
     newState.lastPresentedAt           = undefined;
+    // Persist catalog offset from this catalog response (or reset on greeting/reset)
+    if (extracted.intent === 'catalog') {
+      newState.catalog_offset = result.nextCatalogOffset ?? 0;
+    } else {
+      newState.catalog_offset = 0;
+    }
     console.info(`[bot] previous_context_cleared=true reason=${extracted.intent} response_mode=${extracted.intent === 'catalog' ? 'catalog' : extracted.intent === 'greeting' ? 'greeting' : 'reset'}`);
   } else if (['search', 'refine', 'unsure'].includes(extracted.intent)) {
     newState.search_context = mergeSearchContext(state.search_context, extracted);
@@ -460,17 +483,32 @@ export async function processMessage(params: {
 
 // ── Handler: catálogo / exploración ───────────────────────────────────────────
 
-async function handleCatalog(historyLines: string[]): Promise<DecideResult> {
+async function handleCatalog(historyLines: string[], offset = 0): Promise<DecideResult & { nextOffset?: number }> {
   const catalog = await getCatalog();
   const available = catalog.filter(i => i.inStock);
   const { rate: usdRate } = await getUsdToArs();
-  const sample = available.slice(0, 5).map((v, i) => formatItemLine(v, i, usdRate)).join('\n');
+
+  const safeOffset = Math.max(0, Math.min(offset, available.length));
+  const page = available.slice(safeOffset, safeOffset + CATALOG_PAGE_SIZE);
+  const hasMore = safeOffset + CATALOG_PAGE_SIZE < available.length;
+  const remaining = available.length - safeOffset - page.length;
+  const nextOffset = hasMore ? safeOffset + CATALOG_PAGE_SIZE : 0;
+
+  const sample = page.map((v, i) => formatItemLine(v, safeOffset + i, usdRate)).join('\n');
+
+  console.info(`[bot] catalog_total_count=${available.length} catalog_display_count=${page.length} catalog_offset=${safeOffset} catalog_has_more=${hasMore} catalog_mode=${safeOffset === 0 ? 'first_page' : 'paginated'}`);
+
   const reply = await composeResponse('catalogo_general', {
     total_disponibles: available.length,
     muestra: sample || 'Sin stock disponible en este momento.',
-    nota: 'Mostrar muestra y cerrar con UNA pregunta de navegación (marca, tipo o presupuesto). No hagas lista de más de 5.',
+    tiene_mas: hasMore,
+    restantes: hasMore ? remaining : 0,
+    nota: hasMore
+      ? `Mostrá estas ${page.length} opciones y al final agregá una línea: "Tengo ${remaining} autos más en stock. Decime 'más opciones' para ver el resto." Cerrá con UNA pregunta de navegación.`
+      : 'Estas son todas las opciones disponibles. Cerrá con UNA pregunta de navegación (marca, tipo o presupuesto).',
   }, historyLines);
-  return { reply };
+
+  return { reply, nextOffset };
 }
 
 // ── Decision engine ────────────────────────────────────────────────────────────
@@ -481,6 +519,7 @@ interface DecideResult {
   hitsDetail?: ConvState['last_hits_detail'];
   presentedVehicle?: CatalogItem;
   imagesToSend?: string[];
+  nextCatalogOffset?: number;
 }
 
 async function decide(
@@ -517,7 +556,11 @@ async function decide(
 
   // Catálogo explícito — muestra opciones disponibles con pregunta de navegación
   if (ex.intent === 'catalog') {
-    return await handleCatalog(historyLines);
+    // Si viene del fast-override catalog_more y hay offset guardado, continuar desde ahí.
+    // Si es un catalog nuevo (sin offset), empieza desde 0.
+    const offset = state.catalog_offset ?? 0;
+    const { reply, nextOffset } = await handleCatalog(historyLines, offset);
+    return { reply, nextCatalogOffset: nextOffset };
   }
 
   // Reset / cambio de búsqueda — limpia contexto y vuelve a exploración

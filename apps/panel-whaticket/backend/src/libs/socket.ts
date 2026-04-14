@@ -1,6 +1,6 @@
 import { Server as SocketIO } from "socket.io";
 import { Server } from "http";
-import { verify } from "jsonwebtoken";
+import { verify, TokenExpiredError } from "jsonwebtoken";
 import AppError from "../errors/AppError";
 import { logger } from "../utils/logger";
 import authConfig from "../config/auth";
@@ -24,7 +24,8 @@ export const initIO = (httpServer: Server): SocketIO => {
       tokenData = verify(token, authConfig.secret);
       logger.debug(JSON.stringify(tokenData), "io-onConnection: tokenData");
     } catch (error) {
-      logger.error(JSON.stringify(error), "Error decoding token");
+      const errorType = error instanceof TokenExpiredError ? "token_expired" : "invalid_token";
+      logger.warn({ auth_error_type: errorType }, "Socket auth failed — disconnecting client");
       socket.disconnect();
       return io;
     }

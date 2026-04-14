@@ -4,7 +4,7 @@ import { env } from "../lib/env.js";
 /** Elimina campos sensibles de respuestas Evolution antes de loguear */
 export function maskSensitive(data: any): any {
   if (!data || typeof data !== 'object') return data;
-  const SENSITIVE = ['qrcode', 'base64', 'code', 'token', 'apikey', 'api_key', 'hash', 'secret'];
+  const SENSITIVE = ['qrcode', 'base64', 'code', 'token', 'apikey', 'api_key', 'hash', 'secret', 'authorization', 'bearer'];
   const out: Record<string, any> = {};
   for (const [k, v] of Object.entries(data)) {
     if (SENSITIVE.some(s => k.toLowerCase().includes(s))) {

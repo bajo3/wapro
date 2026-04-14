@@ -333,21 +333,22 @@ async function listVehiclesForScan(since?: Date) {
   const usedSince = Boolean(since && map.updatedAt);
   let rows = await runQuery(true);
 
-  console.log(`[demands] source=${schema}.${table} active_vehicles=${rows.length} filters: status=${statusCol ?? 'none'} updated_at>=${since ? since.toISOString() : 'all'} updatedAt_col=${map.updatedAt ?? 'none'} vehiclePool_is_supabase=${vehiclePool !== pool}`);
+  console.log(`[demands] source=${schema}.${table} active_vehicles=${rows.length} demands_incremental_changes=${usedSince ? rows.length : 'n/a'} filters: status=${statusCol ?? 'none'} updated_at>=${since ? since.toISOString() : 'all'} updatedAt_col=${map.updatedAt ?? 'none'} vehiclePool_is_supabase=${vehiclePool !== pool}`);
 
-  // Bootstrap fallback: si el scan incremental devuelve 0 y no hay cache previa,
-  // hacer full scan sin filtro de fecha para que demands tenga inventario completo
-  // desde el primer arranque del proceso.
-  if (rows.length === 0 && usedSince && !lastGoodVehicleScan.rows.length) {
+  // Si el scan incremental trajo 0 filas (no hubo cambios desde `since`):
+  // NO reemplazar el pool con vacío. Hacer full scan para obtener inventario actual.
+  // Esto cubre tanto el bootstrap inicial como los ciclos donde el TTL del cache expiró.
+  if (rows.length === 0 && usedSince) {
     rows = await runQuery(false);
-    console.log(`[demands] bootstrap full-scan fallback source=${schema}.${table} active_vehicles=${rows.length} filters: status=${statusCol ?? 'none'} updated_at>=all`);
+    const fallbackReason = !lastGoodVehicleScan.rows.length ? 'bootstrap' : 'ttl_expired_or_no_changes';
+    console.log(`[demands] demands_pool_reused=false demands_fallback_reason=${fallbackReason} full-scan fallback source=${schema}.${table} active_vehicles=${rows.length} filters: status=${statusCol ?? 'none'} updated_at>=all`);
   }
 
   if (rows.length > 0) {
     lastGoodVehicleScan = { at: Date.now(), rows };
     console.log(`[demands] scan source=${schema}.${table} vehicles=${rows.length} since=${since ? since.toISOString() : 'all'} strategy=${usedSince ? 'incremental' : 'full-inventory'}`);
   } else if (lastGoodVehicleScan.rows.length && Date.now() - lastGoodVehicleScan.at < LAST_GOOD_SCAN_TTL_MS) {
-    console.warn(`[demands] scan 0 from ${schema}.${table} status_col=${statusCol ?? 'none'}; reusing last good scan (${lastGoodVehicleScan.rows.length})`);
+    console.warn(`[demands] demands_pool_reused=true demands_fallback_reason=full_scan_also_empty status_col=${statusCol ?? 'none'}; reusing last good scan (${lastGoodVehicleScan.rows.length})`);
     console.log(`[demands] scan source=${schema}.${table} vehicles=${lastGoodVehicleScan.rows.length} since=${since ? since.toISOString() : 'all'} strategy=last-good-cache`);
     return lastGoodVehicleScan.rows;
   } else {

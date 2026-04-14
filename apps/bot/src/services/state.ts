@@ -75,6 +75,9 @@ export type ConvState = {
   /** Number of consecutive objection messages from this lead (for escalation logic) */
   objection_count?: number;
 
+  /** Catalog pagination offset — tracks how many items were already shown */
+  catalog_offset?: number;
+
 
   agent?: {
     intent?: string;
