@@ -7,6 +7,23 @@ import { Server as SocketIO } from 'socket.io';
 
 import { EmitData, EventController, EventControllerInterface } from '../event.controller';
 
+function sanitizeEventData(data: any): any {
+  if (!data) return data;
+  if (data?.qrcode) {
+    return {
+      ...data,
+      qrcode: {
+        instance: data.qrcode.instance,
+        pairingCode: data.qrcode.pairingCode ?? null,
+        count: data.qrcode.count,
+        code: data.qrcode.code ? `[${data.qrcode.code.length}chars]` : undefined,
+        base64: data.qrcode.base64 ? '[base64_omitted]' : undefined,
+      },
+    };
+  }
+  return data;
+}
+
 export class WebsocketController extends EventController implements EventControllerInterface {
   private io: SocketIO;
   private corsConfig: Array<any>;
@@ -145,7 +162,7 @@ export class WebsocketController extends EventController implements EventControl
       this.socket.emit(event, message);
 
       if (logEnabled) {
-        this.logger.log({ local: `${origin}.sendData-WebsocketGlobal`, ...message });
+        this.logger.log({ local: `${origin}.sendData-WebsocketGlobal`, ...message, data: sanitizeEventData(message.data) });
       }
     }
 
@@ -160,7 +177,7 @@ export class WebsocketController extends EventController implements EventControl
         this.socket.of(`/${instanceName}`).emit(event, message);
 
         if (logEnabled) {
-          this.logger.log({ local: `${origin}.sendData-Websocket`, ...message });
+          this.logger.log({ local: `${origin}.sendData-Websocket`, ...message, data: sanitizeEventData(message.data) });
         }
       }
     } catch (err) {

@@ -10,6 +10,23 @@ import * as jwt from 'jsonwebtoken';
 
 import { EmitData, EventController, EventControllerInterface } from '../event.controller';
 
+function sanitizeEventData(data: any): any {
+  if (!data) return data;
+  if (data?.qrcode) {
+    return {
+      ...data,
+      qrcode: {
+        instance: data.qrcode.instance,
+        pairingCode: data.qrcode.pairingCode ?? null,
+        count: data.qrcode.count,
+        code: data.qrcode.code ? `[${data.qrcode.code.length}chars]` : undefined,
+        base64: data.qrcode.base64 ? '[base64_omitted]' : undefined,
+      },
+    };
+  }
+  return data;
+}
+
 export class WebhookController extends EventController implements EventControllerInterface {
   private readonly logger = new Logger('WebhookController');
 
@@ -117,6 +134,7 @@ export class WebhookController extends EventController implements EventControlle
             local: `${origin}.sendData-Webhook`,
             url: baseURL,
             ...webhookData,
+            data: sanitizeEventData(webhookData.data),
           };
 
           this.logger.log(logData);
@@ -162,6 +180,7 @@ export class WebhookController extends EventController implements EventControlle
             local: `${origin}.sendData-Webhook-Global`,
             url: globalURL,
             ...webhookData,
+            data: sanitizeEventData(webhookData.data),
           };
 
           this.logger.log(logData);
