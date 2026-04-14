@@ -9,7 +9,7 @@ const DEFAULT_SETTINGS = {
   agencyName: "",
   dealershipName: "",
   financeApr: 0.75,
-  botEnabled: true,
+  botEnabled: false,
   maxReplyDelayMs: 2500,
   handoffPhoneNumber: "",
   handoffMessage: ""

@@ -176,12 +176,19 @@ adminRouter.post('/playground/run', async (req: Request, res: Response) => {
   });
 });
 
-adminRouter.get('/intelligence/settings', async (_req: Request, res: Response) => {
-  return res.json({ settings: {}, source: 'bot_stub' });
+adminRouter.get('/intelligence/settings', (_req: Request, res: Response) => {
+  const mode = getBotReplyMode();
+  return res.json({ settings: { botEnabled: mode === 'on' }, source: 'bot_stub' });
 });
 
-adminRouter.put('/intelligence/settings', async (_req: Request, res: Response) => {
-  return res.json({ ok: true, settings: {}, source: 'bot_stub' });
+adminRouter.put('/intelligence/settings', (req: Request, res: Response) => {
+  const body = req.body as any;
+  const s = body?.settings ?? body ?? {};
+  if (typeof s.botEnabled === 'boolean') {
+    setBotReplyMode(s.botEnabled ? 'on' : 'silent');
+  }
+  const mode = getBotReplyMode();
+  return res.json({ ok: true, settings: { botEnabled: mode === 'on' }, source: 'bot_stub' });
 });
 
 adminRouter.get('/intelligence/policies', async (_req: Request, res: Response) => {

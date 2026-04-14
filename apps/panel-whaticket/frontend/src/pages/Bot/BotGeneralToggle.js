@@ -11,7 +11,7 @@ import api from "../../services/api";
  * Stores flag in settings.botEnabled (boolean).
  */
 export default function BotGeneralToggle() {
-  const [enabled, setEnabled] = useState(true);
+  const [enabled, setEnabled] = useState(null); // null = loading, no default
   const [loading, setLoading] = useState(false);
   const [rawSettings, setRawSettings] = useState({});
 
@@ -20,9 +20,9 @@ export default function BotGeneralToggle() {
       const { data } = await api.get("/bot/intelligence/settings");
       const settings = data?.settings || data || {};
       setRawSettings(settings);
-      setEnabled(typeof settings.botEnabled === "boolean" ? settings.botEnabled : true);
+      setEnabled(typeof settings.botEnabled === "boolean" ? settings.botEnabled : false);
     } catch (err) {
-      setEnabled(true);
+      setEnabled(false); // fail-safe: unknown state → show as off
     }
   };
 
@@ -47,6 +47,14 @@ export default function BotGeneralToggle() {
       setLoading(false);
     }
   };
+
+  if (enabled === null) {
+    return (
+      <Paper style={{ padding: 16, marginBottom: 16 }}>
+        <Typography variant="body2" style={{ opacity: 0.6 }}>Cargando estado del bot...</Typography>
+      </Paper>
+    );
+  }
 
   return (
     <Paper style={{ padding: 16, marginBottom: 16 }}>
