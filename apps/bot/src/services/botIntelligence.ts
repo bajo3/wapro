@@ -64,6 +64,30 @@ export interface Extracted {
    * GPT lo resuelve usando el contexto de opciones_mostradas en el historial.
    */
   selectedVehicleId?: string;
+
+  /**
+   * Modo del lead en este turno — ayuda a decidir la acción correcta.
+   * decided      → ya sabe qué quiere, filtros suficientes para buscar
+   * exploratory  → anda viendo, sin filtros claros, no hay que presionar
+   * hot          → urgencia alta, señales de cierre o visita inminente
+   * price_sensitive → el precio es la objeción principal
+   * lost         → contexto muy vago, respuesta confusa, necesita reorientación
+   */
+  leadMode?: 'decided' | 'exploratory' | 'hot' | 'price_sensitive' | 'lost';
+
+  /**
+   * true si el mensaje es ambiguo y el bot necesita pedir UN dato más antes de mostrar opciones.
+   * El bot nunca debe pedir más de 1 campo por turno cuando esto es true.
+   */
+  needsClarification?: boolean;
+
+  /**
+   * Confianza del extractor en la intención detectada.
+   * high   → mensaje claro, intención inequívoca
+   * medium → hay señales pero algún campo clave falta
+   * low    → mensaje vago, múltiple interpretación posible
+   */
+  confidence?: 'high' | 'medium' | 'low';
 }
 
 export interface IntelligenceResult {
@@ -96,10 +120,13 @@ Dado un mensaje de WhatsApp y el contexto previo, devolvé SOLO un JSON con esto
   "wantsAdvisor": boolean,
   "urgency": "low"|"high",
   "name": string,
-  "selectedVehicleId": string
+  "selectedVehicleId": string,
+  "leadMode": "decided"|"exploratory"|"hot"|"price_sensitive"|"lost",
+  "needsClarification": boolean,
+  "confidence": "high"|"medium"|"low"
 }
 
-Reglas:
+REGLAS DE INTENT:
 - Si el mensaje menciona "entrega" o "anticipo" seguido de un número → eso es downPayment
 - Si menciona "cuotas", "financiar", "banco", "crédito" → intent = credit_quote
 - Si menciona "quiero verlo", "puedo ir", "test drive" → wantsVisit = true
@@ -110,12 +137,41 @@ Reglas:
 - Si dice "chau", "gracias", "lo pienso" → intent = farewell
 - Si está enojado, reclama, insulta → intent = complaint
 - Si es un saludo (hola, buenas, buen día, etc.) → intent = greeting, siempre, independientemente del historial
-- Si "no sé qué quiero", "qué me recomendás" → intent = unsure
+- Si "no sé qué quiero", "qué me recomendás", "qué me recomendarías", "qué me conviene" → intent = unsure
 - maxPrice: si dice "hasta X" o "con X" o "por X" → eso es el tope
 - Si hay opciones_mostradas en el contexto Y el cliente hace referencia a una por número ordinal
   ("el primero", "el 2", "ese", "esa blanca", "el de 17", "la primera opción") → resolver cuál
   es y poner su id en selectedVehicleId. El intent en ese caso es "specific".
-- Devolvé SOLO el JSON, sin texto extra`;
+
+REGLAS DE leadMode:
+- "decided" → el cliente sabe exactamente qué quiere: tiene marca o modelo o presupuesto claro. Ej: "busco un Cronos 2023", "quiero un 0km automático hasta $20M"
+- "exploratory" → el cliente anda viendo, sin filtros claros, sin urgencia. Ej: "ando viendo", "estoy mirando opciones", "algo para la familia", "algo cómodo", "no sé bien todavía"
+- "hot" → hay señal de cierre o urgencia real. Ej: "lo quiero esta semana", "ya hablé con el banco", "tengo el dinero listo", "quiero ir a verlo ya"
+- "price_sensitive" → el precio es la preocupación principal. Ej: "me parece caro", "no llego al presupuesto", "algo más barato", "tengo poco presupuesto"
+- "lost" → el mensaje es incomprensible, cambia de tema sin contexto, o el intent no se pudo determinar con seguridad
+
+REGLAS DE needsClarification:
+- true si el mensaje es ambiguo y no hay suficiente información para buscar autos concretos
+- true si leadMode es "exploratory" o "lost" y no hay ningún filtro usable (marca/modelo/presupuesto/tipo)
+- true si el intent es "unsure" sin contexto previo de búsqueda
+- false si ya hay filtros suficientes para hacer una búsqueda útil (aunque no sea perfecta)
+- Cuando es true: el bot debe hacer UNA SOLA pregunta, no un formulario
+
+REGLAS DE confidence:
+- "high" → el mensaje es claro, intent inequívoco, campos bien extraídos
+- "medium" → intent razonable pero falta algún campo clave para actuar (ej: tiene marca pero no presupuesto)
+- "low" → mensaje vago, múltiples interpretaciones posibles, no hay filtros claros
+
+CASOS ESPECIALES:
+- "ando viendo" → intent=unsure, leadMode=exploratory, needsClarification=true, confidence=low
+- "algo para la familia" → intent=search, bodywork=familiar (o SUV si no hay más), leadMode=exploratory, needsClarification=true (falta presupuesto), confidence=medium
+- "algo cómodo" → intent=unsure, leadMode=exploratory, needsClarification=true, confidence=low
+- "no sé bien todavía" → intent=unsure, leadMode=exploratory, needsClarification=true, confidence=low
+- "qué me recomendás?" → intent=unsure, leadMode=exploratory, needsClarification=false si hay contexto previo, confidence=medium
+- "tomarias mi usado?" / "tengo para entregar" → intent=trade_in, leadMode=decided, confidence=high
+- "cuotas?" / "me financian?" → intent=credit_quote, leadMode=decided, confidence=high
+
+Devolvé SOLO el JSON, sin texto extra.`;
 
 async function extractIntent(message: string, historyLines: string[]): Promise<Extracted> {
   const historyContext = historyLines.slice(-6).join('\n');
@@ -311,6 +367,7 @@ catalogo_general → Mostrá las opciones disponibles. Cerrá con UNA pregunta d
 cambio_de_busqueda → El cliente quiere buscar otra cosa. Confirmá que arrancás de cero. Preguntá qué busca ahora.
 despedida → Cierre cálido, muy breve. Sin nueva pregunta comercial.
 indeciso_sin_contexto → UNA sola pregunta: para qué lo usa y cuánto tiene pensado gastar.
+modo_exploratorio → El cliente anda viendo sin saber bien qué quiere. No lo interrogues ni le tires el catálogo. Hacé UNA pregunta suave que lo oriente: uso principal O presupuesto aproximado. Tono abierto, sin presión.
 reclamo → Empatía breve + derivar a asesor. No intentes resolver.
 consulta_general → Respondé con lo que tenés disponible en el contexto. Sé concreto.
 
@@ -345,7 +402,19 @@ ENTRADA: despedida
 SALIDA: "Dale, cualquier duda estamos. ¡Éxitos!"
 
 ENTRADA: indeciso_sin_contexto
-SALIDA: "Para ayudarte bien: ¿para qué lo vas a usar y cuánto tenés pensado gastar?"`;
+SALIDA: "Para ayudarte bien: ¿para qué lo vas a usar y cuánto tenés pensado gastar?"
+
+ENTRADA: modo_exploratorio (cliente dijo "ando viendo")
+SALIDA: "Dale, sin apuro. ¿Tenés algún tipo de auto en mente o un presupuesto aproximado? Así te oriento mejor."
+
+ENTRADA: modo_exploratorio (cliente dijo "algo para la familia")
+SALIDA: "Entendido. ¿Tenés un presupuesto aproximado? Con eso te filtro las mejores opciones familiares que tengo."
+
+ENTRADA: modo_exploratorio (cliente dijo "no sé bien todavía")
+SALIDA: "No hay drama. ¿Lo buscás para uso diario, familia, trabajo? Con eso ya te puedo dar una orientación."
+
+ENTRADA: mostrar_resultados con needsClarification (filtros parciales, falta presupuesto)
+SALIDA: "Bien, hoy tengo estas opciones:\n[lista]\n¿Alguna te interesa? Si me decís el presupuesto aproximado te puedo afinar más."`;
 
 async function composeResponse(action: string, data: Record<string, any>, historyLines: string[]): Promise<string> {
   const historyCtx = historyLines.slice(-6).join('\n');
@@ -389,7 +458,7 @@ export async function processMessage(params: {
   }
 
   const isContextReset = ['greeting', 'reset', 'catalog'].includes(extracted.intent);
-  console.info(`[bot] intent=${extracted.intent} reset_detected=${isContextReset} catalog_intent=${extracted.intent === 'catalog'} fast_override=${fastOverride ?? 'none'} msg="${message.slice(0, 50)}"`);
+  console.info(`[bot] intent=${extracted.intent} leadMode=${extracted.leadMode ?? 'n/a'} confidence=${extracted.confidence ?? 'n/a'} needsClarification=${extracted.needsClarification ?? false} reset_detected=${isContextReset} catalog_intent=${extracted.intent === 'catalog'} fast_override=${fastOverride ?? 'none'} msg="${message.slice(0, 50)}"`);
 
   // 3. Si GPT no resolvió selectedVehicleId pero hay hits previos, intentar resolución determinística
   if (
@@ -429,6 +498,14 @@ export async function processMessage(params: {
     last_user_at: new Date().toISOString(),
     user_msg_count: (state.user_msg_count ?? 0) + 1,
     leadScore: Math.min(100, (state.leadScore ?? 0) + hotResult.score),
+    agent: {
+      ...state.agent,
+      intent: extracted.intent,
+      confidence: extracted.confidence === 'high' ? 1 : extracted.confidence === 'medium' ? 0.6 : 0.3,
+      urgency: extracted.urgency ?? (extracted.leadMode === 'hot' ? 'high' : 'low'),
+      internalReason: extracted.leadMode ? `leadMode=${extracted.leadMode}` : undefined,
+      updatedAt: new Date().toISOString(),
+    },
   };
 
   if (isContextReset) {
@@ -606,17 +683,45 @@ async function decide(
   // Indeciso / pide recomendación
   if (ex.intent === 'unsure') {
     const sc = state.search_context;
-    if (sc && (sc.brand || sc.maxPrice || sc.bodywork || sc.useCase)) {
+    const hasContext = sc && (sc.brand || sc.maxPrice || sc.bodywork || sc.useCase);
+
+    // Si hay contexto previo suficiente → buscar y recomendar
+    if (hasContext) {
       return await handleSearch(ex, state, historyLines);
     }
+
+    // Si el lead extrajo al menos un filtro útil (useCase o bodywork) → usarlo
+    if (ex.useCase || ex.bodywork) {
+      return await handleSearch(ex, state, historyLines);
+    }
+
+    // Sin contexto → preguntar una sola cosa útil
     const reply = await composeResponse('indeciso_sin_contexto', {
       nota: 'UNA sola pregunta: uso + presupuesto. Nada más.',
+      leadMode: ex.leadMode ?? 'exploratory',
     }, historyLines);
     return { reply };
   }
 
-  // Búsqueda / refinamiento / alternativas
+  // Búsqueda / refinamiento / alternativas — pero primero validar que hay contexto mínimo
   if (['search', 'refine', 'alternatives'].includes(ex.intent)) {
+    // Si el lead es exploratorio y no tiene ningún filtro útil → pedir orientación primero
+    if (
+      ex.needsClarification &&
+      ex.leadMode === 'exploratory' &&
+      ex.confidence === 'low' &&
+      !ex.brand && !ex.model && !ex.maxPrice && !ex.bodywork &&
+      !state.search_context?.brand && !state.search_context?.maxPrice &&
+      !state.search_context?.bodywork && !state.search_context?.useCase
+    ) {
+      const reply = await composeResponse('modo_exploratorio', {
+        mensaje: rawMessage,
+        nota: 'El lead anda viendo sin filtros. UNA pregunta orientadora (uso o presupuesto). No mostrar catálogo todavía.',
+      }, historyLines);
+      return { reply };
+    }
+
+    // Si hay needsClarification pero SÍ hay algún filtro parcial → buscar igual y pedir 1 dato más al final
     return await handleSearch(ex, state, historyLines);
   }
 
@@ -707,10 +812,23 @@ async function handleSearch(ex: Extracted, state: ConvState, historyLines: strin
   }
 
   const hitLines = hits.map((v, i) => formatItemLine(v, i, usdRate)).join('\n');
+
+  // Construir nota según contexto del lead
+  let resultadosNota = 'Mostrar opciones numeradas concretas. Cerrar preguntando cuál le interesa o si quiere fotos/cuotas de alguno.';
+  if (ex.needsClarification && ex.leadMode === 'exploratory') {
+    resultadosNota = 'Mostrar opciones numeradas. Al final, hacé UNA pregunta suave para refinar (presupuesto o tipo preferido). No presiones.';
+  } else if (ex.leadMode === 'hot') {
+    resultadosNota = 'Mostrar opciones numeradas. Cerrar con acción concreta: cuál le interesa para coordinar visita o calcular cuotas HOY.';
+  } else if (ex.leadMode === 'price_sensitive') {
+    resultadosNota = 'Mostrar opciones de menor precio primero. Cerrá preguntando si alguna se acerca al presupuesto.';
+  }
+
   const reply = await composeResponse('mostrar_resultados', {
     resultados: hitLines,
     cantidad: hits.length,
-    nota: 'Mostrar opciones numeradas concretas. Cerrar preguntando cuál le interesa o si quiere fotos/cuotas de alguno.',
+    leadMode: ex.leadMode ?? 'decided',
+    needsClarification: ex.needsClarification ?? false,
+    nota: resultadosNota,
   }, historyLines);
 
   const hitsDetail: ConvState['last_hits_detail'] = hits.map((v, i) => ({
@@ -827,12 +945,24 @@ function buildHistory(state: ConvState): string[] {
     lines.push(`Auto presentado: ${state.lastPresentedVehicleTitle}${state.lastPresentedVehiclePriceArs ? ' — ARS ' + state.lastPresentedVehiclePriceArs.toLocaleString('es-AR') : ''} [id:${state.lastPresentedVehicleId ?? '?'}]`);
   }
 
-  if (state.search_context?.maxPrice) {
-    const curr = state.search_context.currency ?? 'ARS';
-    lines.push(`Presupuesto máximo declarado: ${curr} ${state.search_context.maxPrice.toLocaleString('es-AR')}`);
-  }
-  if (state.search_context?.useCase) {
-    lines.push(`Uso declarado: ${state.search_context.useCase}`);
+  // Contexto acumulado de búsqueda — todo lo que se sabe del lead
+  const sc = state.search_context;
+  if (sc) {
+    const contextParts: string[] = [];
+    if (sc.brand) contextParts.push(`marca: ${sc.brand}`);
+    if (sc.model) contextParts.push(`modelo: ${sc.model}`);
+    if (sc.bodywork) contextParts.push(`tipo: ${sc.bodywork}`);
+    if (sc.maxPrice) {
+      const curr = sc.currency ?? 'ARS';
+      contextParts.push(`presupuesto máx: ${curr} ${sc.maxPrice.toLocaleString('es-AR')}`);
+    }
+    if (sc.useCase) contextParts.push(`uso: ${sc.useCase}`);
+    if (sc.transmission) contextParts.push(`caja: ${sc.transmission}`);
+    if (sc.fuel) contextParts.push(`combustible: ${sc.fuel}`);
+    if (sc.gnc) contextParts.push('requiere GNC');
+    if (contextParts.length > 0) {
+      lines.push(`Contexto del lead: ${contextParts.join(' | ')}`);
+    }
   }
 
   return lines;
