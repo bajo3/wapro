@@ -170,6 +170,12 @@ CASOS ESPECIALES:
 - "qué me recomendás?" → intent=unsure, leadMode=exploratory, needsClarification=false si hay contexto previo, confidence=medium
 - "tomarias mi usado?" / "tengo para entregar" → intent=trade_in, leadMode=decided, confidence=high
 - "cuotas?" / "me financian?" → intent=credit_quote, leadMode=decided, confidence=high
+- "lo mínimo" / "mínimo" / "la menor" / "sin entrada" / "lo más chico" → cuando el contexto muestra que el bot acaba de preguntar por entrega/anticipo → intent=credit_quote, confidence=high
+- "con cuánto entro?" / "cuánto de entrega?" / "cuánto de anticipo?" → intent=credit_quote, confidence=high
+
+IMPORTANTE — NO clasificar como catalog ni search cuando:
+- El mensaje es corto y vago ("lo mínimo", "mínimo", "entrega?") Y el contexto previo muestra una conversación activa sobre un auto puntual o financiación.
+- En esos casos, mantener el intent credit_quote o specific. NO reiniciar contexto.
 
 Devolvé SOLO el JSON, sin texto extra.`;
 
@@ -304,6 +310,16 @@ function detectCatalogSelection(message: string): number | null {
   return null;
 }
 
+// ── Detección de follow-up de financiación (sin GPT) ─────────────────────────
+// Mensajes cortos que son respuesta a una pregunta de entrega/cuotas.
+// Solo se activa si hay un vehículo activo en contexto.
+const FINANCE_FOLLOWUP_RE = /^(lo\s*m[ií]nimo|m[ií]nimo|la\s*menor|la\s*m[ií]nima?|con\s+cu[aá]nto\s+entro|cu[aá]nto\s+de\s+(entrega|anticipo|enganche)|entrega\??|anticipo\??|enganche\??|y\s+cuotas?\??|cuotas?\??|financiac[ií][oó]n\??|sin\s+entrada|lo\s+m[aá]s\s+chico|la\s+m[aá]s\s+baja?|lo\s+menos\s+posible|cu[aá]nto\s+m[ií]nimo)[\s?.!]*$/i;
+const MINIMUM_PAYMENT_RE = /m[ií]nimo|menor|m[aá]s\s+chico|m[aá]s\s+baj[ao]|lo\s+menos|sin\s+entrada|lo\s+m[aá]s\s+chico/i;
+
+function detectFinancingFollowup(message: string): boolean {
+  return FINANCE_FOLLOWUP_RE.test(message.trim());
+}
+
 // ── Detección rápida de reset/catálogo (sin GPT) ─────────────────────────────
 // Frases que siempre reinician contexto, independientemente de lo que GPT clasifique.
 const RESET_RE = /^(hola+|buen[ao]s?(\s*(d[ií]as?|tardes?|noches?))?|arrancamos?\s*de\s*nuevo|empecemos?\s*de\s*nuevo|quiero\s*ver\s*otra\s*cosa|busco\s*otra\s*cosa|estoy\s*buscando\s*otra\s*cosa|cambio\s*de\s*b[uú]squeda)[\s!?.]*$/i;
@@ -401,6 +417,7 @@ sin_match → Decí que no tenés exactamente eso. Ofrecé la alternativa más c
 derivar_humano → Decí que lo pasás con alguien del equipo. No sigas vendiendo.
 credit_sin_auto → Preguntá sobre qué auto calculamos. Solo eso.
 credit_sin_entrega → Preguntá cuánto pone de entrega. Solo eso.
+entrega_minima → El cliente pregunta por la entrega mínima pero no hay datos del banco. NO inventés ningún número. Decí que la entrega mínima depende del banco y del plan, y que lo confirma el asesor. Ofrecé pasarlo con alguien del equipo para que le den el número real. Breve, máximo 2 líneas.
 mostrar_cuotas → Mostrá los planes de cuotas reales. Aclará que son estimados y que el asesor confirma el número final. Preguntá si quiere avanzar.
 permuta → Pedí modelo, año y km del usado. No des valuación. Decí que lo evalúa el equipo.
 coordinar_visita → Decí que lo pasás con el equipo para coordinar. No des horarios si no los tenés.
@@ -566,6 +583,43 @@ export async function processMessage(params: {
     }
   }
 
+  // ── Fast path: follow-up de financiación cuando hay vehículo activo ──────────
+  // "lo mínimo", "y cuotas?", "cuánto de entrega?", etc. → NO pasar por GPT
+  if (state.lastPresentedVehicleId && detectFinancingFollowup(message)) {
+    const isMinimumQuery = MINIMUM_PAYMENT_RE.test(message);
+    console.info(`[bot] financing_followup_detected hasVehicleContext=true vehicle=${state.lastPresentedVehicleId} isMinimumQuery=${isMinimumQuery} msg="${message.slice(0, 50)}"`);
+
+    const financeState: ConvState = {
+      ...state,
+      last_intent: 'credit_quote',
+      last_user_at: new Date().toISOString(),
+      user_msg_count: (state.user_msg_count ?? 0) + 1,
+      last_bot_reply_at: new Date().toISOString(),
+      lastBotAt: new Date().toISOString(),
+    };
+
+    if (isMinimumQuery) {
+      // No tenemos dato real de entrega mínima → no inventar, derivar al asesor
+      const reply = await composeResponse('entrega_minima', {
+        auto: state.lastPresentedVehicleTitle ?? 'ese auto',
+        precio: state.lastPresentedVehiclePriceArs
+          ? `ARS ${Math.round(state.lastPresentedVehiclePriceArs).toLocaleString('es-AR')}`
+          : null,
+        nota: 'No inventés ningún monto. Decí que lo confirma el asesor. Ofrecé pasarlo con el equipo.',
+      }, historyLines);
+      return { reply, newState: financeState };
+    }
+
+    // Otro follow-up de financiación → handleCredit con vehículo activo
+    const finResult = await handleCredit(
+      { intent: 'credit_quote' } as Extracted,
+      state,
+      message,
+      historyLines
+    );
+    return { reply: finResult.reply, newState: financeState, imagesToSend: finResult.imagesToSend };
+  }
+
   // 1. Pre-chequeo rápido sin GPT para reset/catálogo obvios
   const fastOverride = detectResetOrCatalog(message);
 
@@ -581,8 +635,26 @@ export async function processMessage(params: {
     extracted.intent = 'catalog';
   }
 
+  // ── Guardrail: bloquear reset de contexto por mensaje ambiguo ────────────────
+  // Si hay vehículo activo Y GPT devuelve catalog/reset/search vago sin señal explícita
+  // → no resetear el flujo, mantener contexto del vehículo/financiación activa
+  const hasActiveVehicle = !!state.lastPresentedVehicleId;
+  const hasExplicitReset = fastOverride === 'reset' || fastOverride === 'catalog';
+  const isAmbiguousOverride =
+    hasActiveVehicle &&
+    !hasExplicitReset &&
+    ['catalog', 'reset', 'search', 'unsure'].includes(extracted.intent) &&
+    !extracted.brand && !extracted.model &&
+    (extracted.confidence === 'low' || !extracted.confidence);
+
+  if (isAmbiguousOverride) {
+    console.info(`[bot] fallback_blocked hasVehicleContext=true intent_was=${extracted.intent} last_intent=${state.last_intent} vehicle=${state.lastPresentedVehicleId} confidence=${extracted.confidence ?? 'n/a'} msg="${message.slice(0, 50)}" → maintaining vehicle context`);
+    extracted.intent = 'specific';
+    extracted.selectedVehicleId = state.lastPresentedVehicleId;
+  }
+
   const isContextReset = ['greeting', 'reset', 'catalog'].includes(extracted.intent);
-  console.info(`[bot] intent=${extracted.intent} leadMode=${extracted.leadMode ?? 'n/a'} confidence=${extracted.confidence ?? 'n/a'} needsClarification=${extracted.needsClarification ?? false} reset_detected=${isContextReset} catalog_intent=${extracted.intent === 'catalog'} fast_override=${fastOverride ?? 'none'} msg="${message.slice(0, 50)}"`);
+  console.info(`[bot] intent=${extracted.intent} leadMode=${extracted.leadMode ?? 'n/a'} confidence=${extracted.confidence ?? 'n/a'} needsClarification=${extracted.needsClarification ?? false} reset_detected=${isContextReset} catalog_intent=${extracted.intent === 'catalog'} fast_override=${fastOverride ?? 'none'} hasActiveVehicle=${hasActiveVehicle} fallback_blocked=${isAmbiguousOverride} selectedVehicleId=${extracted.selectedVehicleId ?? 'none'} msg="${message.slice(0, 50)}"`);
 
   // 3. Si GPT no resolvió selectedVehicleId pero hay hits previos, intentar resolución determinística
   if (
