@@ -132,13 +132,31 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
     return;
   }
 
+  // Evolution puede enviar el archivo como URL pública o como base64
+  const evoMediaUrl: string | undefined =
+    typeof msgContent.mediaUrl === 'string' && msgContent.mediaUrl.startsWith('http')
+      ? msgContent.mediaUrl
+      : undefined;
+  const evoBase64: string | undefined =
+    typeof msgContent.base64 === 'string' && msgContent.base64.length > 0
+      ? msgContent.base64
+      : undefined;
+
   // Mensajes de media sin texto: registrar en ticket, acknowledger y salir
   if (!text && mediaType) {
-    console.log(`[webhook] media_only mediaType=${mediaType} jid=${remoteJid}`);
+    console.log(`[webhook] media_only mediaType=${mediaType} has_url=${!!evoMediaUrl} has_base64=${!!evoBase64} jid=${remoteJid}`);
     const jidForReply = remoteJid.includes('@') ? remoteJid : `${remoteJid}@s.whatsapp.net`;
 
-    // Persistir el mensaje inbound al ticket (para que aparezca en el panel)
-    await persistInboundMessage({ instance, remoteJid: jidForReply, msgId, text: `[${mediaType}]`, mediaType }).catch(e =>
+    // Persistir el mensaje inbound al ticket con el archivo real (imagen/audio/video)
+    await persistInboundMessage({
+      instance,
+      remoteJid: jidForReply,
+      msgId,
+      text: `[${mediaType}]`,
+      mediaType,
+      mediaUrl: evoMediaUrl,
+      base64: evoBase64,
+    }).catch(e =>
       console.error(`[webhook] persist_inbound failed instance=${instance} jid=${jidForReply}:`, e?.message ?? e)
     );
 

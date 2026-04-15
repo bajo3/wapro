@@ -121,6 +121,7 @@ interface PersistPayload {
   text: string;
   mediaUrl?: string | null;
   mediaType?: string | null;
+  base64?: string | null;
   fromMe: boolean;
   ack: number;
   read: boolean;
@@ -319,6 +320,8 @@ export async function persistInboundMessage(params: {
   msgId: string;
   text?: string;
   mediaType?: string;
+  mediaUrl?: string;
+  base64?: string;
 }): Promise<void> {
   let BOT_ADMIN_TOKEN: string;
   try {
@@ -339,8 +342,9 @@ export async function persistInboundMessage(params: {
     instance: params.instance,
     remoteJid,
     text,
-    mediaUrl: null,
+    mediaUrl: params.mediaUrl ?? null,
     mediaType: params.mediaType ?? null,
+    base64: params.base64 ?? null,
     fromMe: false,
     ack: 0,
     read: false,

@@ -306,6 +306,7 @@ type PersistBotMessageBody = {
   text?: string;
   mediaUrl?: string | null;
   mediaType?: string | null;
+  base64?: string | null;
   fromMe?: boolean;
   ack?: number;
   read?: boolean;
@@ -327,14 +328,28 @@ export const persistBotMessageWebhook = async (req: Request, res: Response): Pro
     const remoteJid = String(body.remoteJid || "").trim();
     const msgId = String(body.id || "").trim();
     const text = String(body.text || "").trim();
-    const mediaUrl = typeof body.mediaUrl === "string" && body.mediaUrl.trim() ? body.mediaUrl.trim() : undefined;
+    const rawMediaUrl = typeof body.mediaUrl === "string" && body.mediaUrl.trim() ? body.mediaUrl.trim() : undefined;
+    const rawBase64 = typeof body.base64 === "string" && body.base64.trim() ? body.base64.trim() : undefined;
     const mediaType = typeof body.mediaType === "string" && body.mediaType.trim() ? body.mediaType.trim() : undefined;
     const requestedStatus = typeof body.ticketStatus === "string" ? body.ticketStatus.trim().toLowerCase() : "";
     const requestedBotMode = typeof body.botMode === "string" ? body.botMode.trim().toUpperCase() : "";
     const handoff = body.handoff === true;
+    const isInbound = body.fromMe === false;
 
-    if (!instanceName || !remoteJid || !msgId || (!text && !mediaUrl)) {
+    if (!instanceName || !remoteJid || !msgId || (!text && !rawMediaUrl && !rawBase64)) {
       throw new AppError("ERR_INVALID_BOT_MESSAGE", 400);
+    }
+
+    // Resolver mediaUrl: descargar URL remota o convertir base64 → archivo local
+    let mediaUrl: string | undefined = rawMediaUrl;
+    if (mediaType) {
+      if (rawBase64) {
+        const filename = tryPersistBase64Media(msgId, mediaType, rawBase64);
+        if (filename) mediaUrl = filename;
+      } else if (rawMediaUrl && /^https?:\/\//i.test(rawMediaUrl)) {
+        const filename = await downloadAndPersistRemoteMedia(msgId, mediaType, rawMediaUrl);
+        if (filename) mediaUrl = filename;
+      }
     }
 
     const whatsapp = await Whatsapp.findOne({ where: { name: instanceName } });
@@ -366,7 +381,8 @@ export const persistBotMessageWebhook = async (req: Request, res: Response): Pro
 
     const ticketPatch: any = {
       lastMessage: bodyText,
-      unreadMessages: 0
+      // Mensajes inbound incrementan no-leídos; outbound los resetea a 0
+      unreadMessages: isInbound ? (ticket.unreadMessages || 0) + 1 : 0,
     };
 
     if (["pending", "open", "closed"].includes(requestedStatus)) {
@@ -392,9 +408,9 @@ export const persistBotMessageWebhook = async (req: Request, res: Response): Pro
         ticketId: ticket.id,
         contactId: contact.id,
         body: bodyText,
-        fromMe: body.fromMe !== false,
-        read: body.read !== false,
-        ack: Number.isFinite(Number(body.ack)) ? Number(body.ack) : 1,
+        fromMe: !isInbound,
+        read: !isInbound,
+        ack: isInbound ? 0 : (Number.isFinite(Number(body.ack)) ? Number(body.ack) : 1),
         mediaType,
         mediaUrl
       }
