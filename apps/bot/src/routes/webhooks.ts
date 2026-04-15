@@ -8,7 +8,7 @@ import { env } from '../lib/env.js';
 import { getState, setState, seenDedupe, markDedupe } from '../services/state.js';
 import { getContactRule } from '../services/contacts.js';
 import { getConversationRule } from '../services/rules.js';
-import { sendTextAndPersist, sendImageAndPersist } from '../services/panelPersistence.js';
+import { sendTextAndPersist, sendImageAndPersist, persistInboundMessage } from '../services/panelPersistence.js';
 import { getSocket } from '../services/socket.js';
 import { processMessage } from '../services/botIntelligence.js';
 
@@ -108,7 +108,7 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
     return;
   }
 
-  // Extraer texto
+  // Extraer texto y tipo de media
   const msgContent = message.message ?? {};
   const text: string = (
     msgContent.conversation ||
@@ -118,8 +118,41 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
     ''
   ).trim();
 
-  if (!text) {
+  const mediaType: string | null = (
+    msgContent.audioMessage   ? 'audio'    :
+    msgContent.imageMessage   ? 'image'    :
+    msgContent.videoMessage   ? 'video'    :
+    msgContent.documentMessage ? 'document' :
+    msgContent.stickerMessage ? 'sticker'  :
+    null
+  );
+
+  if (!text && !mediaType) {
     console.log(`[webhook] skipped reason=no_text jid=${remoteJid} msgType=${Object.keys(msgContent).join(',')}`);
+    return;
+  }
+
+  // Mensajes de media sin texto: registrar en ticket, acknowledger y salir
+  if (!text && mediaType) {
+    console.log(`[webhook] media_only mediaType=${mediaType} jid=${remoteJid}`);
+    const jidForReply = remoteJid.includes('@') ? remoteJid : `${remoteJid}@s.whatsapp.net`;
+
+    // Persistir el mensaje inbound al ticket (para que aparezca en el panel)
+    await persistInboundMessage({ instance, remoteJid: jidForReply, msgId, text: `[${mediaType}]`, mediaType }).catch(e =>
+      console.error(`[webhook] persist_inbound failed instance=${instance} jid=${jidForReply}:`, e?.message ?? e)
+    );
+
+    const mediaAck =
+      mediaType === 'audio'    ? 'Recibí tu audio. ¿En qué te puedo ayudar? Escribime acá.' :
+      mediaType === 'image'    ? '¡Vi tu imagen! Si querés info sobre algún auto, escribime.' :
+      mediaType === 'video'    ? 'Recibí tu video. ¿En qué te puedo ayudar?' :
+      mediaType === 'sticker'  ? null :
+      'Recibí tu archivo. ¿En qué te puedo ayudar?';
+    if (mediaAck) {
+      await sendTextAndPersist(instance, jidForReply, mediaAck).catch(e =>
+        console.error(`[send] media_ack failed instance=${instance} jid=${jidForReply}:`, e?.message ?? e)
+      );
+    }
     return;
   }
 

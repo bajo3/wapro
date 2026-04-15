@@ -261,6 +261,49 @@ function filterCatalog(
   return results.slice(0, 12);
 }
 
+// ── Detección determinística de selección numérica/ordinal ───────────────────
+
+/**
+ * Detecta si el mensaje es una selección clara del catálogo mostrado.
+ * Solo se invoca cuando hay un snapshot activo (last_hits_detail).
+ * Retorna índice 1-based si hay match, null si no.
+ *
+ * Cubre: "1", "la 1", "el 2", "opcion 3", "la primera", "me interesa la 2"
+ * NO cubre: "busco un auto de 3 puertas" (evita falsos positivos)
+ */
+function detectCatalogSelection(message: string): number | null {
+  const t = message.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+
+  // 1. Número puro: "1", "2", " 10 "
+  const pureNum = t.match(/^\s*([1-9][0-9]?)\s*$/);
+  if (pureNum) return parseInt(pureNum[1], 10);
+
+  // 2. Ordinales textuales
+  const ordinals: Record<string, number> = {
+    'primero': 1, 'primera': 1,
+    'segundo': 2, 'segunda': 2,
+    'tercero': 3, 'tercera': 3,
+    'cuarto': 4, 'cuarta': 4,
+    'quinto': 5, 'quinta': 5,
+    'sexto': 6, 'sexta': 6,
+    'septimo': 7, 'septima': 7,
+    'octavo': 8, 'octava': 8,
+    'noveno': 9, 'novena': 9,
+    'decimo': 10, 'decima': 10,
+  };
+  for (const [word, num] of Object.entries(ordinals)) {
+    if (t.includes(word)) return num;
+  }
+
+  // 3. Frases de selección explícita: "la 1", "el 2", "opcion 3", "me interesa la 2"
+  const selMatch = t.match(
+    /(?:la|el|los|opci[oa]n|numero|n[uú]mero|quiero\s+(?:la|el)|me\s+interesa(?:\s+(?:la|el))?|ese\s+(?:es\s+)?(?:el)?)\s+([1-9][0-9]?)\b/
+  );
+  if (selMatch) return parseInt(selMatch[1], 10);
+
+  return null;
+}
+
 // ── Detección rápida de reset/catálogo (sin GPT) ─────────────────────────────
 // Frases que siempre reinician contexto, independientemente de lo que GPT clasifique.
 const RESET_RE = /^(hola+|buen[ao]s?(\s*(d[ií]as?|tardes?|noches?))?|arrancamos?\s*de\s*nuevo|empecemos?\s*de\s*nuevo|quiero\s*ver\s*otra\s*cosa|busco\s*otra\s*cosa|estoy\s*buscando\s*otra\s*cosa|cambio\s*de\s*b[uú]squeda)[\s!?.]*$/i;
@@ -442,6 +485,87 @@ export async function processMessage(params: {
   const { instance, remoteJid, message, state } = params;
   const historyLines = buildHistory(state);
 
+  // ── Fast path: selección numérica/ordinal determinística ─────────────────────
+  // Si hay snapshot vigente Y el mensaje es claramente una selección, resolvermos
+  // ANTES de llamar a GPT para evitar clasificación errónea (catalog/other/etc).
+  const SNAPSHOT_TTL_MS = 30 * 60 * 1000; // 30 minutos
+  const snapshotAge = state.last_hits_at
+    ? Date.now() - new Date(state.last_hits_at).getTime()
+    : Infinity;
+  const snapshotValid = (state.last_hits_detail?.length ?? 0) > 0 && snapshotAge <= SNAPSHOT_TTL_MS;
+
+  if (snapshotValid) {
+    const selNum = detectCatalogSelection(message);
+    console.info(`[selection] raw_input="${message.slice(0, 50)}" detected_num=${selNum ?? 'none'} snapshot_count=${state.last_hits_detail!.length} snapshot_age_min=${Math.round(snapshotAge / 60000)}`);
+
+    if (selNum !== null) {
+      const idx = selNum - 1;
+      if (idx < 0 || idx >= state.last_hits_detail!.length) {
+        console.info(`[selection] failed reason=index_out_of_range index=${selNum} max=${state.last_hits_detail!.length}`);
+        return {
+          reply: `Solo tengo opciones del 1 al ${state.last_hits_detail!.length}. ¿Cuál te interesa?`,
+          newState: {
+            ...state,
+            last_user_at: new Date().toISOString(),
+            user_msg_count: (state.user_msg_count ?? 0) + 1,
+          },
+        };
+      }
+
+      const selected = state.last_hits_detail![idx];
+      console.info(`[selection] parsed_index=${selNum} using_last_presented_options=true resolved_vehicle_id=${selected.id} resolved_vehicle_title="${selected.name}"`);
+
+      const selResult = await handleSpecificById(selected.id, state, message, historyLines);
+
+      // Guardrail: el vehículo presentado DEBE coincidir con la selección
+      if (selResult.presentedVehicle && selResult.presentedVehicle.id !== selected.id) {
+        console.error(`[selection] guardrail_mismatch expected=${selected.id} actual=${selResult.presentedVehicle.id}`);
+      }
+
+      const selNewState: ConvState = {
+        ...state,
+        last_intent: 'specific',
+        last_user_at: new Date().toISOString(),
+        user_msg_count: (state.user_msg_count ?? 0) + 1,
+        last_bot_reply_at: new Date().toISOString(),
+        lastBotAt: new Date().toISOString(),
+      };
+      if (selResult.presentedVehicle) {
+        selNewState.lastPresentedVehicleId    = selResult.presentedVehicle.id;
+        selNewState.lastPresentedVehicleTitle = selResult.presentedVehicle.name;
+        selNewState.lastPresentedVehiclePriceArs = selResult.presentedVehicle.priceNumber;
+        selNewState.lastPresentedVehicleBrand = selResult.presentedVehicle.brand;
+        selNewState.lastPresentedVehicleModel = selResult.presentedVehicle.model;
+        selNewState.lastPresentedAt = new Date().toISOString();
+      }
+      return {
+        reply: selResult.reply,
+        newState: selNewState,
+        imagesToSend: selResult.imagesToSend,
+      };
+    }
+  } else {
+    const selNum = detectCatalogSelection(message);
+    if (selNum !== null) {
+      if ((state.last_hits_detail?.length ?? 0) > 0 && snapshotAge > SNAPSHOT_TTL_MS) {
+        // Había snapshot pero expiró
+        console.info(`[selection] snapshot_expired age_min=${Math.round(snapshotAge / 60000)} raw_input="${message.slice(0, 50)}"`);
+        return {
+          reply: 'El listado que te mostré ya venció. ¿Qué auto estás buscando?',
+          newState: {
+            ...state,
+            last_hits_detail: [],
+            last_hits: [],
+            last_user_at: new Date().toISOString(),
+            user_msg_count: (state.user_msg_count ?? 0) + 1,
+          },
+        };
+      }
+      // Sin snapshot previo: solo loggear y dejar caer al flujo normal de GPT
+      console.info(`[selection] failed reason=no_snapshot raw_input="${message.slice(0, 50)}"`);
+    }
+  }
+
   // 1. Pre-chequeo rápido sin GPT para reset/catálogo obvios
   const fastOverride = detectResetOrCatalog(message);
 
@@ -571,9 +695,24 @@ async function handleCatalog(historyLines: string[], offset = 0): Promise<Decide
   const remaining = available.length - safeOffset - page.length;
   const nextOffset = hasMore ? safeOffset + CATALOG_PAGE_SIZE : 0;
 
-  const sample = page.map((v, i) => formatItemLine(v, safeOffset + i, usdRate)).join('\n');
+  const sample = page.map((v, i) => formatItemLine(v, i, usdRate)).join('\n');
 
   console.info(`[bot] catalog_total_count=${available.length} catalog_display_count=${page.length} catalog_offset=${safeOffset} catalog_has_more=${hasMore} catalog_mode=${safeOffset === 0 ? 'first_page' : 'paginated'}`);
+
+  // Guardar snapshot exacto del catálogo mostrado (índices 1-based para el usuario)
+  const hitsDetail: NonNullable<ConvState['last_hits_detail']> = page.map((v, i) => ({
+    idx: i,
+    id: v.id,
+    name: v.name,
+    brand: v.brand,
+    model: v.model,
+    priceNumber: v.priceNumber,
+    currency: v.currency,
+    images: v.images,
+  }));
+
+  console.info(`[catalog] presented options saved count=${page.length} ids=[${page.map(v => v.id).join(',')}]`);
+  page.forEach((v, i) => console.info(`[catalog] option ${i + 1} vehicleId=${v.id}`));
 
   const reply = await composeResponse('catalogo_general', {
     total_disponibles: available.length,
@@ -585,7 +724,7 @@ async function handleCatalog(historyLines: string[], offset = 0): Promise<Decide
       : 'Estas son todas las opciones disponibles. Cerrá con UNA pregunta de navegación (marca, tipo o presupuesto).',
   }, historyLines);
 
-  return { reply, nextOffset };
+  return { reply, nextOffset, hitIds: page.map(v => v.id), hitsDetail };
 }
 
 // ── Decision engine ────────────────────────────────────────────────────────────
@@ -636,8 +775,8 @@ async function decide(
     // Si viene del fast-override catalog_more y hay offset guardado, continuar desde ahí.
     // Si es un catalog nuevo (sin offset), empieza desde 0.
     const offset = state.catalog_offset ?? 0;
-    const { reply, nextOffset } = await handleCatalog(historyLines, offset);
-    return { reply, nextCatalogOffset: nextOffset };
+    const { reply, nextOffset, hitIds, hitsDetail } = await handleCatalog(historyLines, offset);
+    return { reply, nextCatalogOffset: nextOffset, hitIds, hitsDetail };
   }
 
   // Reset / cambio de búsqueda — limpia contexto y vuelve a exploración
@@ -841,6 +980,9 @@ async function handleSearch(ex: Extracted, state: ConvState, historyLines: strin
     currency: v.currency,
     images: v.images,
   }));
+
+  console.info(`[catalog] presented options saved count=${hits.length} ids=[${hits.map(h => h.id).join(',')}]`);
+  hits.forEach((v, i) => console.info(`[catalog] option ${i + 1} vehicleId=${v.id}`));
 
   return {
     reply,

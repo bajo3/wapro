@@ -309,6 +309,49 @@ export async function sendTextAndPersist(
   });
 }
 
+/**
+ * Persiste un mensaje INBOUND (del usuario) al ticket del panel.
+ * Best-effort: fallo silencioso para no bloquear el flujo del bot.
+ */
+export async function persistInboundMessage(params: {
+  instance: string;
+  remoteJid: string;
+  msgId: string;
+  text?: string;
+  mediaType?: string;
+}): Promise<void> {
+  let BOT_ADMIN_TOKEN: string;
+  try {
+    BOT_ADMIN_TOKEN = assertBotAdminToken();
+  } catch {
+    return; // best-effort para mensajes inbound
+  }
+
+  const backendUrl = String(process.env.BACKEND_URL || '').replace(/\/$/, '');
+  const remoteJid = normalizeRemoteJid(params.remoteJid);
+  if (!backendUrl || !remoteJid) return;
+
+  const text = (params.text || '').trim() || (params.mediaType ? `[${params.mediaType}]` : '');
+  if (!text) return;
+
+  const body: PersistPayload = {
+    id: params.msgId,
+    instance: params.instance,
+    remoteJid,
+    text,
+    mediaUrl: null,
+    mediaType: params.mediaType ?? null,
+    fromMe: false,
+    ack: 0,
+    read: false,
+    ticketStatus: 'pending',
+    botMode: null,
+    handoff: false,
+  };
+
+  await persistWithRetry(backendUrl, BOT_ADMIN_TOKEN, body);
+}
+
 export async function sendImageAndPersist(
   instance: string,
   remoteJidOrNumber: string,
