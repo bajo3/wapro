@@ -54,7 +54,8 @@
       "Bash(node node_modules/typescript/lib/tsc.js -p tsconfig.json --noEmit)",
       "Bash(node -e \"const b = require\\('C:/Users/Usuario/Desktop/Feli/Feli-web/wapro/apps/evolution-api/node_modules/@whiskeysockets/baileys'\\); console.log\\(JSON.stringify\\(b.DisconnectReason\\)\\)\")",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(xargs -I {} sh -c 'echo \"=== {} ===\" && head -50 {}')"
     ]
   }
 }
