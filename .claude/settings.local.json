@@ -55,7 +55,9 @@
       "Bash(node -e \"const b = require\\('C:/Users/Usuario/Desktop/Feli/Feli-web/wapro/apps/evolution-api/node_modules/@whiskeysockets/baileys'\\); console.log\\(JSON.stringify\\(b.DisconnectReason\\)\\)\")",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(xargs -I {} sh -c 'echo \"=== {} ===\" && head -50 {}')"
+      "Bash(xargs -I {} sh -c 'echo \"=== {} ===\" && head -50 {}')",
+      "Bash(wc -l /c/Users/Usuario/Desktop/Feli/Feli-web/wapro/apps/bot/src/services/*.ts)",
+      "Bash(ls /c/Users/Usuario/Desktop/Feli/Feli-web/wapro/apps/bot/src/services/*.ts)"
     ]
   }
 }

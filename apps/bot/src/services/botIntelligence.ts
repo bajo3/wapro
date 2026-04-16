@@ -22,6 +22,13 @@ import { getCreditQuote, formatCreditPlans } from './creditService.js';
 import { detectHotLead, notifyHotLead } from './hotLead.js';
 import type { ConvState } from './state.js';
 import type { CatalogItem } from './catalog.js';
+import { routeDecision } from './runtimeRouter.js';
+import { logPipelineEvent } from './pipelineLogger.js';
+import { selectExamples } from './exampleSelector.js';
+import { runTruthGuardWorker } from './workers/truthGuardWorker.js';
+import { detectObjection, incrementObjectionCount } from './workers/objectionWorker.js';
+import { getSkillHint } from './skills/index.js';
+import type { RouterAction } from './runtimeRouter.js';
 
 // ── Tipos ──────────────────────────────────────────────────────────────────────
 
@@ -587,9 +594,53 @@ SALIDA: "No hay drama. ¿Lo buscás para uso diario, familia, trabajo? Con eso y
 ENTRADA: mostrar_resultados con needsClarification (filtros parciales, falta presupuesto)
 SALIDA: "Bien, hoy tengo estas opciones:\n[lista]\n¿Alguna te interesa? Si me decís el presupuesto aproximado te puedo afinar más."`;
 
-async function composeResponse(action: string, data: Record<string, any>, historyLines: string[]): Promise<string> {
+// Mapeo de action string → RouterAction para inyección de ejemplos dinámicos
+const _ACTION_TO_ROUTER: Partial<Record<string, RouterAction>> = {
+  mostrar_resultados:     'SHOW_OPTIONS',
+  mostrar_auto_puntual:   'SHOW_SINGLE',
+  sin_match:              'SAFE_FALLBACK',
+  derivar_humano:         'ESCALATE_HUMAN',
+  reclamo:                'COMPLAINT',
+  credit_sin_auto:        'FINANCING_FLOW',
+  credit_sin_entrega:     'FINANCING_FLOW',
+  entrega_minima:         'FINANCING_FLOW',
+  mostrar_cuotas:         'FINANCING_FLOW',
+  permuta:                'TRADE_IN_FLOW',
+  coordinar_visita:       'COORDINAR_VISITA',
+  indeciso_sin_contexto:  'ASK_ONE_QUESTION',
+  modo_exploratorio:      'ASK_ONE_QUESTION',
+};
+
+async function composeResponse(
+  action: string,
+  data: Record<string, any>,
+  historyLines: string[],
+  _skillHint?: string
+): Promise<string> {
   const historyCtx = historyLines.slice(-6).join('\n');
-  const userMessage = `Acción: ${action}\nDatos:\n${JSON.stringify(data, null, 2)}${historyCtx ? `\n\nContexto conversación:\n${historyCtx}` : ''}`;
+
+  // Inyectar ejemplos dinámicos desde exampleSelector (fallback silencioso si DB vacía)
+  const routerAction = _ACTION_TO_ROUTER[action];
+  let examplesBlock = '';
+  if (routerAction) {
+    try {
+      const examples = await selectExamples(routerAction, [], 2);
+      if (examples.length > 0) {
+        examplesBlock = `\n\nEJEMPLOS ADICIONALES PARA ESTA SITUACIÓN:\n${examples.join('\n\n')}`;
+      }
+    } catch {
+      // No bloquear si falla el selector
+    }
+  }
+
+  // Inyectar contexto de skill si hay una activa
+  let skillBlock = '';
+  if (_skillHint) {
+    const hint = getSkillHint(_skillHint);
+    if (hint) skillBlock = `\n\n${hint}`;
+  }
+
+  const userMessage = `Acción: ${action}\nDatos:\n${JSON.stringify(data, null, 2)}${historyCtx ? `\n\nContexto conversación:\n${historyCtx}` : ''}${examplesBlock}${skillBlock}`;
 
   const reply = await askGPT({
     systemPrompt: RESPONSE_SYSTEM,
@@ -784,6 +835,27 @@ export async function processMessage(params: {
       .catch(() => {});
   }
 
+  // ── Router de decisiones (para logging y trazabilidad) ───────────────────────
+  const routerDecision = routeDecision(extracted, state);
+  logPipelineEvent({
+    ts: new Date().toISOString(),
+    instance,
+    remoteJid,
+    intent: extracted.intent,
+    intentConfidence: extracted.confidence,
+    leadMode: extracted.leadMode,
+    needsClarification: extracted.needsClarification,
+    action: routerDecision.action,
+    actionReason: routerDecision.reason,
+    skillHint: routerDecision.skillHint,
+    isHotLead: hotResult.isHot,
+    leadScore: (state.leadScore ?? 0) + hotResult.score,
+    fastPath: null,
+  });
+
+  // ── Detección de objeción (para ajustar objection_count en estado) ──────────
+  const objection = detectObjection(message, extracted, state);
+
   // Catalog offset: reset si es catálogo nuevo, conservar si es "más opciones"
   let effectiveState = state;
   if (extracted.intent === 'catalog') {
@@ -797,6 +869,21 @@ export async function processMessage(params: {
 
   // 4. Decidir y responder
   const result = await decide(extracted, effectiveState, message, historyLines);
+
+  // ── TruthGuard: validar respuesta antes de enviar ─────────────────────────────
+  const guardCatalog = await getCatalog().catch(() => [] as CatalogItem[]);
+  const guardResult = await runTruthGuardWorker({
+    instance,
+    remoteJid,
+    responseText: result.reply,
+    presentedVehicleId: result.presentedVehicle?.id,
+    catalog: guardCatalog,
+    state: effectiveState,
+    action: routerDecision.action,
+  });
+  if (guardResult.blocked) {
+    result.reply = guardResult.finalText;
+  }
 
   // 5. Actualizar estado
   const newState: Partial<ConvState> = {
@@ -856,6 +943,24 @@ export async function processMessage(params: {
 
   newState.last_bot_reply_at = new Date().toISOString();
   newState.lastBotAt = newState.last_bot_reply_at;
+
+  // Actualizar objection_count si se detectó objeción este turno
+  if (objection.detected) {
+    newState.objection_count = incrementObjectionCount(state);
+  }
+
+  // Log final del turno: reply enviada + guard result
+  logPipelineEvent({
+    ts: new Date().toISOString(),
+    instance,
+    remoteJid,
+    action: routerDecision.action,
+    guardPassed: guardResult.passed,
+    guardIssues: guardResult.blocked ? undefined : undefined, // issues ya loggeadas en worker
+    replyLengthChars: result.reply.length,
+    vehicleIds: result.hitIds,
+    vehiclesShown: result.hitsDetail?.length,
+  });
 
   return {
     reply: result.reply,
