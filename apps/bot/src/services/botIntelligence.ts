@@ -45,15 +45,21 @@ export interface Extracted {
   brand?: string;
   model?: string;
   year?: number;
+  /** Año mínimo cuando el cliente pide un rango: "del 2014 al 2018" → yearMin=2014 */
+  yearMin?: number;
+  /** Año máximo cuando el cliente pide un rango: "del 2014 al 2018" → yearMax=2018 */
+  yearMax?: number;
   maxPrice?: number;
   currency?: 'ARS' | 'USD';
   downPayment?: number;
   transmission?: 'manual' | 'automático';
   fuel?: string;
-  bodywork?: string;        // suv, pickup, sedan, hatch, familiar, etc.
+  bodywork?: string;        // suv, pickup, sedan, hatch, familiar, furgon, coupe
   useCase?: string;         // remis, familia, ciudad, ruta, trabajo, etc.
   isNew?: boolean;          // 0km vs usado
   gnc?: boolean;
+  /** true cuando el cliente prioriza economía de combustible: "gaste poco", "ahorrador", "económico" */
+  fuelEconomyPriority?: boolean;
   wantsVisit?: boolean;
   wantsAdvisor?: boolean;
   urgency?: 'low' | 'high';
@@ -107,6 +113,8 @@ Dado un mensaje de WhatsApp y el contexto previo, devolvé SOLO un JSON con esto
   "brand": string,
   "model": string,
   "year": number,
+  "yearMin": number,
+  "yearMax": number,
   "maxPrice": number,
   "currency": "ARS"|"USD",
   "downPayment": number,
@@ -116,6 +124,7 @@ Dado un mensaje de WhatsApp y el contexto previo, devolvé SOLO un JSON con esto
   "useCase": string,
   "isNew": boolean,
   "gnc": boolean,
+  "fuelEconomyPriority": boolean,
   "wantsVisit": boolean,
   "wantsAdvisor": boolean,
   "urgency": "low"|"high",
@@ -173,6 +182,26 @@ CASOS ESPECIALES:
 - "lo mínimo" / "mínimo" / "la menor" / "sin entrada" / "lo más chico" → cuando el contexto muestra que el bot acaba de preguntar por entrega/anticipo → intent=credit_quote, confidence=high
 - "con cuánto entro?" / "cuánto de entrega?" / "cuánto de anticipo?" → intent=credit_quote, confidence=high
 
+REGLAS DE AÑO Y RANGO:
+- "del 2014 al 2018", "entre 2014 y 2018", "años 2014 a 2018" → yearMin=2014, yearMax=2018 (NO setear year)
+- "del 2016 en adelante", "desde 2016", "más nuevo que 2015" → yearMin=2016
+- "hasta 2020", "no más viejo que 2020" → yearMax=2020
+- Si solo hay UN año mencionado → year=X (sin yearMin/yearMax)
+- NUNCA setear yearMin Y year al mismo tiempo si hay un rango claro
+
+REGLAS DE CARROCERÍA EXTENDIDAS:
+- "camioneta", "pick up", "pickup", "doble cabina" → bodywork=pickup
+- "utilitario", "furgón", "furgon", "cargo" → bodywork=furgon
+- "auto chico", "chiquito", "compacto", "pequeño" → bodywork=hatch, fuelEconomyPriority=true
+- "crossover", "4x4", "todoterreno" → bodywork=suv
+- "familiar" → bodywork=familiar
+- "monovolumen", "minivan", "van" → bodywork=monovolumen
+
+REGLAS DE ECONOMÍA DE COMBUSTIBLE (fuelEconomyPriority):
+- "que gaste poco", "bajo consumo", "ahorrador", "económico en nafta", "poco consumo", "que no consuma tanto" → fuelEconomyPriority=true
+- "auto chico", "compacto", "pequeño" → fuelEconomyPriority=true (además de bodywork=hatch)
+- Cuando fuelEconomyPriority=true, el sistema EXCLUIRÁ automáticamente pickup, furgon, utilitario, monovolumen
+
 IMPORTANTE — NO clasificar como catalog ni search cuando:
 - El mensaje es corto y vago ("lo mínimo", "mínimo", "entrega?") Y el contexto previo muestra una conversación activa sobre un auto puntual o financiación.
 - En esos casos, mantener el intent credit_quote o specific. NO reiniciar contexto.
@@ -204,9 +233,39 @@ async function extractIntent(message: string, historyLines: string[]): Promise<E
   }
 }
 
+// ── Inferencia rápida de carrocería (sin DB) ─────────────────────────────────
+// Complementa inferBodyworkFromRow() de catalog.ts para ítems que no tuvieron
+// bodywork inferido en carga (ej: "Toyota Corolla" sin keyword "sedan" en el nombre).
+// Solo se usa en filterCatalog() para no rechazar ítems válidos por bodywork=undefined.
+
+const _PICKUP_TOKENS = ['ranger', 'hilux', 'amarok', 'l200', 'frontier', 's10', 'strada', 'oroch', 'toro', 'poler', 'navara', 'triton', 'alaskan', 'd-max'];
+const _SUV_TOKENS    = ['rav4', 'rav-4', 'tiguan', 'cr-v', 'hrv', 'hr-v', 'tucson', 'sportage', 'ecosport', 'duster', 'kicks', 'compass', 'renegade', 'captur', 'stepway', '3008', '5008', 'cx-5', 'cx5', 'cx-30', 'cx30', 'qashqai', 'x-trail', 'trailblazer', 'land cruiser'];
+const _LARGE_TOKENS  = ['motorhome', 'motor home', 'camper', 'minibus', 'microbus', 'sprinter', 'ducato', 'iveco daily'];
+// Carrocerías "grandes/pesadas" excluidas por fuelEconomyPriority
+const _LARGE_BODY_TYPES = new Set(['pickup', 'furgon', 'monovolumen', 'motorhome', 'camion']);
+// Para estas carrocerías un ítem SIN bodywork inferido se descarta (no puede ser pickup sin indicio)
+const _STRICT_BODY_TYPES = new Set(['pickup', 'furgon', 'suv', 'motorhome']);
+
+function quickInferBodywork(item: CatalogItem): string | undefined {
+  if (item.bodywork) return item.bodywork.toLowerCase();
+  const txt = `${item.name} ${item.brand ?? ''} ${item.model ?? ''} ${item.version ?? ''}`
+    .toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+  if (_PICKUP_TOKENS.some(t => txt.includes(t))) return 'pickup';
+  if (/\b(pick\s*up|doble\s*cabina|camioneta)\b/.test(txt)) return 'pickup';
+  if (_SUV_TOKENS.some(t => txt.includes(t))) return 'suv';
+  if (/\b(suv|crossover|4x4|todoterreno)\b/.test(txt)) return 'suv';
+  if (_LARGE_TOKENS.some(t => txt.includes(t))) return 'motorhome';
+  if (/\b(furgon|utilitario|cargo)\b/.test(txt)) return 'furgon';
+  if (/\b(monovolumen|minivan|mpv)\b/.test(txt)) return 'monovolumen';
+  if (/\b(sedan|4\s*puertas?)\b/.test(txt)) return 'sedan';
+  if (/\b(hatch|hatchback|3\s*puertas?)\b/.test(txt)) return 'hatch';
+  if (/\b(familiar|estate|sw|kombi)\b/.test(txt)) return 'familiar';
+  return undefined;
+}
+
 // ── Filtro de catálogo ─────────────────────────────────────────────────────────
 
-function filterCatalog(
+export function filterCatalog(
   catalog: CatalogItem[],
   ctx: Extracted & { search_context?: ConvState['search_context'] }
 ): CatalogItem[] {
@@ -218,9 +277,19 @@ function filterCatalog(
   const currency     = ctx.currency     ?? sc.currency;
   const transmission = ctx.transmission ?? sc.transmission;
   const fuel         = ctx.fuel         ?? sc.fuel;
-  const bodywork     = ctx.bodywork     ?? sc.bodywork;
-  const year         = ctx.year         ?? sc.year;
+  const bodywork     = (ctx.bodywork    ?? sc.bodywork)?.toLowerCase();
   const gnc          = ctx.gnc          ?? sc.gnc;
+  const fuelEconomyPriority = ctx.fuelEconomyPriority ?? (sc as any).fuelEconomyPriority;
+
+  // Rango de año: priorizar yearMin/yearMax explícitos; fallback a año único ±2
+  const yearMin  = ctx.yearMin  ?? sc.minYear;
+  const yearMax  = ctx.yearMax  ?? sc.maxYear;
+  const yearPoint = ctx.year   ?? sc.year;
+  const hasYearRange = !!(yearMin || yearMax);
+
+  console.info(`[filter] extractedConstraints=${JSON.stringify({ brand, model, bodywork, yearMin, yearMax, yearPoint, maxPrice, currency, transmission, fuel, gnc, fuelEconomyPriority })}`);
+
+  const totalBefore = catalog.filter(i => i.inStock).length;
 
   let results = catalog.filter(item => {
     if (!item.inStock) return false;
@@ -231,9 +300,15 @@ function filterCatalog(
     if (model && item.model) {
       if (!item.model.toLowerCase().includes(model.toLowerCase())) return false;
     }
-    if (year && item.year) {
-      if (Math.abs(item.year - year) > 2) return false;
+
+    // Rango de año: hard constraints (sin tolerancia cuando se especificó rango)
+    if (item.year) {
+      if (yearMin && item.year < yearMin) return false;
+      if (yearMax && item.year > yearMax) return false;
+      // Año único solo con tolerancia ±2 cuando NO hay rango explícito
+      if (yearPoint && !hasYearRange && Math.abs(item.year - yearPoint) > 2) return false;
     }
+
     if (maxPrice && item.priceNumber) {
       const itemCurrency = item.currency ?? 'ARS';
       if (itemCurrency === (currency ?? 'ARS') && item.priceNumber > maxPrice * 1.1) return false;
@@ -244,26 +319,62 @@ function filterCatalog(
     if (fuel && item.fuel) {
       if (!item.fuel.toLowerCase().includes(fuel.toLowerCase())) return false;
     }
-    if (bodywork && item.bodywork) {
-      if (!item.bodywork.toLowerCase().includes(bodywork.toLowerCase())) return false;
-    }
     if (gnc && item.fuel) {
       if (!item.fuel.toLowerCase().includes('gnc')) return false;
+    }
+
+    // Carrocería: intentar inferir si no está seteada en el ítem, luego aplicar filtro duro
+    if (bodywork) {
+      const effectiveBw = quickInferBodywork(item);
+      if (effectiveBw) {
+        // Si el ítem tiene (o se infirió) carrocería: debe coincidir
+        if (!effectiveBw.includes(bodywork)) return false;
+      } else {
+        // Ítem sin carrocería detectable: para tipos estrictos (pickup/furgon/suv) excluir
+        // Para tipos sueltos (sedan/hatch/familiar) dejar pasar (beneficio de la duda)
+        if (_STRICT_BODY_TYPES.has(bodywork)) return false;
+      }
+    }
+
+    // Exclusión dura por economía: "gaste poco" / "auto chico" → fuera pickup, furgon, etc.
+    if (fuelEconomyPriority) {
+      const effectiveBw = quickInferBodywork(item);
+      if (effectiveBw && _LARGE_BODY_TYPES.has(effectiveBw)) return false;
     }
 
     return true;
   });
 
-  // Si no hay match exacto, relajar filtros de año/transmisión para dar alternativas
+  const countAfterHard = results.length;
+  console.info(`[filter] hardFiltersApplied=true filteredCountBeforeRanking=${totalBefore} filteredCountAfterHard=${countAfterHard}`);
+
+  // Fallback blando: relajar año/transmisión SOLO si hay brand/model específico
+  // NUNCA relajar bodywork — el tipo de vehículo es constraint dura siempre
   if (results.length === 0 && (brand || model)) {
     results = catalog.filter(item => {
       if (!item.inStock) return false;
       if (brand && item.brand && !item.brand.toLowerCase().includes(brand.toLowerCase())) return false;
       if (model && item.model && !item.model.toLowerCase().includes(model.toLowerCase())) return false;
+      // Mantener bodywork como constraint dura incluso en fallback
+      if (bodywork) {
+        const effectiveBw = quickInferBodywork(item);
+        if (effectiveBw && !effectiveBw.includes(bodywork)) return false;
+        if (!effectiveBw && _STRICT_BODY_TYPES.has(bodywork)) return false;
+      }
+      // Mantener exclusión por economía en fallback
+      if (fuelEconomyPriority) {
+        const effectiveBw = quickInferBodywork(item);
+        if (effectiveBw && _LARGE_BODY_TYPES.has(effectiveBw)) return false;
+      }
       return true;
     });
+    console.info(`[filter] fallbackReason=relaxed_year_transmission fallback_count=${results.length}`);
+  } else if (results.length === 0) {
+    console.info(`[filter] fallbackReason=no_match_no_soft_fallback`);
   }
 
+  const finalCount = Math.min(results.length, 12);
+  console.info(`[filter] filteredCountAfterRanking=${finalCount} snapshotSaved=pending`);
   return results.slice(0, 12);
 }
 
@@ -530,7 +641,7 @@ export async function processMessage(params: {
       }
 
       const selected = state.last_hits_detail![idx];
-      console.info(`[selection] parsed_index=${selNum} using_last_presented_options=true resolved_vehicle_id=${selected.id} resolved_vehicle_title="${selected.name}"`);
+      console.info(`[catalog] snapshotUsed=true parsed_index=${selNum} resolved_vehicle_id=${selected.id} resolved_vehicle_title="${selected.name}" snapshot_age_min=${Math.round(snapshotAge / 60000)}`);
 
       const selResult = await handleSpecificById(selected.id, state, message, historyLines);
 
@@ -587,7 +698,7 @@ export async function processMessage(params: {
   // "lo mínimo", "y cuotas?", "cuánto de entrega?", etc. → NO pasar por GPT
   if (state.lastPresentedVehicleId && detectFinancingFollowup(message)) {
     const isMinimumQuery = MINIMUM_PAYMENT_RE.test(message);
-    console.info(`[bot] financing_followup_detected hasVehicleContext=true vehicle=${state.lastPresentedVehicleId} isMinimumQuery=${isMinimumQuery} msg="${message.slice(0, 50)}"`);
+    console.info(`[bot] activeVehicleUsed=true financing_followup_detected vehicle=${state.lastPresentedVehicleId} title="${state.lastPresentedVehicleTitle ?? '?'}" isMinimumQuery=${isMinimumQuery} msg="${message.slice(0, 50)}"`);
 
     const financeState: ConvState = {
       ...state,
@@ -1053,8 +1164,8 @@ async function handleSearch(ex: Extracted, state: ConvState, historyLines: strin
     images: v.images,
   }));
 
-  console.info(`[catalog] presented options saved count=${hits.length} ids=[${hits.map(h => h.id).join(',')}]`);
-  hits.forEach((v, i) => console.info(`[catalog] option ${i + 1} vehicleId=${v.id}`));
+  console.info(`[catalog] snapshotSaved=true count=${hits.length} ids=[${hits.map(h => h.id).join(',')}]`);
+  hits.forEach((v, i) => console.info(`[catalog] option ${i + 1} vehicleId=${v.id} name="${v.name}"`));
 
   return {
     reply,
@@ -1166,6 +1277,10 @@ function buildHistory(state: ConvState): string[] {
     if (sc.brand) contextParts.push(`marca: ${sc.brand}`);
     if (sc.model) contextParts.push(`modelo: ${sc.model}`);
     if (sc.bodywork) contextParts.push(`tipo: ${sc.bodywork}`);
+    if (sc.minYear && sc.maxYear) contextParts.push(`año: ${sc.minYear}–${sc.maxYear}`);
+    else if (sc.minYear) contextParts.push(`año desde: ${sc.minYear}`);
+    else if (sc.maxYear) contextParts.push(`año hasta: ${sc.maxYear}`);
+    else if (sc.year) contextParts.push(`año: ~${sc.year}`);
     if (sc.maxPrice) {
       const curr = sc.currency ?? 'ARS';
       contextParts.push(`presupuesto máx: ${curr} ${sc.maxPrice.toLocaleString('es-AR')}`);
@@ -1174,6 +1289,7 @@ function buildHistory(state: ConvState): string[] {
     if (sc.transmission) contextParts.push(`caja: ${sc.transmission}`);
     if (sc.fuel) contextParts.push(`combustible: ${sc.fuel}`);
     if (sc.gnc) contextParts.push('requiere GNC');
+    if ((sc as any).fuelEconomyPriority) contextParts.push('prioridad: bajo consumo');
     if (contextParts.length > 0) {
       lines.push(`Contexto del lead: ${contextParts.join(' | ')}`);
     }
@@ -1216,6 +1332,8 @@ function mergeSearchContext(
     ...(ex.brand        ? { brand: ex.brand }               : {}),
     ...(ex.model        ? { model: ex.model }               : {}),
     ...(ex.year         ? { year: ex.year }                 : {}),
+    ...(ex.yearMin !== undefined ? { minYear: ex.yearMin }  : {}),
+    ...(ex.yearMax !== undefined ? { maxYear: ex.yearMax }  : {}),
     ...(ex.maxPrice     ? { maxPrice: ex.maxPrice }         : {}),
     ...(ex.currency     ? { currency: ex.currency }         : {}),
     ...(ex.transmission ? { transmission: ex.transmission } : {}),
@@ -1224,5 +1342,6 @@ function mergeSearchContext(
     ...(ex.gnc !== undefined ? { gnc: ex.gnc }              : {}),
     ...(ex.useCase      ? { useCase: ex.useCase }           : {}),
     ...(ex.name         ? { name: ex.name }                 : {}),
-  };
+    ...(ex.fuelEconomyPriority !== undefined ? { fuelEconomyPriority: ex.fuelEconomyPriority } : {}),
+  } as ConvState['search_context'];
 }

@@ -108,26 +108,44 @@ export async function evolutionSendText(instanceName: string, to: string, text: 
 
   while (attempt < 2) {
     attempt += 1;
-    const { r, data } = await fetchJsonWithTimeout(url, {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify(body)
-    });
+    try {
+      const { r, data } = await fetchJsonWithTimeout(url, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify(body)
+      });
 
-    if (r.ok) {
-      console.log(`[send] success status=${r.status} instance=${instanceName} to=${to}`);
-      return data;
+      if (r.ok) {
+        console.log(`[send] success status=${r.status} instance=${instanceName} to=${to} attempt=${attempt}`);
+        return data;
+      }
+
+      const msg = typeof data?.message === "string" ? data.message : JSON.stringify(maskSensitive(data));
+      console.error(`[send] attempt=${attempt} failed status=${r.status} instance=${instanceName} to=${to}`);
+      lastErr = new Error(`Evolution sendText failed (${r.status}): ${msg}`);
+
+      if (attempt < 2 && isRetriableStatus(r.status)) {
+        await sleep(350);
+        continue;
+      }
+      throw lastErr;
+    } catch (err: any) {
+      // Si el error es de la propia lógica de retry de arriba, relanzar
+      if (lastErr && err === lastErr) throw err;
+
+      const isAbort = err?.name === 'AbortError' || err?.type === 'aborted' ||
+        String(err?.message ?? '').toLowerCase().includes('aborted') ||
+        String(err?.message ?? '').toLowerCase().includes('operation was aborted');
+      console.error(`[send] attempt=${attempt} error_type=${err?.name ?? 'unknown'} message="${err?.message ?? err}" instance=${instanceName} to=${to}`);
+      lastErr = err;
+
+      if (attempt < 2 && isAbort) {
+        console.info(`[send] retry=true reason=abort attempt=${attempt} instance=${instanceName} to=${to}`);
+        await sleep(500);
+        continue;
+      }
+      throw err;
     }
-
-    const msg = typeof data?.message === "string" ? data.message : JSON.stringify(maskSensitive(data));
-    console.error(`[send] failed status=${r.status} instance=${instanceName} to=${to} body=${JSON.stringify(maskSensitive(data))}`);
-    lastErr = new Error(`Evolution sendText failed (${r.status}): ${msg}`);
-
-    if (attempt < 2 && isRetriableStatus(r.status)) {
-      await sleep(350);
-      continue;
-    }
-    throw lastErr;
   }
 
   throw lastErr ?? new Error("Evolution sendText failed");

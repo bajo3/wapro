@@ -191,21 +191,26 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
     );
 
     // Normalizar jid (garantizar @s.whatsapp.net)
-    const normalizedJid = remoteJid.includes('@') ? remoteJid : `${remoteJid}@s.whatsapp.net`;
+    // customerTo es el destinatario real del cliente — NUNCA mezclar con internalAlertTo
+    const customerTo = remoteJid.includes('@') ? remoteJid : `${remoteJid}@s.whatsapp.net`;
 
-    console.log(`[send] to=${normalizedJid} instance=${instance} payload_ready=true`);
+    console.log(`[send.customer] instance=${instance} to=${customerTo} source=webhook messageLen=${result.reply?.length ?? 0}`);
 
     // Enviar respuesta de texto usando la instancia ya resuelta al inicio del handler
-    await sendTextAndPersist(instance, normalizedJid, result.reply).catch(e => {
-      console.error(`[send] evolution instance=${instance} failed status=${e?.message ?? e}`);
+    let sendOk = false;
+    await sendTextAndPersist(instance, customerTo, result.reply).then(() => {
+      sendOk = true;
+      console.log(`[send.customer] success instance=${instance} to=${customerTo}`);
+    }).catch(e => {
+      console.error(`[send.customer] failed instance=${instance} to=${customerTo} error=${e?.message ?? e}`);
       throw e;
     });
 
     // Enviar fotos si las hay (hasta 5, secuencial para no saturar WhatsApp)
-    if (result.imagesToSend?.length) {
+    if (sendOk && result.imagesToSend?.length) {
       for (const imageUrl of result.imagesToSend.slice(0, 5)) {
-        await sendImageAndPersist(instance, normalizedJid, imageUrl).catch(e =>
-          console.error(`[send] evolution instance=${instance} image failed to ${normalizedJid}:`, e?.message ?? e)
+        await sendImageAndPersist(instance, customerTo, imageUrl).catch(e =>
+          console.error(`[send.customer] image failed instance=${instance} to=${customerTo} error=${e?.message ?? e}`)
         );
       }
     }
@@ -214,7 +219,7 @@ webhookRouter.post('/:instance', async (req: Request, res: Response) => {
     const sock = getSocket();
     sock?.emit('bot.reply', {
       instance,
-      remoteJid,
+      remoteJid: customerTo,
       text: result.reply,
       isHot: result.isHot ?? false,
     });

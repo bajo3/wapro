@@ -111,10 +111,15 @@ export async function notifyHotLead(ctx: HotLeadContext): Promise<void> {
 
   const text = lines.join('\n');
 
+  // Flujo de alerta interna — nunca usar la misma variable que customerTo
+  const internalAlertTo = `${advisorNumber}@s.whatsapp.net`;
+  const customerTo = ctx.remoteJid; // solo para logging — no se usa como destino de envío aquí
+
   try {
-    await evolutionSendText(env.instanceName, `${advisorNumber}@s.whatsapp.net`, text);
-    console.log(`[hotLead] Notificación enviada para ${key}`);
+    console.log(`[send.internalAlert] instance=${ctx.instance} to=${internalAlertTo} source=hotLead relatedCustomer=${customerTo}`);
+    await evolutionSendText(env.instanceName, internalAlertTo, text);
+    console.log(`[send.internalAlert] success instance=${ctx.instance} to=${internalAlertTo} relatedCustomer=${customerTo}`);
   } catch (err: any) {
-    console.error('[hotLead] Error enviando notificación:', err?.message);
+    console.error(`[send.internalAlert] failed instance=${ctx.instance} to=${internalAlertTo} relatedCustomer=${customerTo} error=${err?.message}`);
   }
 }

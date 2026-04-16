@@ -62,6 +62,8 @@ export type ConvState = {
     gnc?: boolean;
     color?: string;
     amount?: number;
+    /** Prioridad de economía de combustible: excluye pickup/furgon/utilitario pesado */
+    fuelEconomyPriority?: boolean;
   };
 
   /** All extracted lead fields accumulated across turns */

@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "test:conversation-regression": "npx tsx src/services/conversationRegression.ts",
     "test:webhook-integration-regression": "npx tsx src/routes/webhooksIntegrationRegression.ts",
+    "test:filter-regression": "npx tsx src/services/__tests__/filterCatalog.regression.ts",
     "start": "node --enable-source-maps dist/index.js",
     "check:conflicts": "node -e \"const fs=require('fs');const path=require('path');const walk=(d)=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>{const p=path.join(d,e.name);return e.isDirectory()?walk(p):[p];});const bad=[];for(const f of walk('src')){if(!f.endsWith('.ts'))continue;const t=fs.readFileSync(f,'utf8');if(t.includes('<<<<<<<')||t.includes('=======')||t.includes('>>>>>>>'))bad.push(f);}if(bad.length){console.error('Merge conflict markers found:\\n'+bad.join('\\n'));process.exit(1);}console.log('OK');\"",
     "prebuild": "npm run check:conflicts"
