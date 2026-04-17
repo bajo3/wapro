@@ -83,8 +83,73 @@ const buildQuotationMessage = (q: Quotation): string => {
   const add = toNumber((q as any).additionalCosts);
 
   const lines: string[] = [];
+  {
+  lines.push("================================");
+  lines.push(`COTIZACION #${q.number}`);
+  lines.push("================================");
+  lines.push(`Vehiculo: ${q.vehicleLabel}`);
+  lines.push(`Cliente: ${q.clientName}`);
+  lines.push("");
 
-  // Header
+  lines.push("Precio");
+  if (base && (discount || add)) {
+    lines.push(`  Base: ${currency} ${fmtMoney(base)}`);
+    if (discount) lines.push(`  Descuento: -${currency} ${fmtMoney(discount)}`);
+    if (add) lines.push(`  Extras: +${currency} ${fmtMoney(add)}`);
+    lines.push("  ----------------");
+  }
+  lines.push(`  Total: ${currency} ${fmtMoney(total)}`);
+  lines.push("");
+
+  const fin = (q as any).financing;
+  if (fin && typeof fin === "object") {
+    const down = toNumber(fin.downPayment);
+    const months = toNumber(fin.months);
+    const rate = toNumber(fin.interestRate);
+    const monthly = toNumber(fin.monthlyPayment);
+    const totalFin = toNumber(fin.totalAmount);
+
+    lines.push("Financiacion");
+    if (down) lines.push(`  Entrada: ${currency} ${fmtMoney(down)}`);
+    if (months) lines.push(`  Plazo: ${months} meses`);
+    if (rate) lines.push(`  Tasa: ${rate}% anual`);
+    if (monthly) lines.push(`  Cuota estimada: ${currency} ${fmtMoney(monthly)}/mes`);
+    if (totalFin) lines.push(`  Total financ.: ${currency} ${fmtMoney(totalFin)}`);
+    lines.push("");
+  }
+
+  const tradeIn = (q as any).tradeIn;
+  if (tradeIn && typeof tradeIn === "object") {
+    const v = toNumber(tradeIn.value);
+    const label = [tradeIn.brand, tradeIn.model, tradeIn.year].filter(Boolean).join(" ").trim();
+    lines.push("Parte de pago");
+    if (label) lines.push(`  Vehiculo: ${label}`);
+    if (v) lines.push(`  Valor est.: ${currency} ${fmtMoney(v)}`);
+    lines.push("");
+  }
+
+  if ((q as any).notes) {
+    lines.push(`Notas: ${(q as any).notes}`);
+    lines.push("");
+  }
+
+  if ((q as any).validUntil) {
+    try {
+      const d = new Date((q as any).validUntil);
+      lines.push(`Valida hasta: ${d.toLocaleDateString("es-AR")}`);
+      lines.push("");
+    } catch {
+      // ignore invalid dates in outbound formatting
+    }
+  }
+
+  lines.push("================================");
+  lines.push("Si queres avanzar, responde este mensaje o consulta con nuestro asesor.");
+  }
+
+  return lines.join("\n");
+
+  // Header plain text
   lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
   lines.push(`🚗 *COTIZACIÓN #${q.number}*`);
   lines.push(`━━━━━━━━━━━━━━━━━━━━━`);

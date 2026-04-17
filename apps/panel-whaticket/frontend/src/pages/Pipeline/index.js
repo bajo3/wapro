@@ -11,9 +11,6 @@ import {
 } from "lucide-react";
 import { useHistory } from "react-router-dom";
 
-import MessagesList from "../../components/MessagesList";
-import ImprovedMessageInput from "../../components/ImprovedMessageInput";
-import { ReplyMessageProvider } from "../../context/ReplyingMessage/ReplyingMessageContext";
 import toastError from "../../errors/toastError";
 import api from "../../services/api";
 import openSocket from "../../services/socket-io";
@@ -461,23 +458,35 @@ function ConversationPanel({ ticket, onOpenFullTicket }) {
               </button>
             </div>
             <div className="mt-3 text-[12px] text-white/35">
-              Conversación visible dentro de Pipeline para trabajar sin salir del tablero.
+              Desde Pipeline solo mostramos el resumen del lead. El chat completo se abre aparte para no recargar el tablero.
             </div>
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col">
-            <ReplyMessageProvider>
-              <MessagesList ticketId={ticket.id} isGroup={ticket?.isGroup} />
-              <ImprovedMessageInput ticketId={ticket.id} ticketStatus={ticket?.status} />
-            </ReplyMessageProvider>
+          <div className="flex flex-1 flex-col justify-center p-5">
+            <div className="rounded-[20px] border border-dashed border-white/[0.1] bg-white/[0.02] p-5">
+              <div className="text-sm font-semibold text-white">Chat oculto en Pipeline</div>
+              <div className="mt-2 text-sm leading-relaxed text-white/40">
+                Usa el boton de abajo para ir directo al ticket y responder desde el chat completo.
+              </div>
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={onOpenFullTicket}
+                  className="inline-flex items-center gap-2 rounded-xl border border-auto-accent/30 bg-auto-accent/10 px-3 py-2 text-sm font-medium text-auto-accent transition-colors hover:bg-auto-accent/15"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  Ir al chat
+                </button>
+              </div>
+            </div>
           </div>
         </>
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
           <MessageSquareText className="h-10 w-10 text-white/20" />
-          <div className="text-sm font-medium text-white/45">Seleccioná un ticket del pipeline</div>
+          <div className="text-sm font-medium text-white/45">Selecciona un ticket del pipeline</div>
           <div className="max-w-xs text-xs leading-relaxed text-white/25">
-            Acá vas a ver los mensajes del lead y vas a poder responder sin salir del tablero.
+            Cuando elijas un lead vas a ver el resumen y un acceso rapido para abrir su chat.
           </div>
         </div>
       )}
@@ -909,3 +918,4 @@ export default function Pipeline() {
     </div>
   );
 }
+

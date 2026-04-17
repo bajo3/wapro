@@ -3,17 +3,36 @@ import isAuth from "../middleware/isAuth";
 import AppError from "../errors/AppError";
 import { forwardBotAdmin } from "../services/BotServices/forwardBotAdmin";
 
+function normalizeListPayload(data: any) {
+  if (Array.isArray(data)) return { demands: data };
+  if (data && Array.isArray(data.demands)) return data;
+  return { demands: [] };
+}
+
+function normalizeMatchesPayload(data: any) {
+  if (Array.isArray(data)) return { matches: data };
+  if (data && Array.isArray(data.matches)) return data;
+  return { matches: [] };
+}
+
+function normalizeRecontactsPayload(data: any) {
+  if (Array.isArray(data)) return { recontacts: data };
+  if (data && Array.isArray(data.recontacts)) return data;
+  return { recontacts: [] };
+}
+
 async function forwardCompat(
   req: any,
   paths: string[],
-  query?: Record<string, string | number | boolean | undefined>
+  query?: Record<string, string | number | boolean | undefined>,
+  method?: string
 ) {
   let lastResponse: any = null;
 
   for (const path of paths) {
     const response = await forwardBotAdmin({
       path,
-      method: req.method,
+      method: method ?? req.method,
       body: req.body,
       query,
       context: "botDemandsRoutes"
@@ -42,7 +61,7 @@ botDemandsRoutes.get("/bot/demands", async (req, res) => {
     status: String(req.query.status ?? "open"),
     limit: String(req.query.limit ?? "100")
   });
-  return res.status(r.status).json(r.data);
+  return res.status(r.status).json(normalizeListPayload(r.data));
 });
 
 // Create demand
@@ -54,7 +73,7 @@ botDemandsRoutes.post("/bot/demands", async (req, res) => {
 // Update demand
 botDemandsRoutes.put("/bot/demands/:id", async (req, res) => {
   const id = encodeURIComponent(String(req.params.id));
-  const r = await forwardCompat(req, [`/admin/demands/${id}`, `/admin/vehicle-demands/${id}`]);
+  const r = await forwardCompat(req, [`/admin/demands/${id}`, `/admin/vehicle-demands/${id}`], undefined, "PATCH");
   return res.status(r.status).json(r.data);
 });
 
@@ -71,7 +90,7 @@ botDemandsRoutes.get("/bot/demands/:id/matches", async (req, res) => {
   const r = await forwardCompat(req, [`/admin/demands/${id}/matches`, `/admin/vehicle-demands/${id}/matches`], {
     limit: String(req.query.limit ?? "20")
   });
-  return res.status(r.status).json(r.data);
+  return res.status(r.status).json(normalizeMatchesPayload(r.data));
 });
 
 // Recontact history
@@ -80,7 +99,7 @@ botDemandsRoutes.get("/bot/demands/:id/recontacts", async (req, res) => {
   const r = await forwardCompat(req, [`/admin/demands/${id}/recontacts`, `/admin/vehicle-demands/${id}/recontacts`], {
     limit: String(req.query.limit ?? "50")
   });
-  return res.status(r.status).json(r.data);
+  return res.status(r.status).json(normalizeRecontactsPayload(r.data));
 });
 
 // Manual scan
