@@ -80,6 +80,9 @@ export type ConvState = {
   /** Catalog pagination offset — tracks how many items were already shown */
   catalog_offset?: number;
 
+  /** Last bot reply action type — used for anti-repetition and no-match pivot detection */
+  last_reply_action?: string;
+
 
   agent?: {
     intent?: string;

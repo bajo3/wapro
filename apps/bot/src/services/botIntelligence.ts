@@ -15,11 +15,11 @@
  *  - No manda links de MercadoLibre como respuesta principal
  */
 
-import { getCatalog, formatItemLine } from './catalog.js';
+import { getCatalog, formatItemLine, priceToArs } from './catalog.js';
 import { getUsdToArs } from './exchangeRate.js';
 import { askGPT } from './gpt.js';
 import { getCreditQuote, formatCreditPlans } from './creditService.js';
-import { detectHotLead, notifyHotLead } from './hotLead.js';
+import { detectHotLead, notifyHotLead, notifyAdvisorHandoff } from './hotLead.js';
 import type { ConvState } from './state.js';
 import type { CatalogItem } from './catalog.js';
 import { routeDecision } from './runtimeRouter.js';
@@ -199,7 +199,7 @@ REGLAS DE AÑO Y RANGO:
 REGLAS DE CARROCERÍA EXTENDIDAS:
 - "camioneta", "pick up", "pickup", "doble cabina" → bodywork=pickup
 - "utilitario", "furgón", "furgon", "cargo" → bodywork=furgon
-- "auto chico", "chiquito", "compacto", "pequeño" → bodywork=hatch, fuelEconomyPriority=true
+- "auto chico", "chiquito", "compacto", "pequeño", "para ciudad", "para andar en ciudad", "fácil de estacionar", "chico y que gaste poco", "económico para la ciudad", "me sirve para el tráfico" → bodywork=hatch, fuelEconomyPriority=true
 - "crossover", "4x4", "todoterreno" → bodywork=suv
 - "familiar" → bodywork=familiar
 - "monovolumen", "minivan", "van" → bodywork=monovolumen
@@ -212,6 +212,14 @@ REGLAS DE ECONOMÍA DE COMBUSTIBLE (fuelEconomyPriority):
 IMPORTANTE — NO clasificar como catalog ni search cuando:
 - El mensaje es corto y vago ("lo mínimo", "mínimo", "entrega?") Y el contexto previo muestra una conversación activa sobre un auto puntual o financiación.
 - En esos casos, mantener el intent credit_quote o specific. NO reiniciar contexto.
+
+REGLAS DE ESCAPE DE NO-MATCH:
+- Si el contexto muestra que el bot respondió sin match previo Y el usuario ahora dice:
+  "alguno dentro del presupuesto", "algo parecido", "otra alternativa", "algo más accesible",
+  "uno hasta X millones", "algo más barato", "qué tenés en ese rango"
+  → intent=search, NO incluir brand/model previo que no matcheó, usar maxPrice como filtro principal
+- Si el usuario da un presupuesto nuevo explícito luego de un no-match → ese presupuesto es el filtro principal
+- NO repetir no-match textual si el usuario claramente está pivoteando a búsqueda por presupuesto/segmento
 
 Devolvé SOLO el JSON, sin texto extra.`;
 
@@ -337,9 +345,11 @@ export function filterCatalog(
         // Si el ítem tiene (o se infirió) carrocería: debe coincidir
         if (!effectiveBw.includes(bodywork)) return false;
       } else {
-        // Ítem sin carrocería detectable: para tipos estrictos (pickup/furgon/suv) excluir
-        // Para tipos sueltos (sedan/hatch/familiar) dejar pasar (beneficio de la duda)
-        if (_STRICT_BODY_TYPES.has(bodywork)) return false;
+        // Ítem sin carrocería detectable.
+        // Para tipos estrictos (pickup/furgon/suv) excluir siempre.
+        // Para compactos (hatch/sedan) + fuelEconomyPriority: excluir también (no podemos confirmar que sea chico)
+        const isCompactStrict = fuelEconomyPriority && ['hatch', 'sedan'].includes(bodywork);
+        if (_STRICT_BODY_TYPES.has(bodywork) || isCompactStrict) return false;
       }
     }
 
@@ -347,6 +357,7 @@ export function filterCatalog(
     if (fuelEconomyPriority) {
       const effectiveBw = quickInferBodywork(item);
       if (effectiveBw && _LARGE_BODY_TYPES.has(effectiveBw)) return false;
+      // Sin bodywork detectable y sin filtro de tipo específico: dejar pasar (puede ser compacto genérico)
     }
 
     return true;
@@ -440,7 +451,7 @@ function detectFinancingFollowup(message: string): boolean {
 
 // ── Detección rápida de reset/catálogo (sin GPT) ─────────────────────────────
 // Frases que siempre reinician contexto, independientemente de lo que GPT clasifique.
-const RESET_RE = /^(hola+|buen[ao]s?(\s*(d[ií]as?|tardes?|noches?))?|arrancamos?\s*de\s*nuevo|empecemos?\s*de\s*nuevo|quiero\s*ver\s*otra\s*cosa|busco\s*otra\s*cosa|estoy\s*buscando\s*otra\s*cosa|cambio\s*de\s*b[uú]squeda)[\s!?.]*$/i;
+const RESET_RE = /^(hola+(\s+(como\s+and[aá]s|como\s+est[aá]s|qu[eé]\s+tal|che|todo\s+bien|y\s+vos?))?|buen[ao]s?(\s*(d[ií]as?|tardes?|noches?))?(\s+(como\s+and[aá]s|todo\s+bien))?|arrancamos?\s*de\s*nuevo|empecemos?\s*de\s*nuevo|quiero\s*ver\s*otra\s*cosa|busco\s*otra\s*cosa|estoy\s*buscando\s*otra\s*cosa|cambio\s*de\s*b[uú]squeda|otra\s*cosa|busco\s*otra\s*opci[oó]n|quiero\s*buscar\s*otra\s*cosa)[\s!?.]*$/i;
 const CATALOG_RE = /mostrame?\s*(el\s*)?cat[aá]logo|me\s*pod[eé]s?\s*mostrar\s*(el\s*)?cat[aá]logo|que\s*(autos?|veh[ií]culos?|opciones?)\s*(ten[eé]s?|hay|tienen?)|pasame?\s*(el\s*)?cat[aá]logo|quiero\s*ver\s*(las?\s*)?opciones?|qu[eé]\s*(tienen?|tenes?\s*disponible)/i;
 const CATALOG_MORE_RE = /m[aá]s\s*opciones|mostrame?\s*m[aá]s|segu[ií]|que\s*m[aá]s\s*(ten[eé]s?|hay)|otros?\s*(autos?|veh[ií]culos?)|ver\s*m[aá]s|m[aá]s\s*autos?/i;
 
@@ -856,15 +867,56 @@ export async function processMessage(params: {
   // ── Detección de objeción (para ajustar objection_count en estado) ──────────
   const objection = detectObjection(message, extracted, state);
 
+  // ── Handoff notification — no esperar al hot lead check ──────────────────────
+  // ESCALATE_HUMAN debe notificar siempre, independientemente del lead score
+  if (routerDecision.action === 'ESCALATE_HUMAN') {
+    console.log(`[handoff] handoff_decided instance=${instance} jid=${remoteJid} reason=${routerDecision.reason}`);
+    notifyAdvisorHandoff({
+      instance,
+      remoteJid,
+      state,
+      lastMessage: message,
+      reason: routerDecision.reason,
+    }).catch(e => console.error(`[handoff] handoff_notify_result=error handoff_notify_error="${e?.message ?? e}"`));
+  }
+
   // Catalog offset: reset si es catálogo nuevo, conservar si es "más opciones"
   let effectiveState = state;
   if (extracted.intent === 'catalog') {
     const isCatalogMore = fastOverride === 'catalog_more';
     if (!isCatalogMore) {
-      // Fresh catalog request — always start from page 0
       effectiveState = { ...state, catalog_offset: 0 };
     }
-    // catalog_more: mantener state.catalog_offset tal como está
+  }
+
+  // ── Bug 8: Pivot de no-match a búsqueda por presupuesto/segmento ─────────────
+  // Si el bot respondió sin-match en el turno anterior y el usuario da nuevos filtros
+  // sin reiterar marca/modelo, salir del contexto de exact-match anterior
+  const prevWasNoMatch = state.last_reply_action === 'sin_match';
+  const isPivotToSearch = ['search', 'refine', 'alternatives'].includes(extracted.intent);
+  const hasNewFilter = !!(extracted.maxPrice || extracted.bodywork || extracted.useCase || extracted.fuel);
+  const hasNoNewBrandModel = !extracted.brand && !extracted.model;
+  const hasPivotSignal = /presupuesto|alternativa|algo\s+parecido|similar|algo\s+m[aá]s?\s+(barato|accesible)|otra\s+opci[oó]n|qu[eé]\s+ten[eé]s?\s+en\s+ese|uno\s+hasta|hasta\s+\d/i.test(message);
+
+  if (prevWasNoMatch && isPivotToSearch && (hasNewFilter || hasPivotSignal) && hasNoNewBrandModel) {
+    const droppedBrand = state.search_context?.brand ?? 'none';
+    const droppedModel = state.search_context?.model ?? 'none';
+    console.info(`[bot] pivot_from_nomatch=true dropped_brand="${droppedBrand}" dropped_model="${droppedModel}" new_budget=${extracted.maxPrice ?? 'none'} msg="${message.slice(0, 50)}"`);
+    effectiveState = {
+      ...state,
+      search_context: {
+        // Mantener filtros no-mark: bodywork, useCase, fuel, transmission
+        ...(extracted.bodywork || state.search_context?.bodywork ? { bodywork: extracted.bodywork ?? state.search_context?.bodywork } : {}),
+        ...(extracted.useCase || state.search_context?.useCase ? { useCase: extracted.useCase ?? state.search_context?.useCase } : {}),
+        ...(extracted.fuel || state.search_context?.fuel ? { fuel: extracted.fuel ?? state.search_context?.fuel } : {}),
+        ...(extracted.transmission || state.search_context?.transmission ? { transmission: extracted.transmission ?? state.search_context?.transmission } : {}),
+        // Nuevo presupuesto tiene prioridad
+        ...(extracted.maxPrice ? { maxPrice: extracted.maxPrice, currency: extracted.currency ?? 'ARS' } : (state.search_context?.maxPrice ? { maxPrice: state.search_context.maxPrice, currency: state.search_context.currency } : {})),
+        // brand/model explícitamente ausentes — pivot a búsqueda sin exact-match
+      },
+    };
+    // Forzar intent search para que pase por handleSearch con el nuevo contexto
+    extracted.intent = 'search';
   }
 
   // 4. Decidir y responder
@@ -902,8 +954,10 @@ export async function processMessage(params: {
     },
   };
 
+  // Trazar last_reply_action para anti-repetición y pivot detection
+  newState.last_reply_action = result.isNoMatch ? 'sin_match' : routerDecision.action;
+
   if (isContextReset) {
-    // Limpiar TODO el contexto previo — vehículo enfocado, hits, filtros, query
     newState.search_context = {};
     newState.last_hits = [];
     newState.last_hits_detail = [];
@@ -914,7 +968,7 @@ export async function processMessage(params: {
     newState.lastPresentedVehicleBrand = undefined;
     newState.lastPresentedVehicleModel = undefined;
     newState.lastPresentedAt           = undefined;
-    // Persist catalog offset from this catalog response (or reset on greeting/reset)
+    newState.last_reply_action         = undefined;
     if (extracted.intent === 'catalog') {
       newState.catalog_offset = result.nextCatalogOffset ?? 0;
     } else {
@@ -922,7 +976,7 @@ export async function processMessage(params: {
     }
     console.info(`[bot] previous_context_cleared=true reason=${extracted.intent} response_mode=${extracted.intent === 'catalog' ? 'catalog' : extracted.intent === 'greeting' ? 'greeting' : 'reset'}`);
   } else if (['search', 'refine', 'unsure'].includes(extracted.intent)) {
-    newState.search_context = mergeSearchContext(state.search_context, extracted);
+    newState.search_context = mergeSearchContext(effectiveState.search_context, extracted);
     newState.last_query = message;
   }
 
@@ -987,20 +1041,20 @@ async function handleCatalog(historyLines: string[], offset = 0): Promise<Decide
 
   console.info(`[bot] catalog_total_count=${available.length} catalog_display_count=${page.length} catalog_offset=${safeOffset} catalog_has_more=${hasMore} catalog_mode=${safeOffset === 0 ? 'first_page' : 'paginated'}`);
 
-  // Guardar snapshot exacto del catálogo mostrado (índices 1-based para el usuario)
+  // Snapshot con precios normalizados a ARS — fuente única para financiación/handoff
   const hitsDetail: NonNullable<ConvState['last_hits_detail']> = page.map((v, i) => ({
     idx: i,
     id: v.id,
     name: v.name,
     brand: v.brand,
     model: v.model,
-    priceNumber: v.priceNumber,
-    currency: v.currency,
+    priceNumber: priceToArs(v, usdRate),
+    currency: 'ARS',
     images: v.images,
   }));
 
   console.info(`[catalog] presented options saved count=${page.length} ids=[${page.map(v => v.id).join(',')}]`);
-  page.forEach((v, i) => console.info(`[catalog] option ${i + 1} vehicleId=${v.id}`));
+  page.forEach((v, i) => console.info(`[catalog] option ${i + 1} vehicleId=${v.id} priceArs=${priceToArs(v, usdRate) ?? 'n/a'}`));
 
   const reply = await composeResponse('catalogo_general', {
     total_disponibles: available.length,
@@ -1024,6 +1078,80 @@ interface DecideResult {
   presentedVehicle?: CatalogItem;
   imagesToSend?: string[];
   nextCatalogOffset?: number;
+  /** true cuando la respuesta fue un sin-match — usado para pivot detection y anti-repetición */
+  isNoMatch?: boolean;
+}
+
+/**
+ * Busca alternativas razonablemente cercanas cuando hay no-match.
+ * Una alternativa es cercana si comparte al menos 2 de: marca, segmento, rango de precio, año similar.
+ * Evita ofrecer cosas absurdas (ej: Fiat como alternativa a BMW).
+ */
+function findClosestAlternatives(
+  catalog: CatalogItem[],
+  ex: Extracted,
+  usdRate: number,
+  searchCtx?: ConvState['search_context']
+): CatalogItem[] {
+  const inStock = catalog.filter(i => i.inStock !== false);
+  const sc = searchCtx ?? {};
+  const brand = ex.brand ?? sc.brand;
+  const bodywork = (ex.bodywork ?? sc.bodywork)?.toLowerCase();
+  const rawBudget = ex.maxPrice ?? sc.maxPrice;
+  // Budget puede estar en USD si el catálogo usa USD — normalizar
+  const budgetArs = rawBudget
+    ? ((ex.currency ?? sc.currency ?? 'ARS').toUpperCase() === 'USD' && usdRate > 0
+        ? Math.round(rawBudget * usdRate) : rawBudget)
+    : undefined;
+
+  // Estrategia 1: misma marca, relajar modelo/año
+  if (brand) {
+    const sameBrand = inStock
+      .filter(i => i.brand?.toLowerCase().includes(brand.toLowerCase()))
+      .slice(0, 3);
+    if (sameBrand.length > 0) {
+      console.info(`[nomatch] alternatives_strategy=same_brand brand="${brand}" count=${sameBrand.length}`);
+      return sameBrand;
+    }
+  }
+
+  // Estrategia 2: mismo segmento + rango de precio razonable (±40%)
+  const scored = inStock.map(i => {
+    let pts = 0;
+    const iBodywork = quickInferBodywork(i)?.toLowerCase();
+    if (bodywork && iBodywork === bodywork) pts += 3;
+    if (budgetArs && i.priceNumber) {
+      const itemArs = priceToArs(i, usdRate) ?? i.priceNumber;
+      const ratio = itemArs / budgetArs;
+      if (ratio <= 1.4 && ratio >= 0.5) pts += 2;
+      if (ratio <= 1.1 && ratio >= 0.7) pts += 1;
+    }
+    const targetYear = ex.year ?? sc.year;
+    if (targetYear && i.year && Math.abs(i.year - targetYear) <= 3) pts += 1;
+    return { i, pts };
+  }).filter(x => x.pts >= 2).sort((a, b) => b.pts - a.pts);
+
+  if (scored.length > 0) {
+    console.info(`[nomatch] alternatives_strategy=segment_price count=${scored.length} top_pts=${scored[0].pts}`);
+    return scored.slice(0, 3).map(x => x.i);
+  }
+
+  // Estrategia 3: solo por presupuesto (±30%)
+  if (budgetArs) {
+    const byBudget = inStock
+      .filter(i => {
+        const itemArs = priceToArs(i, usdRate) ?? i.priceNumber ?? 0;
+        return itemArs > 0 && itemArs <= budgetArs * 1.3 && itemArs >= budgetArs * 0.5;
+      })
+      .slice(0, 3);
+    if (byBudget.length > 0) {
+      console.info(`[nomatch] alternatives_strategy=budget_only budget_ars=${budgetArs} count=${byBudget.length}`);
+      return byBudget;
+    }
+  }
+
+  console.info(`[nomatch] alternatives_strategy=none — no reasonable alternatives found`);
+  return [];
 }
 
 async function decide(
@@ -1052,9 +1180,10 @@ async function decide(
   }
 
   // Saludo — siempre reinicia, con o sin historial previo
+  // No pasar historyLines: evita que GPT genere "seguimos" basado en conversación anterior
   if (ex.intent === 'greeting') {
     const action = state.last_intent ? 'saludo_retorno' : 'saludo_inicial';
-    const reply = await composeResponse(action, {}, historyLines);
+    const reply = await composeResponse(action, {}, []);
     return { reply };
   }
 
@@ -1105,6 +1234,24 @@ async function decide(
   // Búsqueda específica de un modelo puntual (intent=specific con brand/model)
   if (ex.intent === 'specific' && (ex.brand || ex.model)) {
     return await handleSearch(ex, state, historyLines);
+  }
+
+  // Objeción de precio: rescate comercial primero, luego alternativas
+  // Solo derivar a humano si ya hay presupuesto Y se agotaron los intents de precio
+  if (ex.leadMode === 'price_sensitive') {
+    const hasKnownBudget = !!(ex.maxPrice || state.search_context?.maxPrice);
+    if (!hasKnownBudget) {
+      // No sabemos el presupuesto real — preguntar UNA cosa antes de cualquier acción
+      console.info(`[bot] price_objection_rescue=ask_budget no_known_budget=true`);
+      const reply = await composeResponse('objecion_precio_sin_presupuesto', {
+        mensaje: rawMessage,
+        nota: 'El cliente dice que está caro pero no tenemos presupuesto confirmado. Preguntá UNA sola cosa: cuánto tiene pensado gastar. Sin mostrar alternativas todavía. Sin derivar.',
+      }, historyLines, 'price-objection');
+      return { reply };
+    }
+    // Hay presupuesto → buscar alternativas dentro de ese rango
+    console.info(`[bot] price_objection_rescue=search_within_budget budget=${ex.maxPrice ?? state.search_context?.maxPrice}`);
+    return await handleSearch(ex, state, historyLines, 'price-objection');
   }
 
   // Indeciso / pide recomendación
@@ -1178,19 +1325,25 @@ async function handleSpecificById(
 ): Promise<DecideResult> {
   const catalog = await getCatalog();
   const vehicle = catalog.find(v => v.id === vehicleId);
+  const { rate: usdRate } = await getUsdToArs();
 
   if (!vehicle) {
-    // El ID del estado ya no existe en el catálogo (puede haberse vendido)
-    const { rate: usdRateAlt } = await getUsdToArs();
+    const alternatives = catalog.filter(i => i.inStock !== false).slice(0, 3);
     const reply = await composeResponse('sin_match', {
       busqueda: { id: vehicleId },
-      nota: 'El auto referenciado ya no está disponible. Ofrecer alternativas.',
-      alternativas: catalog.filter(i => i.inStock).slice(0, 3).map((v, i) => formatItemLine(v, i, usdRateAlt)).join('\n'),
+      nota: 'El auto referenciado ya no está disponible. Ofrecer alternativas si las hay.',
+      alternativas: alternatives.map((v, i) => formatItemLine(v, i, usdRate)).join('\n') || '',
+      tiene_alternativas: alternatives.length > 0,
     }, historyLines);
-    return { reply };
+    return { reply, isNoMatch: true };
   }
 
-  const lineDetalle = buildVehicleDetail(vehicle);
+  // Precio siempre en ARS — fuente única para detalle y financiación posterior
+  const priceArs = priceToArs(vehicle, usdRate);
+  const lineDetalle = buildVehicleDetail(vehicle, usdRate);
+
+  console.info(`[catalog] detail vehicleId=${vehicle.id} name="${vehicle.name}" rawCurrency=${vehicle.currency ?? 'ARS'} rawPrice=${vehicle.priceNumber ?? 'n/a'} priceArs=${priceArs ?? 'n/a'} usdRate=${usdRate}`);
+
   const reply = await composeResponse('mostrar_auto_puntual', {
     auto: lineDetalle,
     nota: 'Describí este auto puntual. Mencioná que enviás las fotos. Preguntá si quiere verlo o calcular cuotas.',
@@ -1198,49 +1351,55 @@ async function handleSpecificById(
 
   return {
     reply,
-    presentedVehicle: vehicle,
+    // presentedVehicle siempre con priceNumber en ARS para que handleCredit lo use directo
+    presentedVehicle: { ...vehicle, priceNumber: priceArs, currency: 'ARS' },
     imagesToSend: vehicle.images?.slice(0, 5) ?? (vehicle.image ? [vehicle.image] : []),
   };
 }
 
 // ── Handler: búsqueda ──────────────────────────────────────────────────────────
 
-async function handleSearch(ex: Extracted, state: ConvState, historyLines: string[]): Promise<DecideResult> {
+async function handleSearch(ex: Extracted, state: ConvState, historyLines: string[], skillHint?: string): Promise<DecideResult> {
   const catalog = await getCatalog();
   const hits = filterCatalog(catalog, { ...ex, search_context: state.search_context });
   const { rate: usdRate } = await getUsdToArs();
 
   if (hits.length === 0) {
-    const alternatives = catalog.filter(i => i.inStock).slice(0, 3);
+    const alternatives = findClosestAlternatives(catalog, ex, usdRate, state.search_context);
     const altLines = alternatives.map((v, i) => formatItemLine(v, i, usdRate)).join('\n');
+    const tieneAlternativas = alternatives.length > 0;
+    const prevWasNoMatch = state.last_reply_action === 'sin_match';
     const reply = await composeResponse('sin_match', {
-      busqueda: ex,
-      alternativas: altLines || 'No hay stock disponible en este momento.',
-      nota: 'Decir que no hay match exacto. Ofrecer alternativas sin mentir.',
-    }, historyLines);
-    return { reply };
+      busqueda: { brand: ex.brand, model: ex.model, bodywork: ex.bodywork, year: ex.year, maxPrice: ex.maxPrice },
+      alternativas: altLines || '',
+      tiene_alternativas: tieneAlternativas,
+      nota: tieneAlternativas
+        ? `Decí que no tenés exactamente eso. Ofrecé estas alternativas que SÍ comparten segmento/precio real. NO ofrezcas autos de precio/segmento completamente diferente como "cercanos".${prevWasNoMatch ? ' El usuario ya vio una respuesta de no-match — variá el tono, no repitas.' : ''}`
+        : `No hay match exacto ni alternativas razonables. Reconocé el gap con claridad. Hacé UNA sola pregunta para orientar: presupuesto, tipo de uso o segmento deseado.${prevWasNoMatch ? ' No repitas la misma respuesta.' : ''}`,
+    }, historyLines, skillHint);
+    return { reply, isNoMatch: true };
   }
 
-  // Si es un solo resultado, tratarlo como auto puntual
+  // Un solo resultado: auto puntual con precio ARS normalizado
   if (hits.length === 1) {
     const vehicle = hits[0];
-    const lineDetalle = buildVehicleDetail(vehicle);
+    const priceArs = priceToArs(vehicle, usdRate);
+    const lineDetalle = buildVehicleDetail(vehicle, usdRate);
     const reply = await composeResponse('mostrar_auto_puntual', {
       auto: lineDetalle,
       nota: 'Solo hay un resultado. Presentarlo bien. Preguntar si quiere fotos, cuotas o verlo.',
-    }, historyLines);
+    }, historyLines, skillHint);
     return {
       reply,
       hitIds: [vehicle.id],
-      hitsDetail: [{ idx: 0, id: vehicle.id, name: vehicle.name, brand: vehicle.brand, model: vehicle.model, priceNumber: vehicle.priceNumber, currency: vehicle.currency, images: vehicle.images }],
-      presentedVehicle: vehicle,
+      hitsDetail: [{ idx: 0, id: vehicle.id, name: vehicle.name, brand: vehicle.brand, model: vehicle.model, priceNumber: priceArs, currency: 'ARS', images: vehicle.images }],
+      presentedVehicle: { ...vehicle, priceNumber: priceArs, currency: 'ARS' },
       imagesToSend: vehicle.images?.slice(0, 5) ?? (vehicle.image ? [vehicle.image] : []),
     };
   }
 
   const hitLines = hits.map((v, i) => formatItemLine(v, i, usdRate)).join('\n');
 
-  // Construir nota según contexto del lead
   let resultadosNota = 'Mostrar opciones numeradas concretas. Cerrar preguntando cuál le interesa o si quiere fotos/cuotas de alguno.';
   if (ex.needsClarification && ex.leadMode === 'exploratory') {
     resultadosNota = 'Mostrar opciones numeradas. Al final, hacé UNA pregunta suave para refinar (presupuesto o tipo preferido). No presiones.';
@@ -1256,27 +1415,29 @@ async function handleSearch(ex: Extracted, state: ConvState, historyLines: strin
     leadMode: ex.leadMode ?? 'decided',
     needsClarification: ex.needsClarification ?? false,
     nota: resultadosNota,
-  }, historyLines);
+  }, historyLines, skillHint);
 
+  // Snapshot con precios normalizados a ARS (fuente única para contexto/financiación)
   const hitsDetail: ConvState['last_hits_detail'] = hits.map((v, i) => ({
     idx: i,
     id: v.id,
     name: v.name,
     brand: v.brand,
     model: v.model,
-    priceNumber: v.priceNumber,
-    currency: v.currency,
+    priceNumber: priceToArs(v, usdRate),
+    currency: 'ARS',
     images: v.images,
   }));
 
   console.info(`[catalog] snapshotSaved=true count=${hits.length} ids=[${hits.map(h => h.id).join(',')}]`);
-  hits.forEach((v, i) => console.info(`[catalog] option ${i + 1} vehicleId=${v.id} name="${v.name}"`));
+  hits.forEach((v, i) => console.info(`[catalog] option ${i + 1} vehicleId=${v.id} name="${v.name}" priceArs=${priceToArs(v, usdRate) ?? 'n/a'}`));
 
+  const firstHitPriceArs = priceToArs(hits[0], usdRate);
   return {
     reply,
     hitIds: hits.map(h => h.id),
     hitsDetail,
-    presentedVehicle: hits[0],
+    presentedVehicle: { ...hits[0], priceNumber: firstHitPriceArs, currency: 'ARS' },
   };
 }
 
@@ -1307,10 +1468,11 @@ async function handleCredit(
   const downPayment = ex.downPayment ?? state.finance?.downPayment;
 
   if (!downPayment) {
+    // vehiclePrice ya está en ARS (lastPresentedVehiclePriceArs se almacena normalizado)
     const reply = await composeResponse('credit_sin_entrega', {
       auto: vehicle?.title ?? 'el auto seleccionado',
-      precio: `${vehicle?.price ? (vehicle.price > 10000 ? 'ARS' : 'USD') : 'ARS'} ${Math.round(vehiclePrice).toLocaleString('es-AR')}`,
-      nota: 'Preguntar cuánto puede poner de entrega. Solo eso.',
+      precio: `ARS ${Math.round(vehiclePrice).toLocaleString('es-AR')}`,
+      nota: 'Preguntar cuánto puede poner de entrega. Solo eso. El precio ya está en ARS.',
     }, historyLines);
     return { reply };
   }
@@ -1411,8 +1573,9 @@ function summarizeState(state: ConvState): string {
   return parts.join(' | ') || 'sin contexto previo';
 }
 
-/** Formatea el detalle completo de un auto para composeResponse */
-function buildVehicleDetail(v: CatalogItem): string {
+/** Formatea el detalle completo de un auto para composeResponse.
+ *  Precio siempre en ARS (convierte si viene en USD). Fuente única de verdad. */
+function buildVehicleDetail(v: CatalogItem, usdRate = 0): string {
   const parts: string[] = [v.name];
   if (v.year) parts.push(String(v.year));
   if (v.isNew) parts.push('0 km');
@@ -1422,9 +1585,8 @@ function buildVehicleDetail(v: CatalogItem): string {
   if (v.engine) parts.push(v.engine);
   if (v.color) parts.push(v.color);
   if (v.version) parts.push(v.version);
-  const priceStr = v.priceNumber
-    ? `${v.currency ?? 'ARS'} ${v.priceNumber.toLocaleString('es-AR')}`
-    : null;
+  const priceNum = priceToArs(v, usdRate);
+  const priceStr = priceNum ? `ARS ${priceNum.toLocaleString('es-AR')}` : null;
   return parts.join(' · ') + (priceStr ? ` — Precio: ${priceStr}` : '');
 }
 

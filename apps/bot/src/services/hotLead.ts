@@ -78,6 +78,65 @@ export interface HotLeadContext {
   signals: HotLeadSignal[];
 }
 
+// ── Handoff a asesor ──────────────────────────────────────────────────────────
+// Cooldown corto (5 min) — el handoff debe llegar siempre al asesor.
+
+const handoffNotified = new Map<string, number>();
+const HANDOFF_COOLDOWN_MS = 5 * 60 * 1000;
+
+export async function notifyAdvisorHandoff(ctx: {
+  instance: string;
+  remoteJid: string;
+  state: ConvState;
+  lastMessage: string;
+  reason: string;
+}): Promise<void> {
+  const advisorNumber = process.env.ADVISOR_WHATSAPP_NUMBER;
+  const number = ctx.remoteJid.replace(/[^0-9]/g, '');
+  const key = `handoff:${ctx.instance}:${ctx.remoteJid}`;
+
+  console.log(`[handoff] handoff_decided instance=${ctx.instance} jid=${ctx.remoteJid} reason=${ctx.reason} advisor_configured=${!!advisorNumber}`);
+
+  if (!advisorNumber) {
+    console.warn(`[handoff] handoff_notify_result=skipped handoff_notify_error="ADVISOR_WHATSAPP_NUMBER not configured"`);
+    return;
+  }
+
+  const last = handoffNotified.get(key);
+  if (last && Date.now() - last < HANDOFF_COOLDOWN_MS) {
+    console.log(`[handoff] handoff_notify_result=skipped reason=cooldown last_notified_ago_min=${Math.round((Date.now() - last) / 60000)}`);
+    return;
+  }
+
+  handoffNotified.set(key, Date.now());
+
+  const vehiculo = ctx.state.lastPresentedVehicleTitle ?? ctx.state.last_query ?? '—';
+  const presupuesto = ctx.state.search_context?.maxPrice
+    ? `ARS ${Math.round(ctx.state.search_context.maxPrice).toLocaleString('es-AR')}`
+    : '—';
+
+  const text = [
+    `🔔 *Handoff a asesor* — ${new Date().toLocaleTimeString('es-AR')}`,
+    `📱 Cliente: +${number}`,
+    `🚗 Interés: ${vehiculo}`,
+    `💰 Presupuesto: ${presupuesto}`,
+    `📌 Motivo: ${ctx.reason}`,
+    `💬 Último msg: "${ctx.lastMessage.slice(0, 120)}"`,
+    `➡️ Atendé este lead ahora.`,
+  ].join('\n');
+
+  const internalTo = `${advisorNumber}@s.whatsapp.net`;
+
+  console.log(`[handoff] handoff_notify_attempted=true handoff_notify_target=${internalTo}`);
+
+  try {
+    await evolutionSendText(env.instanceName, internalTo, text);
+    console.log(`[handoff] handoff_notify_result=success handoff_notify_target=${internalTo}`);
+  } catch (err: any) {
+    console.error(`[handoff] handoff_notify_result=error handoff_notify_error="${err?.message ?? err}" handoff_notify_target=${internalTo}`);
+  }
+}
+
 export async function notifyHotLead(ctx: HotLeadContext): Promise<void> {
   const advisorNumber = process.env.ADVISOR_WHATSAPP_NUMBER;
   if (!advisorNumber) return;

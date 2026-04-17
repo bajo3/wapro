@@ -1012,3 +1012,16 @@ export function formatItemLine(item: CatalogItem, idx: number, usdToArs?: number
 
   return `${idx + 1}) ${item.name} ${price}`.trim() + specs;
 }
+
+/**
+ * Normaliza el precio de un ítem a ARS.
+ * Si el ítem está en USD, convierte usando la tasa usdToArs.
+ * Fuente única de verdad de precio para lista, detalle, financiación y handoff.
+ */
+export function priceToArs(item: CatalogItem, usdToArs: number): number | undefined {
+  if (typeof item.priceNumber !== 'number') return undefined;
+  if ((item.currency ?? 'ARS').toUpperCase() === 'USD' && usdToArs > 0) {
+    return Math.round(item.priceNumber * usdToArs);
+  }
+  return item.priceNumber;
+}

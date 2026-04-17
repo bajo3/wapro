@@ -38,12 +38,19 @@ export interface ObjectionResult {
 
 const PRICE_PATTERNS = [
   /me\s+parece?\s+caro/i,
+  /no\s+llego\b/i,                         // "no llego" solo (sin requerir "al presupuesto")
   /no\s+llego\s+(?:al?\s+)?presupuesto/i,
-  /tiene[sn]?\s+algo\s+más\s+barato/i,
+  /tiene[sn]?\s+algo\s+m[aá]s?\s+barato/i,
   /muy\s+caro/i,
   /no\s+me\s+alcanza/i,
   /fuera\s+de\s+(?:mi\s+)?presupuesto/i,
   /está\s+(?:muy\s+)?caro/i,
+  /me\s+qued[eé]\s+corto/i,
+  /es\s+mucho\s+para\s+m[ií]/i,
+  /no\s+tengo\s+tanto/i,
+  /es\s+caro\s+para\s+lo\s+que/i,
+  /algo\s+m[aá]s?\s+accesible/i,
+  /m[aá]s?\s+econom[oó]mic[oa]/i,
 ];
 
 const TIME_PATTERNS = [
@@ -132,8 +139,9 @@ export function detectObjection(
     };
   }
 
-  // Objeción genérica elevada (muchas objeciones seguidas)
-  if ((state.objection_count ?? 0) >= 3) {
+  // Objeción genérica elevada: solo escalar si ya hay presupuesto confirmado
+  // (si no hay presupuesto, primero hay que rescatar con precio/alternativa, no escalar)
+  if ((state.objection_count ?? 0) >= 3 && state.search_context?.maxPrice) {
     return {
       type: 'GENERAL_DOUBT',
       detected: true,
