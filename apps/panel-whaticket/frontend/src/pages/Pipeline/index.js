@@ -4,12 +4,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Columns,
-  ExternalLink,
   LayoutList,
   MessageSquareText,
   RefreshCw,
 } from "lucide-react";
-import { useHistory } from "react-router-dom";
 
 import toastError from "../../errors/toastError";
 import api from "../../services/api";
@@ -414,34 +412,6 @@ function FocusView({ stages, focusIdx, setFocusIdx, onMove, movingId, selectedTi
   );
 }
 
-function ConversationPanel({ ticket, onOpenFullTicket }) {
-  return (
-    <aside className="flex min-h-[96px] flex-col overflow-hidden rounded-[18px] border border-white/[0.08] bg-auto-panel shadow-auto-soft">
-      {ticket ? (
-        <div className="flex items-center justify-between gap-3 px-4 py-3">
-          <div className="min-w-0 text-xs text-white/40">
-            Chat oculto para dar mas espacio al pipeline.
-          </div>
-          <button
-            type="button"
-            onClick={onOpenFullTicket}
-            className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-auto-accent/30 bg-auto-accent/10 px-3 py-2 text-sm font-medium text-auto-accent transition-colors hover:bg-auto-accent/15"
-          >
-            <ExternalLink className="h-4 w-4" />
-            Ir al chat
-          </button>
-        </div>
-      ) : (
-        <div className="flex items-center justify-center gap-2 px-4 py-4 text-center">
-          <MessageSquareText className="h-4 w-4 text-white/20" />
-          <div className="text-xs text-white/35">Selecciona un ticket para abrir su chat aparte.</div>
-        </div>
-      )}
-    </aside>
-  );
-}
-
-
 function mergeTicketIntoStages(stages, incomingTicket) {
   if (!incomingTicket) return stages;
 
@@ -521,7 +491,6 @@ function mergeContactIntoStages(stages, contact) {
 }
 
 export default function Pipeline() {
-  const history = useHistory();
   const [stages, setStages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -692,27 +661,6 @@ export default function Pipeline() {
     };
   }, [selectedTicketId]);
 
-  const selectedTicketFromBoard = useMemo(
-    () => allTickets.find((ticket) => String(ticket.id) === String(selectedTicketId)) || null,
-    [allTickets, selectedTicketId]
-  );
-
-  const selectedTicket = useMemo(() => {
-    if (!selectedTicketFromBoard && !selectedTicketDetails) return null;
-    if (!selectedTicketFromBoard) return selectedTicketDetails;
-    if (!selectedTicketDetails) return selectedTicketFromBoard;
-    return {
-      ...selectedTicketFromBoard,
-      ...selectedTicketDetails,
-      contact: {
-        ...(selectedTicketFromBoard.contact || {}),
-        ...(selectedTicketDetails.contact || {}),
-      },
-      pipelineStage:
-        selectedTicketDetails.pipelineStage || selectedTicketFromBoard.pipelineStage || null,
-    };
-  }, [selectedTicketDetails, selectedTicketFromBoard]);
-
   const handleSelectTicket = useCallback((ticket) => {
     setSelectedTicketId(ticket?.id || null);
   }, []);
@@ -814,8 +762,7 @@ export default function Pipeline() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 xl:flex-row">
-        <div className="min-h-0 min-w-0 flex-1 overflow-auto pr-1">
+      <div className="min-h-0 flex-1 overflow-auto pr-1">
           {loading ? (
             <LoadingState viewMode={viewMode} />
           ) : error ? (
@@ -853,14 +800,6 @@ export default function Pipeline() {
               ))}
             </div>
           )}
-        </div>
-
-        <div className="min-h-0 xl:w-[280px] xl:min-w-[280px]">
-          <ConversationPanel
-            ticket={selectedTicket}
-            onOpenFullTicket={() => selectedTicket?.id && history.push(`/tickets/${selectedTicket.id}`)}
-          />
-        </div>
       </div>
     </div>
   );
