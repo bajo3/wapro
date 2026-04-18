@@ -169,7 +169,7 @@ POST NO-MATCH: si el turno previo fue sin-match y el cliente pivota con presupue
 
 Devolvé SOLO el JSON.`;
 
-async function extractIntent(message: string, historyLines: string[]): Promise<Extracted> {
+export async function extractIntent(message: string, historyLines: string[]): Promise<Extracted> {
   const historyContext = historyLines.slice(-6).join('\n');
   const prompt = historyContext
     ? `Contexto previo:\n${historyContext}\n\nMensaje actual: "${message}"`
@@ -523,7 +523,7 @@ const _ACTION_TO_ROUTER: Partial<Record<string, RouterAction>> = {
   modo_exploratorio:      'ASK_ONE_QUESTION',
 };
 
-async function composeResponse(
+export async function composeResponse(
   action: string,
   data: Record<string, any>,
   historyLines: string[],

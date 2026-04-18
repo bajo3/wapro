@@ -59,7 +59,8 @@ export async function askGPT(params: GptParams): Promise<string | null> {
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      const OPENAI_BASE = process.env['OPENAI_BASE_URL'] ?? 'https://api.openai.com';
+      const res = await fetch(`${OPENAI_BASE}/v1/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
