@@ -104,8 +104,8 @@ const logMeliAction = (
   );
 };
 
-const validateOnly = (vehicle: Vehicle): MeliVehicleActionResult => {
-  const local = buildMeliVehiclePayload(vehicle);
+const validateOnly = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> => {
+  const local = await buildMeliVehiclePayload(vehicle);
   return buildResult("validate", vehicle, local.payload, {
     ok: local.ok,
     missingFields: local.missingFields,
@@ -115,8 +115,8 @@ const validateOnly = (vehicle: Vehicle): MeliVehicleActionResult => {
   });
 };
 
-const dryRunOnly = (vehicle: Vehicle): MeliVehicleActionResult => {
-  const local = buildMeliVehiclePayload(vehicle);
+const dryRunOnly = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> => {
+  const local = await buildMeliVehiclePayload(vehicle);
   return buildResult("dry-run", vehicle, local.payload, {
     ok: local.ok,
     missingFields: local.missingFields,
@@ -126,8 +126,11 @@ const dryRunOnly = (vehicle: Vehicle): MeliVehicleActionResult => {
   });
 };
 
-const assertPublishable = (vehicle: Vehicle, action: MeliVehicleActionResult["action"]): MeliVehicleActionResult | null => {
-  const validation = validateOnly(vehicle);
+const assertPublishable = async (
+  vehicle: Vehicle,
+  action: MeliVehicleActionResult["action"]
+): Promise<MeliVehicleActionResult | null> => {
+  const validation = await validateOnly(vehicle);
   if (validation.missingFields.length) {
     return {
       ...validation,
@@ -161,7 +164,7 @@ export const validateVehicleForMeli = async (vehicle: Vehicle): Promise<MeliVehi
 export const dryRunVehicleForMeli = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> => dryRunOnly(vehicle);
 
 export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}): Promise<MeliVehicleActionResult> => {
-  const local = buildMeliVehiclePayload(vehicle);
+  const local = await buildMeliVehiclePayload(vehicle);
 
   if (vehicle.meliItemId) {
     const result = buildBlockedResult(
@@ -188,7 +191,7 @@ export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}
     return tokenBlocked;
   }
 
-  const blocked = assertPublishable(vehicle, "publish");
+  const blocked = await assertPublishable(vehicle, "publish");
   if (blocked) {
     logMeliAction(vehicle, "publish", local.payload, blocked);
     return blocked;
@@ -230,7 +233,7 @@ export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}
 };
 
 export const syncVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}): Promise<MeliVehicleActionResult> => {
-  const local = buildMeliVehiclePayload(vehicle);
+  const local = await buildMeliVehiclePayload(vehicle);
 
   if (!isPublishingEnabled(deps)) {
     const result = buildBlockedResult("sync", vehicle, local.payload, MELI_PUBLISH_DISABLED_MESSAGE, 503, local.warnings);
@@ -248,7 +251,7 @@ export const syncVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}): 
     return publishVehicleToMeli(vehicle, deps);
   }
 
-  const blocked = assertPublishable(vehicle, "sync");
+  const blocked = await assertPublishable(vehicle, "sync");
   if (blocked) {
     logMeliAction(vehicle, "sync", local.payload, blocked);
     return blocked;
@@ -298,7 +301,7 @@ const updateRemoteStatus = async (
   action: "pause" | "reactivate",
   deps: MeliDeps = {}
 ): Promise<MeliVehicleActionResult> => {
-  const local = buildMeliVehiclePayload(vehicle);
+  const local = await buildMeliVehiclePayload(vehicle);
 
   if (!isPublishingEnabled(deps)) {
     const result = buildBlockedResult(action, vehicle, local.payload, MELI_PUBLISH_DISABLED_MESSAGE, 503, local.warnings);
@@ -369,4 +372,3 @@ export const reactivateVehicleOnMeli = async (vehicle: Vehicle, deps: MeliDeps =
 export const logMeliVehicleError = (context: string, error: any) => {
   logger.error({ error }, context);
 };
-

@@ -45,6 +45,16 @@ export async function dryRunVehicleMl(id) {
   return data;
 }
 
+export async function predictVehicleMlCategory(id, payload = {}) {
+  const { data } = await api.post(`/vehicles/${id}/ml/predict-category`, payload);
+  return data;
+}
+
+export async function getVehicleMlCategoryRequirements(id) {
+  const { data } = await api.get(`/vehicles/${id}/ml/category-requirements`);
+  return data;
+}
+
 export async function publishVehicleMl(id) {
   const { data } = await api.post(`/vehicles/${id}/ml/publish`);
   return data;

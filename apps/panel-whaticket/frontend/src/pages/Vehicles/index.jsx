@@ -44,9 +44,11 @@ import {
   createVehicle,
   deleteVehicle,
   dryRunVehicleMl,
+  getVehicleMlCategoryRequirements,
   getVehicleMlHealth,
   listVehicles,
   pauseVehicleMl,
+  predictVehicleMlCategory,
   publishVehicleMl,
   reactivateVehicleMl,
   syncVehicleMl,
@@ -212,6 +214,11 @@ const formToPayload = (form) => ({
   meliAttributes: parseAttributesInput(form.meliAttributesInput)
 });
 
+const canPublishVehicle = (vehicle, mlHealth) =>
+  Boolean(vehicle?.meliCategoryId) &&
+  mlHealth?.publishEnabled !== false &&
+  !(Array.isArray(vehicle?.meliValidationErrors) && vehicle.meliValidationErrors.length > 0);
+
 function VehiclesPage() {
   const [vehicles, setVehicles] = useState([]);
   const [filters, setFilters] = useState({ q: "", internalStatus: "", meliStatus: "", currency: "" });
@@ -224,6 +231,9 @@ function VehiclesPage() {
   const [form, setForm] = useState(emptyForm);
   const [validationState, setValidationState] = useState(null);
   const [validatingId, setValidatingId] = useState(null);
+  const [categorySuggestions, setCategorySuggestions] = useState([]);
+  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
+  const [categoryRequirements, setCategoryRequirements] = useState(null);
   const attributesError = getAttributesError(form.meliAttributesInput);
 
   const loadVehicles = useCallback(async () => {
@@ -277,6 +287,8 @@ function VehiclesPage() {
     setEditingVehicle(null);
     setForm(emptyForm);
     setValidationState(null);
+    setCategorySuggestions([]);
+    setCategoryRequirements(null);
     setDialogOpen(true);
   };
 
@@ -284,6 +296,8 @@ function VehiclesPage() {
     setEditingVehicle(duplicate ? null : vehicle);
     setForm(vehicleToForm(vehicle));
     setValidationState(null);
+    setCategorySuggestions([]);
+    setCategoryRequirements(null);
     setDialogOpen(true);
   };
 
@@ -383,6 +397,65 @@ function VehiclesPage() {
         setValidationState({ ...data, vehicleTitle: vehicle.title || vehicle.label || `${vehicle.brand || ""} ${vehicle.model || ""}`.trim() });
       }
       toast.error(data?.error || "No se pudo ejecutar el dry-run");
+    } finally {
+      setValidatingId(null);
+    }
+  };
+
+  const onPredictCategory = async (vehicle, apply = false) => {
+    if (!vehicle?.id) {
+      toast.info("Guardá el vehículo antes de consultar categorías de MercadoLibre.");
+      return;
+    }
+
+    setValidatingId(vehicle.id);
+    try {
+      const data = await predictVehicleMlCategory(vehicle.id, apply ? { apply: true } : {});
+      setCategorySuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
+      setCategoryDialogOpen(true);
+
+      if (apply && data?.suggestions?.[0]) {
+        const selected = data.suggestions[0];
+        setForm((current) => ({
+          ...current,
+          meliCategoryId: selected.category_id || current.meliCategoryId,
+          meliDomainId: selected.domain_id || current.meliDomainId
+        }));
+        setEditingVehicle((current) =>
+          current
+            ? {
+                ...current,
+                meliCategoryId: selected.category_id || current.meliCategoryId,
+                meliDomainId: selected.domain_id || current.meliDomainId
+              }
+            : current
+        );
+        toast.success("Categoría ML aplicada al vehículo");
+        loadVehicles();
+      } else if (!data?.suggestions?.length) {
+        toast.warn("MercadoLibre no devolvió categorías sugeridas para este título.");
+      }
+    } catch (error) {
+      toast.error(error?.response?.data?.error || "No se pudo sugerir categoría ML");
+    } finally {
+      setValidatingId(null);
+    }
+  };
+
+  const onLoadCategoryRequirements = async (vehicle) => {
+    if (!vehicle?.id) {
+      toast.info("Guardá el vehículo antes de consultar requisitos de categoría.");
+      return;
+    }
+
+    setValidatingId(vehicle.id);
+    try {
+      const data = await getVehicleMlCategoryRequirements(vehicle.id);
+      setCategoryRequirements(data);
+      toast.success("Requisitos de categoría actualizados");
+    } catch (error) {
+      setCategoryRequirements(null);
+      toast.error(error?.response?.data?.error || "No se pudieron consultar los requisitos de categoría");
     } finally {
       setValidatingId(null);
     }
@@ -531,8 +604,8 @@ function VehiclesPage() {
                       <Tooltip title="Ver / editar"><IconButton size="small" onClick={() => openEditDialog(vehicle)}><EditOutlinedIcon fontSize="small" /></IconButton></Tooltip>
                       <Tooltip title="Validar MercadoLibre"><IconButton size="small" onClick={() => onValidate(vehicle)}>{validatingId === vehicle.id ? <CircularProgress size={16} /> : <CheckCircleOutlineIcon fontSize="small" />}</IconButton></Tooltip>
                       <Tooltip title="Dry-run ML"><span><IconButton size="small" onClick={() => onDryRun(vehicle)} disabled={validatingId === vehicle.id}><WarningOutlinedIcon fontSize="small" /></IconButton></span></Tooltip>
-                      <Tooltip title="Publicar en ML"><span><IconButton size="small" onClick={() => runMlAction(vehicle, publishVehicleMl, "Publicación creada en MercadoLibre")} disabled={validatingId === vehicle.id || mlHealth?.publishEnabled === false}><AddIcon fontSize="small" /></IconButton></span></Tooltip>
-                      <Tooltip title="Actualizar ML"><span><IconButton size="small" onClick={() => runMlAction(vehicle, syncVehicleMl, vehicle.meliItemId ? "Publicación sincronizada" : "Publicación creada en MercadoLibre")} disabled={validatingId === vehicle.id || mlHealth?.publishEnabled === false}><OpenInNewIcon fontSize="small" /></IconButton></span></Tooltip>
+                      <Tooltip title="Publicar en ML"><span><IconButton size="small" onClick={() => runMlAction(vehicle, publishVehicleMl, "Publicación creada en MercadoLibre")} disabled={validatingId === vehicle.id || !canPublishVehicle(vehicle, mlHealth)}><AddIcon fontSize="small" /></IconButton></span></Tooltip>
+                      <Tooltip title="Actualizar ML"><span><IconButton size="small" onClick={() => runMlAction(vehicle, syncVehicleMl, vehicle.meliItemId ? "Publicación sincronizada" : "Publicación creada en MercadoLibre")} disabled={validatingId === vehicle.id || !canPublishVehicle(vehicle, mlHealth)}><OpenInNewIcon fontSize="small" /></IconButton></span></Tooltip>
                       <Tooltip title="Pausar ML"><span><IconButton size="small" onClick={() => runMlAction(vehicle, pauseVehicleMl, "Publicación pausada en MercadoLibre")} disabled={validatingId === vehicle.id || mlHealth?.publishEnabled === false || !vehicle.meliItemId}><PauseCircleOutlineIcon fontSize="small" /></IconButton></span></Tooltip>
                       <Tooltip title="Reactivar ML"><span><IconButton size="small" onClick={() => runMlAction(vehicle, reactivateVehicleMl, "Publicación reactivada en MercadoLibre")} disabled={validatingId === vehicle.id || mlHealth?.publishEnabled === false || !vehicle.meliItemId}><CheckCircleOutlineIcon fontSize="small" /></IconButton></span></Tooltip>
                       <Tooltip title="Ver publicación"><span><IconButton size="small" component="a" href={vehicle.permalink || vehicle.meliPermalink || undefined} target="_blank" rel="noreferrer" disabled={!(vehicle.permalink || vehicle.meliPermalink)}><OpenInNewIcon fontSize="small" /></IconButton></span></Tooltip>
@@ -640,6 +713,31 @@ function VehiclesPage() {
             <Grid item xs={12} md={4}><TextField label="domain_id" variant="outlined" size="small" fullWidth value={form.meliDomainId} onChange={(e) => setForm((c) => ({ ...c, meliDomainId: e.target.value }))} /></Grid>
             <Grid item xs={12} md={4}><TextField label="listing_type_id" variant="outlined" size="small" fullWidth value={form.meliListingTypeId} onChange={(e) => setForm((c) => ({ ...c, meliListingTypeId: e.target.value }))} /></Grid>
             <Grid item xs={12}>
+              <Box display="flex" flexWrap="wrap" gridGap={8}>
+                <Button variant="outlined" size="small" onClick={() => onPredictCategory(editingVehicle, false)} disabled={!editingVehicle?.id || validatingId === editingVehicle?.id}>
+                  Sugerir categoría ML
+                </Button>
+                <Button variant="outlined" size="small" onClick={() => onPredictCategory(editingVehicle, true)} disabled={!editingVehicle?.id || validatingId === editingVehicle?.id}>
+                  Aplicar categoría
+                </Button>
+                <Button variant="outlined" size="small" onClick={() => onLoadCategoryRequirements(editingVehicle)} disabled={!editingVehicle?.id || !form.meliCategoryId || validatingId === editingVehicle?.id}>
+                  Ver requisitos categoría
+                </Button>
+              </Box>
+              {!editingVehicle?.id ? (
+                <Typography variant="caption" color="textSecondary">
+                  Guardá el vehículo para consultar categorías y requisitos de MercadoLibre.
+                </Typography>
+              ) : null}
+            </Grid>
+            <Grid item xs={12}>
+              <Box display="flex" flexWrap="wrap" gridGap={8}>
+                <Chip size="small" label={`category_id: ${form.meliCategoryId || "-"}`} />
+                <Chip size="small" label={`domain_id: ${form.meliDomainId || "-"}`} />
+                {!form.meliCategoryId ? <Chip size="small" label="Falta category_id para validar/publicar" style={{ background: "#fee2e2", color: "#b91c1c" }} /> : null}
+              </Box>
+            </Grid>
+            <Grid item xs={12}>
               <TextField
                 label="Attributes JSON"
                 variant="outlined"
@@ -652,6 +750,44 @@ function VehiclesPage() {
                 onChange={(e) => setForm((c) => ({ ...c, meliAttributesInput: e.target.value }))}
               />
             </Grid>
+            {categoryRequirements ? (
+              <Grid item xs={12}>
+                <Paper variant="outlined" style={{ padding: 12 }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Requisitos ML de {categoryRequirements.categoryName || categoryRequirements.categoryId}
+                  </Typography>
+                  <Typography variant="body2" color="textSecondary">
+                    Listing permitido: {categoryRequirements.listingAllowed === null ? "sin dato" : categoryRequirements.listingAllowed ? "sí" : "no"}
+                  </Typography>
+                  <Box mt={1}>
+                    <Typography variant="caption" color="error">Obligatorios</Typography>
+                    <Box mt={1}>
+                      {categoryRequirements.requiredAttributes?.length ? categoryRequirements.requiredAttributes.map((attribute) => (
+                        <Chip
+                          key={attribute.id}
+                          size="small"
+                          label={`${attribute.id}${attribute.missing ? " (faltante)" : ""}`}
+                          style={{ marginRight: 8, marginBottom: 8, background: attribute.missing ? "#fee2e2" : "#dcfce7", color: attribute.missing ? "#b91c1c" : "#166534" }}
+                        />
+                      )) : <Typography variant="body2">Sin atributos obligatorios informados.</Typography>}
+                    </Box>
+                  </Box>
+                  <Box mt={1}>
+                    <Typography variant="caption" style={{ color: "#a16207" }}>Recomendados</Typography>
+                    <Box mt={1}>
+                      {categoryRequirements.recommendedAttributes?.length ? categoryRequirements.recommendedAttributes.map((attribute) => (
+                        <Chip
+                          key={attribute.id}
+                          size="small"
+                          label={`${attribute.id}${attribute.missing ? " (faltante)" : ""}`}
+                          style={{ marginRight: 8, marginBottom: 8, background: attribute.missing ? "#fef3c7" : "#f3f4f6", color: attribute.missing ? "#a16207" : "#374151" }}
+                        />
+                      )) : <Typography variant="body2">Sin atributos recomendados informados.</Typography>}
+                    </Box>
+                  </Box>
+                </Paper>
+              </Grid>
+            ) : null}
             {editingVehicle ? (
               <Grid item xs={12}>
                 <Typography variant="body2">Estado ML: {editingVehicle.meliStatus || "-"} · meliItemId: {editingVehicle.meliItemId || "-"} · permalink: {editingVehicle.permalink || "-"} · último error: {editingVehicle.meliLastError || "-"}</Typography>
@@ -662,6 +798,30 @@ function VehiclesPage() {
         <DialogActions>
           <Button onClick={() => setDialogOpen(false)}>Cancelar</Button>
           <Button color="primary" variant="contained" onClick={saveVehicle} disabled={saving}>{saving ? "Guardando..." : editingVehicle ? "Guardar cambios" : "Crear vehículo"}</Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={categoryDialogOpen} onClose={() => setCategoryDialogOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Sugerencias de categorÃ­a MercadoLibre</DialogTitle>
+        <DialogContent dividers>
+          {categorySuggestions.length ? categorySuggestions.map((suggestion, index) => (
+            <Paper key={`${suggestion.category_id || "category"}-${index}`} variant="outlined" style={{ padding: 12, marginBottom: 12 }}>
+              <Typography variant="subtitle2">{suggestion.category_name || suggestion.category_id || "Sin categorÃ­a"}</Typography>
+              <Typography variant="body2" color="textSecondary">
+                category_id: {suggestion.category_id || "-"} Â· domain_id: {suggestion.domain_id || "-"}
+              </Typography>
+              {suggestion.path ? <Typography variant="body2" color="textSecondary">Path: {suggestion.path}</Typography> : null}
+              {suggestion.probability !== null || suggestion.confidence !== null ? (
+                <Typography variant="body2" color="textSecondary">
+                  Probabilidad: {suggestion.probability ?? "-"} Â· Confianza: {suggestion.confidence ?? "-"}
+                </Typography>
+              ) : null}
+            </Paper>
+          )) : (
+            <Typography variant="body2">No hay sugerencias para mostrar.</Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCategoryDialogOpen(false)}>Cerrar</Button>
         </DialogActions>
       </Dialog>
     </Box>

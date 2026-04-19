@@ -12,6 +12,10 @@ import {
   syncVehicleToMeli,
   validateVehicleForMeli
 } from "../helpers/meliVehiclesPublisher";
+import {
+  getVehicleCategoryRequirements,
+  predictVehicleCategories
+} from "../helpers/meliCategoriesService";
 import Quotation from "../models/Quotation";
 import Vehicle from "../models/Vehicle";
 import { logger } from "../utils/logger";
@@ -523,6 +527,72 @@ export const dryRunMl = async (req: Request, res: Response): Promise<Response> =
   }
 
   return sendMeliActionResponse(req, res, vehicle, dryRunVehicleForMeli(vehicle));
+};
+
+export const predictMlCategory = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const vehicle = await Vehicle.findByPk(String(req.params.id));
+    if (!vehicle) {
+      return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+    }
+
+    const title = cleanString(vehicle.title) || buildVehicleTitle(vehicle);
+    if (!title) {
+      return res.status(400).json({ ok: false, error: "vehicle_title_required_for_category_prediction" });
+    }
+
+    const suggestions = await predictVehicleCategories(title);
+    const shouldApply = Boolean(req.body?.apply);
+    const selected = suggestions[0] || null;
+
+    if (shouldApply && selected?.category_id) {
+      await vehicle.update({
+        meliCategoryId: selected.category_id,
+        meliDomainId: selected.domain_id || vehicle.meliDomainId || null,
+        meliLastError: null,
+        updatedByUserId: (req as any).user?.id ?? vehicle.updatedByUserId ?? null
+      } as any);
+    }
+
+    return res.json({
+      ok: suggestions.length > 0,
+      applied: Boolean(shouldApply && selected?.category_id),
+      title,
+      suggestions
+    });
+  } catch (error) {
+    logger.error({ error, vehicleId: req.params.id }, "vehicles.ml.predictCategory.failed");
+    return res.status(502).json({
+      ok: false,
+      error: String((error as any)?.message || error || "meli_category_predict_failed")
+    });
+  }
+};
+
+export const categoryRequirementsMl = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const vehicle = await Vehicle.findByPk(String(req.params.id));
+    if (!vehicle) {
+      return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+    }
+
+    if (!cleanString(vehicle.meliCategoryId)) {
+      return res.status(400).json({ ok: false, error: "vehicle_missing_meli_category_id" });
+    }
+
+    const requirements = await getVehicleCategoryRequirements(vehicle);
+    return res.json({
+      ok: true,
+      ...requirements
+    });
+  } catch (error) {
+    const message = String((error as any)?.message || error || "meli_category_requirements_failed");
+    logger.error({ error, vehicleId: req.params.id }, "vehicles.ml.categoryRequirements.failed");
+    return res.status(message === "vehicle_missing_meli_category_id" ? 400 : 502).json({
+      ok: false,
+      error: message
+    });
+  }
 };
 
 export const publishMl = async (req: Request, res: Response): Promise<Response> => {

@@ -7,6 +7,8 @@ const vehicleRoutes = Router();
 
 vehicleRoutes.get("/vehicles", isAuth, VehiclesController.index);
 vehicleRoutes.get("/vehicles/ml/health", isAuth, VehiclesController.mlHealth);
+vehicleRoutes.post("/vehicles/:id/ml/predict-category", isAuth, VehiclesController.predictMlCategory);
+vehicleRoutes.get("/vehicles/:id/ml/category-requirements", isAuth, VehiclesController.categoryRequirementsMl);
 vehicleRoutes.post("/vehicles/:id/ml/validate", isAuth, VehiclesController.validateMl);
 vehicleRoutes.post("/vehicles/:id/ml/dry-run", isAuth, VehiclesController.dryRunMl);
 vehicleRoutes.post("/vehicles/:id/ml/publish", isAuth, VehiclesController.publishMl);

@@ -1,10 +1,15 @@
 import Vehicle from "../../models/Vehicle";
+import {
+  getCategoryAttributes,
+  mapVehicleToMeliAttributes
+} from "../../helpers/meliCategoriesService";
 
 type ValidationResult = {
   ok: boolean;
   missingFields: string[];
   warnings: string[];
   payload: Record<string, any>;
+  mappedAttributes: Array<Record<string, any>>;
 };
 
 const asString = (value: any): string => String(value ?? "").trim();
@@ -39,28 +44,7 @@ const normalizePictures = (pictures: any): Array<Record<string, any>> => {
     .sort((a, b) => Number(a!.order || 0) - Number(b!.order || 0)) as Array<Record<string, any>>;
 };
 
-const normalizeAttributes = (vehicle: Vehicle): Array<Record<string, any>> => {
-  const baseAttributes = [
-    { name: "BRAND", value_name: asString(vehicle.brand) },
-    { name: "MODEL", value_name: asString(vehicle.model) },
-    { name: "VEHICLE_YEAR", value_name: asString(vehicle.year) },
-    { name: "VEHICLE_MILEAGE", value_name: asString(vehicle.km) },
-    { name: "FUEL_TYPE", value_name: asString(vehicle.fuel) },
-    { name: "TRANSMISSION", value_name: asString(vehicle.transmission) },
-    { name: "COLOR", value_name: asString(vehicle.color) },
-    { name: "ENGINE_DISPLACEMENT", value_name: asString(vehicle.engine) },
-    { name: "BODY_TYPE", value_name: asString(vehicle.bodyType) },
-    { name: "VEHICLE_TYPE", value_name: asString(vehicle.vehicleType) }
-  ].filter((attribute) => attribute.value_name);
-
-  const customAttributes = Array.isArray(vehicle.meliAttributes)
-    ? vehicle.meliAttributes.filter((attribute) => attribute && typeof attribute === "object")
-    : [];
-
-  return [...baseAttributes, ...customAttributes];
-};
-
-export const buildMeliVehiclePayload = (vehicle: Vehicle): ValidationResult => {
+export const buildMeliVehiclePayload = async (vehicle: Vehicle): Promise<ValidationResult> => {
   const missingFields: string[] = [];
   const warnings: string[] = [];
 
@@ -76,7 +60,10 @@ export const buildMeliVehiclePayload = (vehicle: Vehicle): ValidationResult => {
   const km = asNumber(vehicle.km);
   const description = asString(vehicle.description);
   const pictures = normalizePictures(vehicle.pictures);
-  const attributes = normalizeAttributes(vehicle);
+
+  let attributes = Array.isArray(vehicle.meliAttributes)
+    ? vehicle.meliAttributes.filter((attribute) => attribute && typeof attribute === "object")
+    : [];
 
   if (!title) missingFields.push("title");
   if (!categoryId) missingFields.push("category_id");
@@ -93,10 +80,36 @@ export const buildMeliVehiclePayload = (vehicle: Vehicle): ValidationResult => {
   if (!pictures.length) warnings.push("pictures");
   if (!vehicle.meliDomainId) warnings.push("meliDomainId");
 
+  if (categoryId) {
+    try {
+      const categoryAttributes = await getCategoryAttributes(categoryId);
+      const mapping = mapVehicleToMeliAttributes(vehicle, categoryAttributes);
+      attributes = mapping.attributes;
+
+      mapping.missingRequired.forEach((attributeId) => {
+        if (!missingFields.includes(attributeId)) {
+          missingFields.push(attributeId);
+        }
+      });
+
+      mapping.missingRecommended.forEach((attributeId) => {
+        if (!warnings.includes(attributeId)) {
+          warnings.push(attributeId);
+        }
+      });
+    } catch (error) {
+      const message = asString((error as any)?.message || error);
+      if (message && !warnings.includes(`category_attributes_unavailable:${message}`)) {
+        warnings.push(`category_attributes_unavailable:${message}`);
+      }
+    }
+  }
+
   return {
     ok: missingFields.length === 0,
     missingFields,
     warnings,
+    mappedAttributes: attributes,
     payload: {
       title,
       category_id: categoryId || null,
