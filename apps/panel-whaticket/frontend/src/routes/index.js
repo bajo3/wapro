@@ -21,6 +21,7 @@ const BotLearning = lazy(() => import("../pages/BotLearning/"));
 const Queues = lazy(() => import("../pages/Queues/"));
 const Campaigns = lazy(() => import("../pages/Campaigns"));
 const Quotations = lazy(() => import("../pages/Quotations"));
+const Vehicles = lazy(() => import("../pages/Vehicles"));
 const Pipeline = lazy(() => import("../pages/Pipeline"));
 const MetricsDashboard = lazy(() => import("../pages/MetricsDashboard"));
 import { AuthProvider } from "../context/Auth/AuthContext";
@@ -43,6 +44,7 @@ const Routes = () => {
                 <Route exact path="/" component={Dashboard} isPrivate />
                 <Route exact path="/tickets/:ticketId?" component={Tickets} isPrivate />
                 <Route exact path="/pipeline" component={Pipeline} isPrivate />
+                <Route exact path="/vehicles" component={Vehicles} isPrivate />
                 <Route exact path="/connections" component={Connections} isPrivate />
                 <Route exact path="/contacts" component={Contacts} isPrivate />
                 <Route exact path="/contacts/demands" component={Demands} isPrivate />

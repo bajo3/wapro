@@ -1,685 +1,600 @@
 import { Request, Response } from "express";
-import sequelize from "../database";
-import { getSupabasePool } from "../database/supabaseDb";
+import { Op } from "sequelize";
+import { v4 as uuidv4 } from "uuid";
 
-// Robust best-effort catalog endpoint.
-// Goal: keep the frontend contract stable:
-//   { vehicles: [{ id, marca, modelo, version, precio, currency, year }] }
-// while autodetecting the underlying table/columns without adding new ENV.
+import {
+  dryRunVehicleForMeli,
+  getMeliHealthStatus,
+  logMeliVehicleError,
+  pauseVehicleOnMeli,
+  publishVehicleToMeli,
+  reactivateVehicleOnMeli,
+  syncVehicleToMeli,
+  validateVehicleForMeli
+} from "../helpers/meliVehiclesPublisher";
+import Quotation from "../models/Quotation";
+import Vehicle from "../models/Vehicle";
+import { logger } from "../utils/logger";
 
-type Query = {
+type VehicleQuery = {
   q?: string;
-  searchParam?: string;
+  brand?: string;
+  model?: string;
+  year?: string;
+  internalStatus?: string;
+  meliStatus?: string;
+  publishToMeli?: string;
+  currency?: string;
   id?: string;
   limit?: string;
 };
 
-type ColumnMap = {
-  id: string;
-  brand?: string;
-  model?: string;
-  version?: string;
-  title?: string;
-  price?: string;
-  currency?: string;
-  year?: string;
-  km?: string;
-  transmission?: string;
-  fuel?: string;
-  color?: string;
-  status?: string;
-  image?: string;
-  pictures?: string;
-  permalink?: string;
-  source?: string;
+const cleanString = (value: any): string => String(value ?? "").trim();
+
+const cleanNullableString = (value: any): string | null => {
+  const normalized = cleanString(value);
+  return normalized || null;
 };
 
-type CatalogSource = {
-  schema: string;
-  table: string;
-  columns: string[];
-  map: ColumnMap;
+const cleanNumber = (value: any): number | null => {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
-const CANDIDATE_TABLES = [
-  "vehicles",
-  "Vehicles",
-  "vehicle",
-  "autos",
-  "cars",
-  "car_stock",
-  "stock_vehicles",
-  "catalog",
-  "vehiculos",
-];
-
-const COL_SYNONYMS: Record<keyof Omit<ColumnMap, "id">, string[]> = {
-  brand: ["brand", "marca", "make"],
-  model: ["model", "modelo"],
-  version: ["version", "trim", "variant", "versión", "version_name"],
-  title: ["title", "nombre", "name", "descripcion", "description"],
-  price: ["price", "precio", "valor", "amount"],
-  currency: ["currency", "moneda", "currency_code"],
-  year: ["year", "anio", "año", "model_year"],
-  km: ["km", "Km", "kms", "kilometers", "kilometros", "kilometraje", "mileage"],
-  transmission: ["transmission", "caja", "gearbox"],
-  fuel: ["fuel", "combustible"],
-  color: ["color", "colour"],
-  status: ["status", "estado"],
-  image: ["image", "image_url", "cover", "cover_image", "thumbnail", "picture", "picture_url"],
-  pictures: ["pictures", "images", "gallery", "photos"],
-  permalink: ["permalink", "url", "link", "href"],
-  source: ["source", "origin", "origen"],
-};
-
-const ID_SYNONYMS = ["id", "vehicle_id", "uuid", "uid"]; // prefer stable identifiers
-
-let cache: { at: number; source: CatalogSource | null } = { at: 0, source: null };
-const CACHE_TTL_MS = 60_000;
-
-function pickFirstPresent(columns: string[], synonyms: string[]): string | undefined {
-  const set = new Set(columns.map((c) => c.toLowerCase()));
-  for (const s of synonyms) {
-    if (set.has(s.toLowerCase())) {
-      // return original case column name if possible
-      const original = columns.find((c) => c.toLowerCase() === s.toLowerCase());
-      return original || s;
-    }
-  }
-  return undefined;
-}
-
-// ── Supabase-aware query helpers ─────────────────────────────────────────────
-//
-// These replace direct sequelize.query() calls so that vehicle reads/writes
-// go to Supabase when SUPABASE_DATABASE_URL is configured.
-//
-// Sequelize uses named params (:name). pg uses positional params ($1, $2).
-// namedParamsToPg() translates between the two, including array IN() clauses.
-
-function namedParamsToPg(
-  sql: string,
-  replacements: Record<string, any> = {}
-): { text: string; values: any[] } {
-  const values: any[] = [];
-  let counter = 0;
-
-  // Pass 1: convert IN (:name) → = ANY($N::text[]) for array values
-  let text = sql.replace(/\bIN\s*\(\s*:([a-zA-Z_]+)\s*\)/gi, (_whole, name) => {
-    if (name in replacements && Array.isArray(replacements[name])) {
-      values.push(replacements[name]);
-      return `= ANY($${++counter}::text[])`;
-    }
-    return _whole;
-  });
-
-  // Pass 2: convert remaining :name → $N
-  text = text.replace(/:([a-zA-Z_]+)/g, (_whole, name) => {
-    if (name in replacements) {
-      values.push(replacements[name]);
-      return `$${++counter}`;
-    }
-    return _whole;
-  });
-
-  return { text, values };
-}
-
-/** Run a SELECT via Supabase pool when available, falls back to Sequelize. */
-async function catalogQuery(
-  sql: string,
-  replacements: Record<string, any> = {}
-): Promise<any[]> {
-  const sbPool = getSupabasePool();
-  if (sbPool) {
-    const { text, values } = namedParamsToPg(sql, replacements);
-    const result = await sbPool.query(text, values.length ? values : undefined);
-    return result.rows;
-  }
-  const [rows] = await sequelize.query(
-    sql,
-    Object.keys(replacements).length ? { replacements } : undefined
-  );
-  return rows as any[];
-}
-
-/** Run a mutating statement (DELETE/UPDATE) and return affected row count. */
-async function catalogMutate(
-  sql: string,
-  replacements: Record<string, any> = {}
-): Promise<number> {
-  const sbPool = getSupabasePool();
-  if (sbPool) {
-    const { text, values } = namedParamsToPg(sql, replacements);
-    const result = await sbPool.query(text, values.length ? values : undefined);
-    return result.rowCount ?? 0;
-  }
-  const result: any = await sequelize.query(sql, {
-    replacements,
-    type: "RAW" as any
-  });
-  return Array.isArray(result) ? (result[1] ?? 0) : 0;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function detectSource(): Promise<CatalogSource | null> {
-  const now = Date.now();
-  if (cache.source && now - cache.at < CACHE_TTL_MS) return cache.source;
-
-  try {
-    // List candidate tables across *any* non-system schema.
-    // Some installs use custom schemas (e.g. "public", "app", "crm").
-    const rows = await catalogQuery(
-      `
-      SELECT table_schema, table_name
-      FROM information_schema.tables
-      WHERE table_type = 'BASE TABLE'
-        AND table_schema NOT IN ('pg_catalog','information_schema')
-        AND table_name IN (:names)
-      ORDER BY
-        CASE WHEN table_schema = 'public' THEN 0 ELSE 1 END,
-        table_schema ASC,
-        table_name ASC
-    `,
-      { names: CANDIDATE_TABLES }
-    );
-
-    const tables = (Array.isArray(rows) ? rows : []) as Array<{ table_schema: string; table_name: string }>;
-
-    // Also attempt the canonical table first (public.vehicles) even if not in candidates
-    const preferred = [{ table_schema: "public", table_name: "vehicles" }, ...tables];
-
-    for (const t of preferred) {
-      const schema = String(t.table_schema || "public");
-      const table = String(t.table_name || "");
-      if (!table) continue;
-
-      const cRows = await catalogQuery(
-        `
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = :schema AND table_name = :table
-      `,
-        { schema, table }
-      );
-
-      const cols = (Array.isArray(cRows) ? cRows : [])
-        .map((r: any) => String(r.column_name))
-        .filter(Boolean);
-      if (!cols.length) continue;
-
-      const idCol = pickFirstPresent(cols, ID_SYNONYMS);
-      if (!idCol) continue;
-
-      const map: ColumnMap = {
-        id: idCol,
-        brand: pickFirstPresent(cols, COL_SYNONYMS.brand),
-        model: pickFirstPresent(cols, COL_SYNONYMS.model),
-        version: pickFirstPresent(cols, COL_SYNONYMS.version),
-        title: pickFirstPresent(cols, COL_SYNONYMS.title),
-        price: pickFirstPresent(cols, COL_SYNONYMS.price),
-        currency: pickFirstPresent(cols, COL_SYNONYMS.currency),
-        year: pickFirstPresent(cols, COL_SYNONYMS.year),
-        km: pickFirstPresent(cols, COL_SYNONYMS.km),
-        transmission: pickFirstPresent(cols, COL_SYNONYMS.transmission),
-        fuel: pickFirstPresent(cols, COL_SYNONYMS.fuel),
-        color: pickFirstPresent(cols, COL_SYNONYMS.color),
-        status: pickFirstPresent(cols, COL_SYNONYMS.status),
-        image: pickFirstPresent(cols, COL_SYNONYMS.image),
-        pictures: pickFirstPresent(cols, COL_SYNONYMS.pictures),
-        permalink: pickFirstPresent(cols, COL_SYNONYMS.permalink),
-        source: pickFirstPresent(cols, COL_SYNONYMS.source),
-      };
-
-      // Heuristic: require *at least* (brand+model) OR title so it isn't some unrelated table.
-      const looksLikeVehicles = !!(map.title || (map.brand && map.model));
-      if (!looksLikeVehicles) continue;
-
-      const source: CatalogSource = { schema, table, columns: cols, map };
-      cache = { at: now, source };
-      return source;
-    }
-
-    // Fallback: scan for any table that looks like a vehicles catalog.
-    // We only do this if candidates were not found.
-    if (!tables.length) {
-      const maybe = await catalogQuery(
-        `
-        SELECT c.table_schema, c.table_name,
-               array_agg(c.column_name) as columns
-        FROM information_schema.columns c
-        JOIN information_schema.tables t
-          ON t.table_schema = c.table_schema AND t.table_name = c.table_name
-        WHERE t.table_type = 'BASE TABLE'
-          AND c.table_schema NOT IN ('pg_catalog','information_schema')
-        GROUP BY c.table_schema, c.table_name
-      `
-      );
-
-      const all = (Array.isArray(maybe) ? maybe : []) as Array<{ table_schema: string; table_name: string; columns: string[] }>;
-      for (const t of all) {
-        const schema = String(t.table_schema || "public");
-        const table = String(t.table_name || "");
-        const cols = (Array.isArray(t.columns) ? t.columns : []).map(String).filter(Boolean);
-        if (!cols.length) continue;
-
-        const idCol = pickFirstPresent(cols, ID_SYNONYMS);
-        if (!idCol) continue;
-
-        const map: ColumnMap = {
-          id: idCol,
-          brand: pickFirstPresent(cols, COL_SYNONYMS.brand),
-          model: pickFirstPresent(cols, COL_SYNONYMS.model),
-          version: pickFirstPresent(cols, COL_SYNONYMS.version),
-          title: pickFirstPresent(cols, COL_SYNONYMS.title),
-          price: pickFirstPresent(cols, COL_SYNONYMS.price),
-          currency: pickFirstPresent(cols, COL_SYNONYMS.currency),
-          year: pickFirstPresent(cols, COL_SYNONYMS.year),
-          km: pickFirstPresent(cols, COL_SYNONYMS.km),
-          transmission: pickFirstPresent(cols, COL_SYNONYMS.transmission),
-          fuel: pickFirstPresent(cols, COL_SYNONYMS.fuel),
-          color: pickFirstPresent(cols, COL_SYNONYMS.color),
-          status: pickFirstPresent(cols, COL_SYNONYMS.status),
-          image: pickFirstPresent(cols, COL_SYNONYMS.image),
-          pictures: pickFirstPresent(cols, COL_SYNONYMS.pictures),
-          permalink: pickFirstPresent(cols, COL_SYNONYMS.permalink),
-          source: pickFirstPresent(cols, COL_SYNONYMS.source),
-        };
-
-        const looksLikeVehicles = !!(map.title || (map.brand && map.model));
-        const hasPriceOrYear = !!(map.price || map.year);
-        if (!looksLikeVehicles || !hasPriceOrYear) continue;
-
-        const source: CatalogSource = { schema, table, columns: cols, map };
-        cache = { at: now, source };
-        return source;
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  cache = { at: now, source: null };
+const cleanBoolean = (value: any): boolean | null => {
+  if (typeof value === "boolean") return value;
+  const normalized = cleanString(value).toLowerCase();
+  if (!normalized) return null;
+  if (["true", "1", "yes", "si"].includes(normalized)) return true;
+  if (["false", "0", "no"].includes(normalized)) return false;
   return null;
-}
+};
 
-function qi(ident: string): string {
-  // Quote identifiers defensively (handles case-sensitive columns/tables).
-  return `"${String(ident).replace(/"/g, '""')}"`;
-}
-
-
-function normalizeLabelToken(value: any): string {
-  return String(value ?? "").trim();
-}
-
-function normalizeForCompare(value: any): string {
-  return normalizeLabelToken(value)
+const toSlug = (value: string): string =>
+  cleanString(value)
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 90);
+
+const buildVehicleTitle = (vehicle: Partial<Vehicle>): string =>
+  [vehicle.brand, vehicle.model, vehicle.version, vehicle.year]
+    .map(cleanString)
+    .filter(Boolean)
+    .join(" ")
     .trim();
-}
 
-function compactUnique(parts: Array<any>): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const part of parts) {
-    const value = normalizeLabelToken(part);
-    const key = normalizeForCompare(value);
-    if (!value || !key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(value);
-  }
-  return out;
-}
+const normalizePictures = (input: any): Array<Record<string, any>> => {
+  if (!input) return [];
 
+  let pictures = input;
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (!trimmed) return [];
 
-function parseMaybeJson(value: any): any {
-  if (value == null) return null;
-  if (typeof value !== "string") return value;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (!((trimmed.startsWith("[") && trimmed.endsWith("]")) || (trimmed.startsWith("{") && trimmed.endsWith("}")))) {
-    return value;
-  }
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return value;
-  }
-}
-
-function pickImage(value: any): string | null {
-  const parsed = parseMaybeJson(value);
-  if (!parsed) return null;
-  if (typeof parsed === "string") return parsed.trim() || null;
-  if (Array.isArray(parsed)) {
-    for (const item of parsed) {
-      const img = pickImage(item);
-      if (img) return img;
-    }
-  }
-  if (typeof parsed === "object") {
-    const direct = [parsed.url, parsed.secure_url, parsed.src, parsed.link].find(Boolean);
-    if (typeof direct === "string" && direct.trim()) return direct.trim();
-  }
-  return null;
-}
-
-function asCleanString(value: any): string {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function inferCurrency(currency: any, price: number, status?: string): string {
-  const current = asCleanString(currency).toUpperCase();
-  // Si la fuente declara moneda explícita y coherente, respetarla.
-  if (current === "USD" || current === "US$") return "USD";
-  if (current === "ARS") {
-    // ARS declarado: solo sospechar si el precio es claramente imposible en ARS
-    // (< 50.000 ARS: nunca un auto, ni 0km barato).
-    if (price > 0 && price < 50_000) return "USD";
-    return "ARS";
-  }
-  // Sin moneda declarada: inferir por magnitud y contexto.
-  const statusStr = asCleanString(status).toLowerCase();
-  const isNew = /\b(0\s*km|nuevo|new)\b/.test(statusStr);
-  if (price > 0 && price < 50_000) return "USD";        // siempre USD, ARS imposible
-  if (!isNew && price > 0 && price < 500_000) return "USD"; // usado < 500k ARS → sospecha USD
-  return current || "ARS";
-}
-
-function parseTitleParts(row: any): { brand: string; model: string; version: string; title: string } {
-  const title = asCleanString(row.title ?? row.name);
-  const brand = asCleanString(row.brand ?? row.marca);
-  let model = asCleanString(row.model ?? row.modelo);
-  let version = asCleanString(row.version);
-
-  if (title) {
-    const normalizedTitle = title.replace(/\s+/g, " ").trim();
-    const lowerBrand = brand.toLowerCase();
-    let rest = normalizedTitle;
-    if (brand && normalizedTitle.toLowerCase().startsWith(lowerBrand)) {
-      rest = normalizedTitle.slice(brand.length).trim();
-    }
-    if (!model && rest) {
-      const restTokens = rest.split(/\s+/).filter(Boolean);
-      if (restTokens.length >= 2) {
-        model = restTokens.slice(0, 2).join(" ");
-        version = version || restTokens.slice(2).join(" ");
-      } else if (restTokens.length === 1) {
-        model = restTokens[0];
+    if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+      try {
+        pictures = JSON.parse(trimmed);
+      } catch {
+        pictures = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
       }
-    }
-    if (model && !version && rest) {
-      const modelNorm = normalizeForCompare(model);
-      const restNorm = normalizeForCompare(rest);
-      if (modelNorm && restNorm.startsWith(modelNorm)) {
-        const leftover = rest.slice(model.length).trim();
-        if (leftover) version = leftover;
-      }
+    } else {
+      pictures = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     }
   }
 
-  if (!model && version && brand) {
-    const v = version.trim();
-    if (!v.toLowerCase().startsWith(brand.toLowerCase())) {
-      model = v;
-      version = "";
+  if (!Array.isArray(pictures)) return [];
+
+  return pictures
+    .map((picture, index) => {
+      if (typeof picture === "string") {
+        const url = cleanString(picture);
+        if (!url) return null;
+        return {
+          url,
+          source: "manual",
+          order: index,
+          alt: "",
+          isCover: index === 0
+        };
+      }
+
+      if (!picture || typeof picture !== "object") return null;
+
+      const url = cleanString(picture.url || picture.secure_url || picture.source);
+      if (!url) return null;
+
+      return {
+        url,
+        source: cleanString(picture.source || "manual") || "manual",
+        order: Number.isFinite(Number(picture.order)) ? Number(picture.order) : index,
+        alt: cleanString(picture.alt),
+        isCover: Boolean(picture.isCover || picture.cover || index === 0)
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Number(a!.order || 0) - Number(b!.order || 0)) as Array<Record<string, any>>;
+};
+
+const normalizeArray = (input: any): any[] => {
+  if (!input) return [];
+  if (Array.isArray(input)) return input;
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
     }
   }
+  return [];
+};
+
+const serializeVehicle = (vehicle: Vehicle): Record<string, any> => {
+  const title = cleanString(vehicle.title) || buildVehicleTitle(vehicle);
+  const pictures = normalizePictures(vehicle.pictures);
+  const cover = pictures.find((picture) => picture.isCover) || pictures[0] || null;
+  const numericPrice = vehicle.price !== null && vehicle.price !== undefined ? Number(vehicle.price) : null;
 
   return {
+    id: vehicle.id,
+    slug: vehicle.slug,
+    source: vehicle.source,
+    internalStatus: vehicle.internalStatus,
+    status: vehicle.internalStatus,
+    title,
+    brand: vehicle.brand,
+    marca: vehicle.brand,
+    model: vehicle.model,
+    modelo: vehicle.model,
+    version: vehicle.version,
+    year: vehicle.year,
+    km: vehicle.km,
+    price: numericPrice,
+    precio: numericPrice,
+    currency: vehicle.currency,
+    condition: vehicle.condition,
+    color: vehicle.color,
+    fuel: vehicle.fuel,
+    transmission: vehicle.transmission,
+    doors: vehicle.doors,
+    engine: vehicle.engine,
+    traction: vehicle.traction,
+    bodyType: vehicle.bodyType,
+    vehicleType: vehicle.vehicleType,
+    domain: vehicle.domain,
+    patent: vehicle.patent,
+    plate: vehicle.plate,
+    vin: vehicle.vin,
+    locationCity: vehicle.locationCity,
+    locationState: vehicle.locationState,
+    description: vehicle.description,
+    pictures,
+    imageUrl: cover?.url || null,
+    permalink: vehicle.meliPermalink || vehicle.permalink || null,
+    publishToMeli: Boolean(vehicle.publishToMeli),
+    meliItemId: vehicle.meliItemId,
+    meliStatus: vehicle.meliStatus,
+    meliPermalink: vehicle.meliPermalink,
+    meliCategoryId: vehicle.meliCategoryId,
+    meliDomainId: vehicle.meliDomainId,
+    meliListingTypeId: vehicle.meliListingTypeId,
+    meliAttributes: Array.isArray(vehicle.meliAttributes) ? vehicle.meliAttributes : [],
+    meliPayloadDraft: vehicle.meliPayloadDraft,
+    meliLastSyncAt: vehicle.meliLastSyncAt,
+    meliLastError: vehicle.meliLastError,
+    meliValidationErrors: Array.isArray(vehicle.meliValidationErrors) ? vehicle.meliValidationErrors : [],
+    createdAt: vehicle.createdAt,
+    updatedAt: vehicle.updatedAt,
+    label: [vehicle.brand, vehicle.model, vehicle.version, vehicle.year].filter(Boolean).join(" ").trim() || title
+  };
+};
+
+const validateRequiredFields = (body: any): string[] => {
+  const missing: string[] = [];
+  if (!cleanString(body.brand)) missing.push("brand");
+  if (!cleanString(body.model)) missing.push("model");
+  if (cleanNumber(body.year) === null) missing.push("year");
+  if (cleanNumber(body.price) === null) missing.push("price");
+  if (!["ARS", "USD"].includes(cleanString(body.currency).toUpperCase())) missing.push("currency");
+  if (!["new", "used"].includes(cleanString(body.condition).toLowerCase())) missing.push("condition");
+  return missing;
+};
+
+const buildPatch = (body: any, userId?: number, currentVehicle?: Vehicle): Record<string, any> => {
+  const brand = cleanNullableString(body.brand) ?? currentVehicle?.brand ?? null;
+  const model = cleanNullableString(body.model) ?? currentVehicle?.model ?? null;
+  const version = cleanNullableString(body.version) ?? currentVehicle?.version ?? null;
+  const year = body.year !== undefined ? cleanNumber(body.year) : currentVehicle?.year ?? null;
+  const inputTitle = body.title !== undefined ? cleanString(body.title) : cleanString(currentVehicle?.title);
+  const title = inputTitle || buildVehicleTitle({ brand, model, version, year: year as any }) || null;
+
+  const inputSlug = body.slug !== undefined ? cleanString(body.slug) : cleanString(currentVehicle?.slug);
+  const slugSource = inputSlug || title || [brand, model, year].filter(Boolean).join(" ");
+
+  const patch: Record<string, any> = {
+    slug: slugSource ? toSlug(slugSource) : null,
+    source: cleanNullableString(body.source) ?? currentVehicle?.source ?? "wapro",
+    internalStatus: cleanNullableString(body.internalStatus) ?? currentVehicle?.internalStatus ?? "draft",
+    title,
     brand,
     model,
     version,
-    title,
+    year,
+    km: body.km !== undefined ? cleanNumber(body.km) : currentVehicle?.km ?? null,
+    price: body.price !== undefined ? cleanNumber(body.price) : currentVehicle?.price ?? null,
+    currency: body.currency !== undefined ? cleanString(body.currency).toUpperCase() || null : currentVehicle?.currency ?? null,
+    condition: body.condition !== undefined ? cleanString(body.condition).toLowerCase() || null : currentVehicle?.condition ?? null,
+    color: body.color !== undefined ? cleanNullableString(body.color) : currentVehicle?.color ?? null,
+    fuel: body.fuel !== undefined ? cleanNullableString(body.fuel) : currentVehicle?.fuel ?? null,
+    transmission: body.transmission !== undefined ? cleanNullableString(body.transmission) : currentVehicle?.transmission ?? null,
+    doors: body.doors !== undefined ? cleanNumber(body.doors) : currentVehicle?.doors ?? null,
+    engine: body.engine !== undefined ? cleanNullableString(body.engine) : currentVehicle?.engine ?? null,
+    traction: body.traction !== undefined ? cleanNullableString(body.traction) : currentVehicle?.traction ?? null,
+    bodyType: body.bodyType !== undefined ? cleanNullableString(body.bodyType) : currentVehicle?.bodyType ?? null,
+    vehicleType: body.vehicleType !== undefined ? cleanNullableString(body.vehicleType) : currentVehicle?.vehicleType ?? null,
+    domain: body.domain !== undefined ? cleanNullableString(body.domain) : currentVehicle?.domain ?? null,
+    patent: body.patent !== undefined ? cleanNullableString(body.patent) : currentVehicle?.patent ?? null,
+    plate: body.plate !== undefined ? cleanNullableString(body.plate) : currentVehicle?.plate ?? null,
+    vin: body.vin !== undefined ? cleanNullableString(body.vin) : currentVehicle?.vin ?? null,
+    locationCity: body.locationCity !== undefined ? cleanNullableString(body.locationCity) : currentVehicle?.locationCity ?? null,
+    locationState: body.locationState !== undefined ? cleanNullableString(body.locationState) : currentVehicle?.locationState ?? null,
+    description: body.description !== undefined ? cleanNullableString(body.description) : currentVehicle?.description ?? null,
+    pictures: body.pictures !== undefined ? normalizePictures(body.pictures) : normalizePictures(currentVehicle?.pictures),
+    permalink: body.permalink !== undefined ? cleanNullableString(body.permalink) : currentVehicle?.permalink ?? null,
+    publishToMeli: body.publishToMeli !== undefined ? Boolean(cleanBoolean(body.publishToMeli)) : Boolean(currentVehicle?.publishToMeli),
+    meliItemId: body.meliItemId !== undefined ? cleanNullableString(body.meliItemId) : currentVehicle?.meliItemId ?? null,
+    meliStatus: body.meliStatus !== undefined ? cleanNullableString(body.meliStatus) : currentVehicle?.meliStatus ?? null,
+    meliPermalink: body.meliPermalink !== undefined ? cleanNullableString(body.meliPermalink) : currentVehicle?.meliPermalink ?? null,
+    meliCategoryId: body.meliCategoryId !== undefined ? cleanNullableString(body.meliCategoryId) : currentVehicle?.meliCategoryId ?? null,
+    meliDomainId: body.meliDomainId !== undefined ? cleanNullableString(body.meliDomainId) : currentVehicle?.meliDomainId ?? null,
+    meliListingTypeId:
+      body.meliListingTypeId !== undefined ? cleanNullableString(body.meliListingTypeId) : currentVehicle?.meliListingTypeId ?? null,
+    meliAttributes: body.meliAttributes !== undefined ? normalizeArray(body.meliAttributes) : normalizeArray(currentVehicle?.meliAttributes),
+    meliPayloadDraft: body.meliPayloadDraft !== undefined ? body.meliPayloadDraft : currentVehicle?.meliPayloadDraft ?? null,
+    meliLastSyncAt: body.meliLastSyncAt !== undefined ? body.meliLastSyncAt || null : currentVehicle?.meliLastSyncAt ?? null,
+    meliLastError: body.meliLastError !== undefined ? cleanNullableString(body.meliLastError) : currentVehicle?.meliLastError ?? null,
+    meliValidationErrors:
+      body.meliValidationErrors !== undefined
+        ? normalizeArray(body.meliValidationErrors)
+        : normalizeArray(currentVehicle?.meliValidationErrors),
+    updatedByUserId: userId ?? currentVehicle?.updatedByUserId ?? null
   };
-}
 
-function buildVehicleLabel(row: any): string {
-  if (!row || typeof row !== "object") return "";
-  const parsed = parseTitleParts(row);
-  const brand = normalizeLabelToken(parsed.brand);
-  const model = normalizeLabelToken(parsed.model);
-  const year = normalizeLabelToken(row.year);
-  const version = normalizeLabelToken(parsed.version);
-  const title = normalizeLabelToken(parsed.title);
-
-  const base = compactUnique([brand, model, year]);
-  const versionNorm = normalizeForCompare(version);
-  const baseNorm = normalizeForCompare(base.join(" "));
-  const titleNorm = normalizeForCompare(title);
-
-  const extras: string[] = [];
-  // Agregar version solo si no está contenida en base.
-  if (version && versionNorm && !baseNorm.includes(versionNorm)) extras.push(version);
-
-  // Agregar title solo si aporta información que no está en base+version.
-  // NO usar includesBaseNorm(titleNorm) porque title SIEMPRE es más largo (tiene brand+model+version).
-  // En cambio: si title empieza por brand+model (normalizado), el title no agrega nada nuevo
-  // ya que brand+model+version+year ya está en base+extras.
-  const brandModelNorm = normalizeForCompare([brand, model].filter(Boolean).join(" "));
-  const titleStartsWithBrandModel = brandModelNorm && titleNorm.startsWith(brandModelNorm);
-  const extrasNorm = extras.map((x) => normalizeForCompare(x));
-  const titleAlreadyCovered = titleStartsWithBrandModel || extrasNorm.some((x) => x === titleNorm);
-
-  if (title && titleNorm && !titleAlreadyCovered) {
-    extras.push(title);
+  if (!currentVehicle) {
+    patch.id = cleanString(body.id) || uuidv4();
+    patch.createdByUserId = userId ?? null;
   }
 
-  const label = compactUnique([...base, ...extras]).join(" ").trim();
-  return label || title || compactUnique([brand, model, version, year]).join(" ").trim();
-}
+  return patch;
+};
 
-export const index = async (req: Request, res: Response): Promise<Response> => {
-  const { q = "", searchParam = "", id = "", limit = "200" } = req.query as Query;
-  const lim = Math.min(Math.max(parseInt(String(limit), 10) || 200, 1), 1000);
-  const term = String(q || searchParam || "").trim();
-  const exactId = String(id || "").trim();
+const persistMeliResult = async (vehicle: Vehicle, result: any, userId?: number) => {
+  const patch: Record<string, any> = {
+    meliPayloadDraft: result.payloadPreview,
+    meliValidationErrors: result.missingFields || [],
+    updatedByUserId: userId ?? vehicle.updatedByUserId ?? null
+  };
 
+  if (result.ok) {
+    patch.meliItemId = result.meliItemId ?? vehicle.meliItemId ?? null;
+    patch.meliPermalink = result.permalink ?? vehicle.meliPermalink ?? null;
+    patch.meliStatus = result.meliStatus ?? vehicle.meliStatus ?? null;
+    patch.meliLastSyncAt = result.apiCalled ? new Date() : vehicle.meliLastSyncAt ?? null;
+    patch.meliLastError = null;
+    if (result.action === "publish" || result.action === "sync" || result.action === "reactivate") {
+      patch.publishToMeli = true;
+    }
+    if (result.action === "pause") {
+      patch.internalStatus = "paused";
+    }
+    if (result.action === "reactivate" && vehicle.internalStatus === "paused") {
+      patch.internalStatus = "available";
+    }
+  } else {
+    patch.meliLastError = result.error || (result.missingFields || []).join(", ") || vehicle.meliLastError || null;
+  }
+
+  await vehicle.update(patch as any);
+  return vehicle;
+};
+
+const sendMeliActionResponse = async (
+  req: Request,
+  res: Response,
+  vehicle: Vehicle,
+  action: Promise<any>
+): Promise<Response> => {
   try {
-    const source = await detectSource();
-    if (!source) {
-      // Return empty array (preserves frontend contract) but expose diagnostic
-      // via a non-breaking field so the panel can show a warning.
-      return res.json({ vehicles: [], _catalogError: "no_source_detected" });
-    }
+    const result = await action;
+    await persistMeliResult(vehicle, result, (req as any).user?.id);
 
-    const { schema, table, map } = source;
-
-    // Build SELECT with best-effort fallbacks.
-    const brandExpr = map.brand ? qi(map.brand) : "''";
-    const modelExpr = map.model ? qi(map.model) : "''";
-
-    // Prefer title if it exists, otherwise version, otherwise concat brand+model.
-    const titleExpr = map.title
-      ? qi(map.title)
-      : map.version
-        ? qi(map.version)
-        : `TRIM(CONCAT(${brandExpr}, ' ', ${modelExpr}))`;
-    const versionExpr = map.version ? qi(map.version) : "''";
-
-    const priceExpr = map.price ? `COALESCE(${qi(map.price)}, 0)` : "0";
-    const currencyExpr = map.currency ? `COALESCE(${qi(map.currency)}, '')` : `''`;
-    const yearExpr = map.year ? qi(map.year) : "NULL";
-    const kmExpr = map.km ? qi(map.km) : "NULL";
-    const transmissionExpr = map.transmission ? qi(map.transmission) : "NULL";
-    const fuelExpr = map.fuel ? qi(map.fuel) : "NULL";
-    const colorExpr = map.color ? qi(map.color) : "NULL";
-    const statusExpr = map.status ? qi(map.status) : `'active'`;
-    const imageExpr = map.image ? qi(map.image) : "NULL";
-    const picturesExpr = map.pictures ? qi(map.pictures) : "NULL";
-    const permalinkExpr = map.permalink ? qi(map.permalink) : "NULL";
-    const sourceExpr = map.source ? qi(map.source) : "NULL";
-
-    const whereParts: string[] = [];
-    if (exactId) {
-      whereParts.push(`${qi(map.id)}::text = :exactId`);
-    }
-    if (term) {
-      const orParts: string[] = [];
-      if (map.title) orParts.push(`${qi(map.title)} ILIKE :term`);
-      if (map.brand) orParts.push(`${qi(map.brand)} ILIKE :term`);
-      if (map.model) orParts.push(`${qi(map.model)} ILIKE :term`);
-      if (map.version) orParts.push(`${qi(map.version)} ILIKE :term`);
-      orParts.push(`TRIM(CONCAT(${brandExpr}, ' ', ${modelExpr}, ' ', ${titleExpr})) ILIKE :term`);
-      if (orParts.length) whereParts.push(`(${orParts.join(" OR ")})`);
-    }
-
-    const whereSql = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
-
-    const sql = `
-      SELECT
-        ${qi(map.id)} as id,
-        ${brandExpr} as brand,
-        ${modelExpr} as model,
-        ${titleExpr} as title,
-        ${versionExpr} as version,
-        ${priceExpr} as price,
-        ${currencyExpr} as currency,
-        ${yearExpr} as year,
-        ${kmExpr} as km,
-        ${transmissionExpr} as transmission,
-        ${fuelExpr} as fuel,
-        ${colorExpr} as color,
-        ${statusExpr} as status,
-        ${imageExpr} as image,
-        ${picturesExpr} as pictures,
-        ${permalinkExpr} as permalink,
-        ${sourceExpr} as source
-      FROM ${qi(schema)}.${qi(table)}
-      ${whereSql}
-      ORDER BY ${map.year ? `${qi(map.year)} DESC NULLS LAST,` : ""} ${qi(map.id)} DESC
-      LIMIT :lim
-    `;
-
-    const rows = await catalogQuery(sql, {
-      term: `%${term}%`,
-      exactId,
-      lim,
+    const statusCode = result.statusCode || (result.ok ? 200 : result.apiCalled ? 502 : 400);
+    return res.status(statusCode).json({
+      ok: result.ok,
+      missingFields: result.missingFields,
+      warnings: result.warnings,
+      payloadPreview: result.payloadPreview,
+      meliItemId: result.meliItemId ?? vehicle.meliItemId ?? null,
+      permalink: result.permalink ?? vehicle.meliPermalink ?? null,
+      meliStatus: result.meliStatus ?? vehicle.meliStatus ?? null,
+      error: result.error || null
     });
-
-    const vehicles = (Array.isArray(rows) ? rows : []).map((v: any) => {
-      const parsed = parseTitleParts(v);
-      const price = Number(v.price) || 0;
-      const imageUrl = pickImage(v.image) || pickImage(v.pictures);
-      const base = {
-        id: String(v.id ?? "").trim(),
-        marca: parsed.brand,
-        modelo: parsed.model,
-        version: parsed.version,
-        title: parsed.title,
-        precio: price,
-        currency: inferCurrency(v.currency, price, v.status),
-        year: v.year ?? null,
-        km: v.km ?? null,
-        transmission: asCleanString(v.transmission),
-        fuel: asCleanString(v.fuel),
-        color: asCleanString(v.color),
-        status: asCleanString(v.status) || "active",
-        imageUrl,
-        pictures: parseMaybeJson(v.pictures),
-        permalink: asCleanString(v.permalink),
-        source: asCleanString(v.source),
-      };
-      return {
-        ...base,
-        label: buildVehicleLabel(base)
-      };
-    });
-
-    return res.json({ vehicles });
-  } catch (err) {
-    console.error("[vehicles#index] lookup failed", err);
-    // Preserve frontend contract but expose error type for diagnostics.
-    const msg = err instanceof Error ? err.message : String(err);
-    return res.json({ vehicles: [], _catalogError: msg || "lookup_failed" });
+  } catch (error) {
+    logMeliVehicleError("vehicles.ml.action.failed", error);
+    await vehicle.update({
+      meliLastError: String((error as any)?.message || error || "meli_vehicle_action_failed"),
+      updatedByUserId: (req as any).user?.id ?? vehicle.updatedByUserId ?? null
+    } as any);
+    return res.status(500).json({ ok: false, error: "meli_vehicle_action_failed" });
   }
 };
 
-/**
- * DELETE /vehicles/:id
- * Deletes a vehicle by id from the Railway vehicles table.
- * Uses the same table-discovery logic to find the right table.
- */
-export const remove = async (req: Request, res: Response): Promise<Response> => {
-  const id = String(req.params.id || "").trim();
-  if (!id) {
-    return res.status(400).json({ ok: false, error: "Missing vehicle id" });
-  }
-
+export const index = async (req: Request, res: Response): Promise<Response> => {
   try {
-    const source = await detectSource();
-    if (!source) {
-      return res.status(404).json({ ok: false, error: "vehicles_table_not_found" });
+    const {
+      q = "",
+      brand,
+      model,
+      year,
+      internalStatus,
+      meliStatus,
+      publishToMeli,
+      currency,
+      id,
+      limit = "100"
+    } = req.query as VehicleQuery;
+
+    const where: any = {};
+    const normalizedQ = cleanString(q);
+    const normalizedId = cleanString(id);
+    const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 200);
+
+    if (normalizedId) where.id = normalizedId;
+    if (brand) where.brand = { [Op.iLike]: `%${cleanString(brand)}%` };
+    if (model) where.model = { [Op.iLike]: `%${cleanString(model)}%` };
+    if (cleanNumber(year) !== null) where.year = cleanNumber(year);
+    if (internalStatus) where.internalStatus = cleanString(internalStatus);
+    if (meliStatus) where.meliStatus = cleanString(meliStatus);
+    if (currency) where.currency = cleanString(currency).toUpperCase();
+
+    const publishToMeliBool = cleanBoolean(publishToMeli);
+    if (publishToMeliBool !== null) where.publishToMeli = publishToMeliBool;
+
+    if (normalizedQ) {
+      where[Op.or] = [
+        { title: { [Op.iLike]: `%${normalizedQ}%` } },
+        { brand: { [Op.iLike]: `%${normalizedQ}%` } },
+        { model: { [Op.iLike]: `%${normalizedQ}%` } },
+        { version: { [Op.iLike]: `%${normalizedQ}%` } },
+        { domain: { [Op.iLike]: `%${normalizedQ}%` } },
+        { plate: { [Op.iLike]: `%${normalizedQ}%` } }
+      ];
     }
 
-    const idCol = source.map.id;
+    const vehicles = await Vehicle.findAll({
+      where,
+      order: [["updatedAt", "DESC"]],
+      limit: safeLimit
+    });
 
-    // Desvincular cotizaciones antes de eliminar para evitar FK violation.
-    // quotations siempre está en la DB del panel (Sequelize/Railway) — nunca en Supabase.
-    await sequelize.query(
-      `UPDATE "public"."quotations" SET "vehicle_id" = NULL WHERE "vehicle_id" = :id`,
-      { replacements: { id } }
-    );
+    return res.json({ vehicles: vehicles.map(serializeVehicle) });
+  } catch (error) {
+    logger.error({ error, query: req.query }, "vehicles.index.failed");
+    return res.status(500).json({ vehicles: [], error: "vehicles_list_failed" });
+  }
+};
 
-    const deleted = await catalogMutate(
-      `DELETE FROM "${source.schema}"."${source.table}" WHERE "${idCol}" = :id`,
-      { id }
-    );
-    if (!deleted) {
+export const show = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const vehicle = await Vehicle.findByPk(String(req.params.id));
+    if (!vehicle) {
       return res.status(404).json({ ok: false, error: "vehicle_not_found" });
     }
 
-    return res.json({ ok: true, deleted: id });
-  } catch (err: any) {
-    console.error("[vehicles#remove] error", err);
-    // FK violation residual (otra tabla referencia el vehicle) → 409 controlado
-    if (err?.original?.code === "23503" || err?.code === "23503" || String(err?.message ?? "").includes("violates foreign key")) {
-      return res.status(409).json({ ok: false, error: "vehicle_has_references", detail: err.message });
-    }
-    const msg = err instanceof Error ? err.message : String(err);
-    return res.status(500).json({ ok: false, error: msg });
+    return res.json({ vehicle: serializeVehicle(vehicle) });
+  } catch (error) {
+    logger.error({ error, vehicleId: req.params.id }, "vehicles.show.failed");
+    return res.status(500).json({ ok: false, error: "vehicle_show_failed" });
   }
-};    
+};
 
-/**
- * GET /admin/catalog-debug
- * Devuelve información de depuración sobre la fuente del catálogo de vehículos.
- * Permite a los operadores y desarrolladores verificar rápidamente desde qué
- * base y tabla se está leyendo el inventario, cuántos vehículos hay y si
- * se está utilizando Supabase como origen.
- */
+export const store = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const missingFields = validateRequiredFields(req.body || {});
+    if (missingFields.length) {
+      return res.status(400).json({ ok: false, error: "missing_required_fields", missingFields });
+    }
+
+    const patch = buildPatch(req.body || {}, (req as any).user?.id);
+    const vehicle = await Vehicle.create(patch as any);
+
+    return res.status(201).json({ vehicle: serializeVehicle(vehicle) });
+  } catch (error) {
+    logger.error({ error, body: req.body }, "vehicles.store.failed");
+    return res.status(500).json({ ok: false, error: "vehicle_create_failed" });
+  }
+};
+
+export const update = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const vehicle = await Vehicle.findByPk(String(req.params.id));
+    if (!vehicle) {
+      return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+    }
+
+    const patch = buildPatch(req.body || {}, (req as any).user?.id, vehicle);
+    await vehicle.update(patch as any);
+
+    return res.json({ vehicle: serializeVehicle(vehicle) });
+  } catch (error) {
+    logger.error({ error, vehicleId: req.params.id, body: req.body }, "vehicles.update.failed");
+    return res.status(500).json({ ok: false, error: "vehicle_update_failed" });
+  }
+};
+
+export const updateStatus = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const vehicle = await Vehicle.findByPk(String(req.params.id));
+    if (!vehicle) {
+      return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+    }
+
+    const nextStatus = cleanString(req.body?.internalStatus || req.body?.status);
+    if (!["available", "reserved", "sold", "paused", "draft"].includes(nextStatus)) {
+      return res.status(400).json({ ok: false, error: "invalid_internal_status" });
+    }
+
+    await vehicle.update({
+      internalStatus: nextStatus,
+      updatedByUserId: (req as any).user?.id ?? vehicle.updatedByUserId
+    } as any);
+
+    return res.json({ vehicle: serializeVehicle(vehicle) });
+  } catch (error) {
+    logger.error({ error, vehicleId: req.params.id, body: req.body }, "vehicles.updateStatus.failed");
+    return res.status(500).json({ ok: false, error: "vehicle_status_update_failed" });
+  }
+};
+
+export const remove = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const vehicle = await Vehicle.findByPk(String(req.params.id));
+    if (!vehicle) {
+      return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+    }
+
+    if (vehicle.meliItemId) {
+      if (vehicle.internalStatus !== "paused") {
+        await vehicle.update({
+          internalStatus: "paused",
+          updatedByUserId: (req as any).user?.id ?? vehicle.updatedByUserId
+        } as any);
+
+        return res.json({
+          ok: true,
+          action: "paused_instead_of_delete",
+          message: "El vehículo tiene publicación ML asociada. Se pausó localmente en lugar de borrarse.",
+          vehicle: serializeVehicle(vehicle)
+        });
+      }
+
+      return res.status(409).json({
+        ok: false,
+        error: "vehicle_linked_to_meli",
+        message: "El vehículo sigue vinculado a MercadoLibre. Primero cerrá o desvinculá la publicación."
+      });
+    }
+
+    await Quotation.update(
+      { vehicleRefId: null, vehicleLabel: null } as any,
+      { where: { vehicleRefId: String(vehicle.id) } }
+    );
+
+    await vehicle.destroy();
+
+    return res.json({ ok: true, deleted: String(req.params.id) });
+  } catch (error) {
+    logger.error({ error, vehicleId: req.params.id }, "vehicles.remove.failed");
+    return res.status(500).json({ ok: false, error: "vehicle_delete_failed" });
+  }
+};
+
+export const validateMeliPayload = async (req: Request, res: Response): Promise<Response> => {
+  const vehicle = await Vehicle.findByPk(String(req.params.id));
+  if (!vehicle) {
+    return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+  }
+
+  return sendMeliActionResponse(req, res, vehicle, validateVehicleForMeli(vehicle));
+};
+
+export const validateMl = async (req: Request, res: Response): Promise<Response> => validateMeliPayload(req, res);
+
+export const dryRunMl = async (req: Request, res: Response): Promise<Response> => {
+  const vehicle = await Vehicle.findByPk(String(req.params.id));
+  if (!vehicle) {
+    return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+  }
+
+  return sendMeliActionResponse(req, res, vehicle, dryRunVehicleForMeli(vehicle));
+};
+
+export const publishMl = async (req: Request, res: Response): Promise<Response> => {
+  const vehicle = await Vehicle.findByPk(String(req.params.id));
+  if (!vehicle) {
+    return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+  }
+
+  return sendMeliActionResponse(req, res, vehicle, publishVehicleToMeli(vehicle, (req as any).meliDeps));
+};
+
+export const syncMl = async (req: Request, res: Response): Promise<Response> => {
+  const vehicle = await Vehicle.findByPk(String(req.params.id));
+  if (!vehicle) {
+    return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+  }
+
+  return sendMeliActionResponse(req, res, vehicle, syncVehicleToMeli(vehicle, (req as any).meliDeps));
+};
+
+export const pauseMl = async (req: Request, res: Response): Promise<Response> => {
+  const vehicle = await Vehicle.findByPk(String(req.params.id));
+  if (!vehicle) {
+    return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+  }
+
+  return sendMeliActionResponse(req, res, vehicle, pauseVehicleOnMeli(vehicle, (req as any).meliDeps));
+};
+
+export const reactivateMl = async (req: Request, res: Response): Promise<Response> => {
+  const vehicle = await Vehicle.findByPk(String(req.params.id));
+  if (!vehicle) {
+    return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+  }
+
+  return sendMeliActionResponse(req, res, vehicle, reactivateVehicleOnMeli(vehicle, (req as any).meliDeps));
+};
+
+export const mlHealth = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const health = await getMeliHealthStatus((req as any).meliDeps);
+    return res.json(health);
+  } catch (error) {
+    logger.error({ error }, "vehicles.ml.health.failed");
+    return res.status(500).json({
+      hasTokenRow: false,
+      hasAccessToken: false,
+      hasRefreshToken: false,
+      expiresAt: null,
+      isExpired: true,
+      publishEnabled: process.env.MELI_PUBLISH_ENABLED === "true",
+      canAttemptRefresh: false,
+      error: "meli_health_failed"
+    });
+  }
+};
+
 export const debug = async (_req: Request, res: Response): Promise<Response> => {
   try {
-    const source = await detectSource();
-    const supabasePool = getSupabasePool();
-    let count = 0;
-    if (source) {
-      // Contar todos los registros de la tabla detectada
-      try {
-        const rows = await catalogQuery(
-          `SELECT COUNT(*) as count FROM "${source.schema}"."${source.table}"`
-        );
-        const cnt = rows?.[0]?.count;
-        count = typeof cnt === "number" ? cnt : parseInt(String(cnt || 0), 10);
-      } catch (e) {
-        // Si la consulta falla, dejamos count en 0 y exponemos el error en la respuesta
-        console.error("[vehicles#debug] count error", e);
-      }
-    }
+    const count = await Vehicle.count();
     return res.json({
       ok: true,
-      supabase: !!supabasePool,
-      source: source || null,
-      count,
+      supabase: false,
+      source: {
+        schema: "public",
+        table: "vehicles",
+        mode: "sequelize"
+      },
+      count
     });
-  } catch (err) {
-    console.error("[vehicles#debug] error", err);
-    const msg = err instanceof Error ? err.message : String(err);
-    return res.status(500).json({ ok: false, error: msg });
+  } catch (error) {
+    logger.error({ error }, "vehicles.debug.failed");
+    return res.status(500).json({ ok: false, error: "catalog_debug_failed" });
   }
 };

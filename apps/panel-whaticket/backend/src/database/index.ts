@@ -18,6 +18,7 @@ import PipelineStage from "../models/PipelineStage";
 import TicketStageHistory from "../models/TicketStageHistory";
 import Quotation from "../models/Quotation";
 import AgentFeedback from "../models/AgentFeedback";
+import Vehicle from "../models/Vehicle";
 import { resolveDatabaseUrl } from "../config/resolveDatabaseUrl";
 
 // eslint-disable-next-line
@@ -57,7 +58,8 @@ const models = [
   PipelineStage,
   TicketStageHistory,
   Quotation,
-  AgentFeedback
+  AgentFeedback,
+  Vehicle
 ];
 
 sequelize.addModels(models);
