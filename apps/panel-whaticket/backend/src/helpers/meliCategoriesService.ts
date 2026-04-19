@@ -83,6 +83,14 @@ const asNumber = (value: any): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const normalizeText = (value: any): string =>
+  asString(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
 const buildVehicleTitle = (vehicle: Partial<Vehicle>): string =>
   [vehicle.brand, vehicle.model, vehicle.version, vehicle.year]
     .map(asString)
@@ -182,6 +190,50 @@ const isValuePresent = (value: any): boolean => {
   return Boolean(value);
 };
 
+const FUEL_NORMALIZATION: Record<string, string> = {
+  nafta: "Nafta",
+  diesel: "Diésel",
+  dieselo: "Diésel",
+  electrico: "Eléctrico",
+  hibrido: "Híbrido",
+  hybrid: "Híbrido"
+};
+
+const VEHICLE_TYPE_NORMALIZATION: Record<string, string> = {
+  sedan: "Sedán",
+  hatchback: "Hatchback",
+  suv: "SUV",
+  pickup: "Pick-Up",
+  "pick up": "Pick-Up",
+  coupe: "Coupé"
+};
+
+const normalizeFuelValue = (value: any): string | null => {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+  return FUEL_NORMALIZATION[normalized] || asString(value);
+};
+
+const normalizeVehicleTypeValue = (value: any): string | null => {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+  return VEHICLE_TYPE_NORMALIZATION[normalized] || asString(value);
+};
+
+const normalizeDoorsValue = (value: any): string | null => {
+  const numeric = asNumber(value);
+  if (numeric === null) {
+    const normalized = normalizeText(value).replace(/ puertas?$/i, "");
+    return /^\d+$/.test(normalized) ? normalized : null;
+  }
+  return String(Math.trunc(numeric));
+};
+
+const normalizeTrimValue = (value: any): string | null => {
+  const normalized = asString(value);
+  return normalized || null;
+};
+
 const VEHICLE_ATTRIBUTE_ALIASES: Record<string, Array<(vehicle: Vehicle) => any>> = {
   BRAND: [(vehicle) => vehicle.brand],
   MODEL: [(vehicle) => vehicle.model],
@@ -189,20 +241,48 @@ const VEHICLE_ATTRIBUTE_ALIASES: Record<string, Array<(vehicle: Vehicle) => any>
   VEHICLE_YEAR: [(vehicle) => vehicle.year],
   KILOMETERS: [(vehicle) => (asString(vehicle.condition).toLowerCase() === "used" ? vehicle.km : null)],
   VEHICLE_MILEAGE: [(vehicle) => (asString(vehicle.condition).toLowerCase() === "used" ? vehicle.km : null)],
+  TRIM: [(vehicle) => normalizeTrimValue(vehicle.version)],
   VERSION: [(vehicle) => vehicle.version],
-  FUEL_TYPE: [(vehicle) => vehicle.fuel],
+  FUEL_TYPE: [(vehicle) => normalizeFuelValue(vehicle.fuel)],
   TRANSMISSION: [(vehicle) => vehicle.transmission],
   COLOR: [(vehicle) => vehicle.color],
-  DOORS: [(vehicle) => vehicle.doors],
+  DOORS: [(vehicle) => normalizeDoorsValue(vehicle.doors)],
   ENGINE: [(vehicle) => vehicle.engine],
   ENGINE_DISPLACEMENT: [(vehicle) => vehicle.engine],
   BODY_TYPE: [(vehicle) => vehicle.bodyType],
-  VEHICLE_TYPE: [(vehicle) => vehicle.vehicleType],
+  VEHICLE_TYPE: [(vehicle) => normalizeVehicleTypeValue(vehicle.vehicleType), (vehicle) => normalizeVehicleTypeValue(vehicle.bodyType)],
   TRACTION_CONTROL: [(vehicle) => vehicle.traction],
   TRACTION_TYPE: [(vehicle) => vehicle.traction]
 };
 
+const matchAllowedValue = (rawValue: any, attribute: MeliCategoryAttribute): string | null => {
+  if (!isValuePresent(rawValue)) return null;
+
+  const values = Array.isArray(attribute.values) ? attribute.values : [];
+  if (!values.length) {
+    return String(rawValue);
+  }
+
+  const rawNormalized = normalizeText(rawValue);
+  if (!rawNormalized) return null;
+
+  const match = values.find((item) => {
+    const candidates = [
+      normalizeText(item?.name),
+      normalizeText(item?.id),
+      normalizeText(item?.value_name)
+    ].filter(Boolean);
+    return candidates.includes(rawNormalized);
+  });
+
+  return match ? asString(match.name || match.value_name || rawValue) : null;
+};
+
 const resolveVehicleAttributeValue = (vehicle: Vehicle, attribute: MeliCategoryAttribute): any => {
+  if (attribute.tags?.fixed && Array.isArray(attribute.values) && attribute.values.length === 1) {
+    return asString(attribute.values[0]?.name || attribute.values[0]?.value_name || attribute.values[0]?.id) || null;
+  }
+
   const candidates = [
     asString(attribute.id).toUpperCase(),
     asString(attribute.name).toUpperCase().replace(/[^A-Z0-9]+/g, "_")
@@ -212,8 +292,21 @@ const resolveVehicleAttributeValue = (vehicle: Vehicle, attribute: MeliCategoryA
     const resolvers = VEHICLE_ATTRIBUTE_ALIASES[key];
     if (!resolvers) continue;
     for (const resolver of resolvers) {
-      const value = resolver(vehicle);
-      if (isValuePresent(value)) return value;
+      const rawValue = resolver(vehicle);
+      if (!isValuePresent(rawValue)) continue;
+
+      if (attribute.value_type === "list" || (Array.isArray(attribute.values) && attribute.values.length > 0)) {
+        const matchedValue = matchAllowedValue(rawValue, attribute);
+        if (isValuePresent(matchedValue)) return matchedValue;
+        continue;
+      }
+
+      if (attribute.value_type === "number" || attribute.value_type === "number_unit") {
+        const numeric = asNumber(rawValue);
+        if (numeric !== null) return String(numeric);
+      }
+
+      if (isValuePresent(rawValue)) return rawValue;
     }
   }
 

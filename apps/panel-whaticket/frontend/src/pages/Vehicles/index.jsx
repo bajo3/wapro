@@ -99,6 +99,19 @@ const statusOptions = [
   ["draft", "Borrador"]
 ];
 
+const mlFieldHints = {
+  TRIM: { label: "Versión", example: "2.0 TSI" },
+  VEHICLE_TYPE: { label: "Tipo de vehículo", example: "Sedán" },
+  FUEL_TYPE: { label: "Combustible", example: "Nafta" },
+  DOORS: { label: "Puertas", example: "4" },
+  BRAND: { label: "Marca", example: "Volkswagen" },
+  MODEL: { label: "Modelo", example: "Vento" },
+  VEHICLE_YEAR: { label: "Año", example: "2015" },
+  KILOMETERS: { label: "KM", example: "120000" }
+};
+
+const getMlFieldHint = (fieldId) => mlFieldHints[fieldId] || null;
+
 const parseAttributesInput = (input) => {
   const raw = String(input || "").trim();
   if (!raw) return [];
@@ -632,9 +645,21 @@ function VehiclesPage() {
           </Box>
           <Typography variant="subtitle2" color="error">Faltantes</Typography>
           <Box mt={1} mb={2}>
-            {validationState?.missingFields?.length ? validationState.missingFields.map((field) => (
-              <Chip key={field} label={field} size="small" style={{ marginRight: 8, marginBottom: 8, background: "#fee2e2", color: "#b91c1c" }} />
-            )) : <Typography variant="body2">Sin faltantes.</Typography>}
+            {validationState?.missingFields?.length ? validationState.missingFields.map((field) => {
+              const hint = getMlFieldHint(field);
+              return (
+                <Paper key={field} variant="outlined" style={{ padding: 12, marginBottom: 8, borderColor: "#fecaca", background: "#fff7f7" }}>
+                  <Typography variant="body2" style={{ fontWeight: 600, color: "#b91c1c" }}>
+                    {field}{hint ? ` — ${hint.label}` : ""}
+                  </Typography>
+                  {hint ? (
+                    <Typography variant="caption" display="block" color="textSecondary">
+                      Campo WaPro sugerido: {hint.label} · Ej: {hint.example}
+                    </Typography>
+                  ) : null}
+                </Paper>
+              );
+            }) : <Typography variant="body2">Sin faltantes.</Typography>}
           </Box>
           <Typography variant="subtitle2" style={{ color: "#ca8a04" }}>Warnings</Typography>
           <Box mt={1} mb={2}>
@@ -655,7 +680,7 @@ function VehiclesPage() {
           <Grid container spacing={2}>
             <Grid item xs={12}><Typography variant="subtitle1">1. Datos principales</Typography></Grid>
             {[
-              ["brand", "Marca"], ["model", "Modelo"], ["version", "Versión"], ["year", "Año"], ["km", "KM"], ["price", "Precio"]
+              ["brand", "Marca"], ["model", "Modelo"], ["version", "Versión / TRIM"], ["year", "Año"], ["km", "KM"], ["price", "Precio"]
             ].map(([key, label]) => (
               <Grid item xs={12} md={key === "price" ? 2 : 4} key={key}>
                 <TextField label={label} variant="outlined" size="small" fullWidth type={["year", "km", "price"].includes(key) ? "number" : "text"} value={form[key]} onChange={(e) => setForm((c) => ({ ...c, [key]: e.target.value }))} />
@@ -763,12 +788,16 @@ function VehiclesPage() {
                     <Typography variant="caption" color="error">Obligatorios</Typography>
                     <Box mt={1}>
                       {categoryRequirements.requiredAttributes?.length ? categoryRequirements.requiredAttributes.map((attribute) => (
-                        <Chip
-                          key={attribute.id}
-                          size="small"
-                          label={`${attribute.id}${attribute.missing ? " (faltante)" : ""}`}
-                          style={{ marginRight: 8, marginBottom: 8, background: attribute.missing ? "#fee2e2" : "#dcfce7", color: attribute.missing ? "#b91c1c" : "#166534" }}
-                        />
+                        <Paper key={attribute.id} variant="outlined" style={{ padding: 10, marginRight: 8, marginBottom: 8, borderColor: attribute.missing ? "#fecaca" : "#bbf7d0", background: attribute.missing ? "#fff7f7" : "#f0fdf4" }}>
+                          <Typography variant="body2" style={{ fontWeight: 600, color: attribute.missing ? "#b91c1c" : "#166534" }}>
+                            {attribute.id} — {attribute.name}{attribute.missing ? " (faltante)" : ""}
+                          </Typography>
+                          {getMlFieldHint(attribute.id) ? (
+                            <Typography variant="caption" display="block" color="textSecondary">
+                              Campo WaPro: {getMlFieldHint(attribute.id).label} · Ej: {getMlFieldHint(attribute.id).example}
+                            </Typography>
+                          ) : null}
+                        </Paper>
                       )) : <Typography variant="body2">Sin atributos obligatorios informados.</Typography>}
                     </Box>
                   </Box>
@@ -776,12 +805,16 @@ function VehiclesPage() {
                     <Typography variant="caption" style={{ color: "#a16207" }}>Recomendados</Typography>
                     <Box mt={1}>
                       {categoryRequirements.recommendedAttributes?.length ? categoryRequirements.recommendedAttributes.map((attribute) => (
-                        <Chip
-                          key={attribute.id}
-                          size="small"
-                          label={`${attribute.id}${attribute.missing ? " (faltante)" : ""}`}
-                          style={{ marginRight: 8, marginBottom: 8, background: attribute.missing ? "#fef3c7" : "#f3f4f6", color: attribute.missing ? "#a16207" : "#374151" }}
-                        />
+                        <Paper key={attribute.id} variant="outlined" style={{ padding: 10, marginRight: 8, marginBottom: 8, borderColor: attribute.missing ? "#fde68a" : "#e5e7eb", background: attribute.missing ? "#fffbeb" : "#f9fafb" }}>
+                          <Typography variant="body2" style={{ fontWeight: 600, color: attribute.missing ? "#a16207" : "#374151" }}>
+                            {attribute.id} — {attribute.name}{attribute.missing ? " (faltante)" : ""}
+                          </Typography>
+                          {getMlFieldHint(attribute.id) ? (
+                            <Typography variant="caption" display="block" color="textSecondary">
+                              Campo WaPro: {getMlFieldHint(attribute.id).label} · Ej: {getMlFieldHint(attribute.id).example}
+                            </Typography>
+                          ) : null}
+                        </Paper>
                       )) : <Typography variant="body2">Sin atributos recomendados informados.</Typography>}
                     </Box>
                   </Box>
