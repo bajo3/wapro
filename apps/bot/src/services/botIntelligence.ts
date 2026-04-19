@@ -284,18 +284,19 @@ export function filterCatalog(
       if (!item.fuel.toLowerCase().includes('gnc')) return false;
     }
 
-    // Carrocería: intentar inferir si no está seteada en el ítem, luego aplicar filtro duro
+    // Carrocería: filtro duro para tipos específicos; soft para compactos/genéricos sin brand/model.
+    // Si el usuario dijo "auto chico" / "económico" / "para la familia" sin marca/modelo,
+    // el bodywork extraído (hatch/sedan/familiar) es una señal de preferencia, no un filtro estricto.
+    // fuelEconomyPriority ya excluye pickups/furgones más abajo.
     if (bodywork) {
-      const effectiveBw = quickInferBodywork(item);
-      if (effectiveBw) {
-        // Si el ítem tiene (o se infirió) carrocería: debe coincidir
-        if (!effectiveBw.includes(bodywork)) return false;
-      } else {
-        // Ítem sin carrocería detectable.
-        // Para tipos estrictos (pickup/furgon/suv) excluir siempre.
-        // Para compactos (hatch/sedan) + fuelEconomyPriority: excluir también (no podemos confirmar que sea chico)
-        const isCompactStrict = fuelEconomyPriority && ['hatch', 'sedan'].includes(bodywork);
-        if (_STRICT_BODY_TYPES.has(bodywork) || isCompactStrict) return false;
+      const softBodywork = !brand && !model && !_STRICT_BODY_TYPES.has(bodywork);
+      if (!softBodywork) {
+        const effectiveBw = quickInferBodywork(item);
+        if (effectiveBw) {
+          if (!effectiveBw.includes(bodywork)) return false;
+        } else {
+          if (_STRICT_BODY_TYPES.has(bodywork)) return false;
+        }
       }
     }
 
@@ -1271,6 +1272,41 @@ async function handleSearch(ex: Extracted, state: ConvState, historyLines: strin
   const { rate: usdRate } = await getUsdToArs();
 
   if (hits.length === 0) {
+    // Fallback suave: intent exploratorio sin brand/model (auto chico, económico, para la familia).
+    // En vez de "sin match", expandir quitando bodywork/fuelEconomy y mostrar top opciones del catálogo.
+    const isSoftIntent = !ex.brand && !ex.model && (ex.fuelEconomyPriority || !!ex.useCase);
+    if (isSoftIntent) {
+      const softHits = filterCatalog(catalog, {
+        ...ex,
+        bodywork: undefined,
+        fuelEconomyPriority: false,
+        search_context: { ...(state.search_context ?? {}), bodywork: undefined },
+      });
+      if (softHits.length > 0) {
+        const shown = softHits.slice(0, 5);
+        const softLines = shown.map((v, i) => formatItemLine(v, i, usdRate)).join('\n');
+        const softDetail: ConvState['last_hits_detail'] = shown.map((v, i) => ({
+          idx: i, id: v.id, name: v.name, brand: v.brand, model: v.model,
+          priceNumber: priceToArs(v, usdRate), currency: 'ARS',
+          images: v.images,
+        }));
+        console.info(`[search] softIntentFallback=true expanded_count=${shown.length}`);
+        const softReply = await composeResponse('mostrar_resultados', {
+          resultados: softLines,
+          cantidad: shown.length,
+          leadMode: ex.leadMode ?? 'exploratory',
+          needsClarification: false,
+          nota: 'El cliente buscó algo genérico (auto chico, económico, para la familia). Mostrá estas opciones como las más cercanas a lo que buscó. Arrancá con algo como "Tengo algunas opciones que pueden encajar con lo que buscás". No digas que no hay match exacto.',
+        }, historyLines, skillHint);
+        return {
+          reply: softReply,
+          hitIds: shown.map(h => h.id),
+          hitsDetail: softDetail,
+          presentedVehicle: { ...shown[0], priceNumber: priceToArs(shown[0], usdRate), currency: 'ARS' },
+        };
+      }
+    }
+
     const alternatives = findClosestAlternatives(catalog, ex, usdRate, state.search_context);
     const altLines = alternatives.map((v, i) => formatItemLine(v, i, usdRate)).join('\n');
     const tieneAlternativas = alternatives.length > 0;
