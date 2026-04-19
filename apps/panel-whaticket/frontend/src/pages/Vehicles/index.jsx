@@ -126,6 +126,24 @@ const buildPictures = (input) =>
     .filter(Boolean)
     .map((url, index) => ({ url, source: "manual", order: index, alt: "", isCover: index === 0 }));
 
+const formatExpiresAt = (value) => {
+  if (value === null || value === undefined || value === "") return "-";
+
+  const normalized =
+    typeof value === "number"
+      ? value
+      : /^\d+$/.test(String(value).trim())
+        ? Number(String(value).trim())
+        : Date.parse(String(value));
+
+  if (!Number.isFinite(normalized)) return "-";
+
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return date.toLocaleString("es-AR");
+};
+
 const vehicleToForm = (vehicle) => ({
   brand: vehicle.brand || "",
   model: vehicle.model || "",
@@ -424,7 +442,7 @@ function VehiclesPage() {
         </Box>
         <Box mt={1}>
           <Typography variant="body2">
-            Expira: {mlHealth?.expiresAt ? new Date(mlHealth.expiresAt).toLocaleString("es-AR") : "-"}
+            Expira: {formatExpiresAt(mlHealth?.expiresAt)}
           </Typography>
           {!mlHealth?.publishEnabled ? (
             <Typography variant="body2" color="error">
