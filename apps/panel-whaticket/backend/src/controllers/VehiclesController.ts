@@ -563,7 +563,7 @@ export const reactivateMl = async (req: Request, res: Response): Promise<Respons
 
 export const mlHealth = async (req: Request, res: Response): Promise<Response> => {
   try {
-    const health = await getMeliHealthStatus((req as any).meliDeps);
+    const health = await getMeliHealthStatus();
     return res.json(health);
   } catch (error) {
     logger.error({ error }, "vehicles.ml.health.failed");

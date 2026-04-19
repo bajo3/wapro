@@ -376,6 +376,13 @@ adminRouter.get('/health/bot', async (_req: Request, res: Response) => {
 
 // ── MercadoLibre sync ──────────────────────────────────────────────────────────
 adminRouter.post('/meli/sync', async (_req, res) => {
+  if (process.env.BOT_MELI_SYNC_ENABLED !== 'true') {
+    return res.status(409).json({
+      ok: false,
+      error: 'meli_sync_moved_to_panel_backend',
+      message: 'MercadoLibre now lives in apps/panel-whaticket/backend. Enable BOT_MELI_SYNC_ENABLED=true only for legacy/manual sync.'
+    });
+  }
   if (!process.env.MELI_CLIENT_ID || !process.env.MELI_CLIENT_SECRET)
     return res.status(400).json({ ok: false, error: 'MELI credentials not configured' });
   runMeliSync().catch((e) => console.error('[meliSync] manual trigger error:', e));

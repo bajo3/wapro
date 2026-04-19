@@ -234,9 +234,10 @@ async function main() {
 
   // ── MercadoLibre sync — every 3h ──────────────────────────────────────────────
   const MELI_SYNC_MS = 3 * 60 * 60 * 1000;
+  const BOT_MELI_SYNC_ENABLED = process.env.BOT_MELI_SYNC_ENABLED === 'true';
   let meliSyncRunning = false;
 
-  if (process.env.MELI_CLIENT_ID && process.env.MELI_CLIENT_SECRET) {
+  if (BOT_MELI_SYNC_ENABLED && process.env.MELI_CLIENT_ID && process.env.MELI_CLIENT_SECRET) {
     setTimeout(async () => {
       try {
         console.log('[meliSync] initial sync on startup...');
@@ -258,7 +259,7 @@ async function main() {
       }
     }, MELI_SYNC_MS);
   } else {
-    console.warn('[meliSync] MELI_CLIENT_ID or MELI_CLIENT_SECRET not set — sync disabled');
+    console.warn('[meliSync] legacy bot sync disabled. MercadoLibre now lives in panel backend.');
   }
 }
 
@@ -266,3 +267,4 @@ main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
+
