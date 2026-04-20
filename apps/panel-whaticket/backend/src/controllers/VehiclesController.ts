@@ -442,7 +442,37 @@ export const update = async (req: Request, res: Response): Promise<Response> => 
     }
 
     const patch = buildPatch(req.body || {}, (req as any).user?.id, vehicle);
+
+    logger.info(
+      {
+        vehicleId: String(req.params.id),
+        incoming: {
+          meliCategoryId: req.body?.meliCategoryId ?? "NOT_IN_BODY",
+          condition: req.body?.condition ?? "NOT_IN_BODY",
+          meliListingTypeId: req.body?.meliListingTypeId ?? "NOT_IN_BODY"
+        },
+        patch: {
+          meliCategoryId: patch.meliCategoryId ?? null,
+          condition: patch.condition ?? null,
+          meliListingTypeId: patch.meliListingTypeId ?? null
+        }
+      },
+      "vehicles.update.meli_fields"
+    );
+
     await vehicle.update(patch as any);
+
+    logger.info(
+      {
+        vehicleId: vehicle.id,
+        saved: {
+          meliCategoryId: vehicle.meliCategoryId ?? null,
+          condition: vehicle.condition ?? null,
+          meliListingTypeId: vehicle.meliListingTypeId ?? null
+        }
+      },
+      "vehicles.update.meli_fields.saved"
+    );
 
     return res.json({ vehicle: serializeVehicle(vehicle) });
   } catch (error) {
