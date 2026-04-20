@@ -1,6 +1,6 @@
 import fetch from "node-fetch";
 
-import { getValidMeliAccessToken, readMeliTokenRow, refreshMeliToken } from "./meliTokenService";
+import { getValidMeliAccessToken, readMeliTokenRow } from "./meliTokenService";
 
 const MELI_API_URL = process.env.MELI_API_URL || "https://api.mercadolibre.com";
 
@@ -36,10 +36,9 @@ export const meliApiRequest = async (
 
   if (response.status === 401) {
     const current = await readMeliTokenRow();
-    if (!current?.refresh_token) {
-      throw new Error("401 from MercadoLibre and no token row to refresh.");
+    if (!current?.access_token) {
+      throw new Error("401 from MercadoLibre and no usable access_token is available.");
     }
-    await refreshMeliToken(current.refresh_token);
     token = await getValidMeliAccessToken();
     response = await fetch(`${MELI_API_URL}${path}`, {
       ...options,
@@ -66,4 +65,3 @@ export const meliApiRequest = async (
     body
   };
 };
-
