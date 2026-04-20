@@ -108,7 +108,9 @@ const mlFieldHints = {
   BRAND: { label: "Marca", example: "Volkswagen" },
   MODEL: { label: "Modelo", example: "Vento" },
   VEHICLE_YEAR: { label: "Año", example: "2015" },
-  KILOMETERS: { label: "KM", example: "120000" }
+  KILOMETERS: { label: "KM", example: "120000" },
+  km: { label: "Kilometraje", example: "120000" },
+  VEHICLE_MILEAGE: { label: "KM", example: "120000" }
 };
 
 const getMlFieldHint = (fieldId) => mlFieldHints[fieldId] || null;

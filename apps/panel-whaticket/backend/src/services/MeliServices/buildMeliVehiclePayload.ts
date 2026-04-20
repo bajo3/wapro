@@ -113,7 +113,10 @@ export const buildMeliVehiclePayload = async (
       const mapping = mapVehicleToMeliAttributes(vehicle, categoryAttributes);
       attributes = mapping.attributes;
 
+      const KM_ALIASES = new Set(["km", "KILOMETERS", "VEHICLE_MILEAGE"]);
+      const hasKmAlready = missingFields.some(f => KM_ALIASES.has(f));
       mapping.missingRequired.forEach((attributeId) => {
+        if (KM_ALIASES.has(attributeId) && hasKmAlready) return;
         if (!missingFields.includes(attributeId)) {
           missingFields.push(attributeId);
         }
