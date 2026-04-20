@@ -281,11 +281,14 @@ const buildPatch = (body: any, userId?: number, currentVehicle?: Vehicle): Recor
 const persistMeliResult = async (vehicle: Vehicle, result: any, userId?: number) => {
   const patch: Record<string, any> = {
     meliPayloadDraft: result.payloadPreview,
-    meliValidationErrors: result.missingFields || [],
+    meliValidationErrors: Array.isArray(result.missingFields) ? result.missingFields : [],
     updatedByUserId: userId ?? vehicle.updatedByUserId ?? null
   };
 
   if (result.ok) {
+    if (result.action === "validate" || result.action === "dry-run") {
+      patch.meliValidationErrors = [];
+    }
     patch.meliItemId = result.meliItemId ?? vehicle.meliItemId ?? null;
     patch.meliPermalink = result.permalink ?? vehicle.meliPermalink ?? null;
     patch.meliStatus = result.meliStatus ?? vehicle.meliStatus ?? null;
@@ -301,7 +304,11 @@ const persistMeliResult = async (vehicle: Vehicle, result: any, userId?: number)
       patch.internalStatus = "available";
     }
   } else {
-    patch.meliLastError = result.error || (result.missingFields || []).join(", ") || vehicle.meliLastError || null;
+    patch.meliLastError =
+      result.error ||
+      (Array.isArray(result.missingFields) ? result.missingFields.join(", ") : "") ||
+      vehicle.meliLastError ||
+      null;
   }
 
   await vehicle.update(patch as any);
@@ -320,10 +327,12 @@ const sendMeliActionResponse = async (
 
     const statusCode = result.statusCode || (result.ok ? 200 : result.apiCalled ? 502 : 400);
     return res.status(statusCode).json({
+      vehicleId: vehicle.id,
       ok: result.ok,
       missingFields: result.missingFields,
       warnings: result.warnings,
       payloadPreview: result.payloadPreview,
+      inputSnapshot: result.inputSnapshot || null,
       meliItemId: result.meliItemId ?? vehicle.meliItemId ?? null,
       permalink: result.permalink ?? vehicle.meliPermalink ?? null,
       meliStatus: result.meliStatus ?? vehicle.meliStatus ?? null,
@@ -527,6 +536,26 @@ export const dryRunMl = async (req: Request, res: Response): Promise<Response> =
   }
 
   return sendMeliActionResponse(req, res, vehicle, dryRunVehicleForMeli(vehicle));
+};
+
+export const clearMlError = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const vehicle = await Vehicle.findByPk(String(req.params.id));
+    if (!vehicle) {
+      return res.status(404).json({ ok: false, error: "vehicle_not_found" });
+    }
+
+    await vehicle.update({
+      meliLastError: null,
+      meliValidationErrors: [],
+      updatedByUserId: (req as any).user?.id ?? vehicle.updatedByUserId ?? null
+    } as any);
+
+    return res.json({ ok: true, vehicle: serializeVehicle(vehicle) });
+  } catch (error) {
+    logger.error({ error, vehicleId: req.params.id }, "vehicles.ml.clearError.failed");
+    return res.status(500).json({ ok: false, error: "vehicle_ml_clear_error_failed" });
+  }
 };
 
 export const predictMlCategory = async (req: Request, res: Response): Promise<Response> => {

@@ -45,6 +45,11 @@ export async function dryRunVehicleMl(id) {
   return data;
 }
 
+export async function clearVehicleMlError(id) {
+  const { data } = await api.post(`/vehicles/${id}/ml/clear-error`);
+  return data;
+}
+
 export async function predictVehicleMlCategory(id, payload = {}) {
   const { data } = await api.post(`/vehicles/${id}/ml/predict-category`, payload);
   return data;

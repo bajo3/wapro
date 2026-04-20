@@ -22,6 +22,7 @@ export type MeliVehicleActionResult = {
   missingFields: string[];
   warnings: string[];
   payloadPreview: Record<string, any>;
+  inputSnapshot?: Record<string, any>;
   apiCalled: boolean;
   meliItemId?: string | null;
   permalink?: string | null;
@@ -47,6 +48,7 @@ const buildResult = (
   missingFields: options.missingFields || [],
   warnings: options.warnings || [],
   payloadPreview: payload,
+  inputSnapshot: options.inputSnapshot,
   apiCalled: Boolean(options.apiCalled),
   meliItemId: options.meliItemId ?? vehicle.meliItemId ?? null,
   permalink: options.permalink ?? vehicle.meliPermalink ?? vehicle.permalink ?? null,
@@ -111,24 +113,41 @@ const validateOnly = async (
   options: { dryRun?: boolean } = {}
 ): Promise<MeliVehicleActionResult> => {
   const local = await buildMeliVehiclePayload(vehicle, options);
-  return buildResult("validate", vehicle, local.payload, {
+  const result = buildResult(options.dryRun ? "dry-run" : "validate", vehicle, local.payload, {
     ok: local.ok,
     missingFields: local.missingFields,
     warnings: local.warnings,
     apiCalled: false,
-    error: local.ok ? null : local.missingFields.join(", ")
+    error: local.ok ? null : local.missingFields.join(", "),
+    inputSnapshot: {
+      vehicleId: vehicle.id,
+      meliCategoryId: vehicle.meliCategoryId || null,
+      condition: vehicle.condition || null,
+      meliListingTypeId: vehicle.meliListingTypeId || null,
+      version: vehicle.version || null,
+      vehicleType: vehicle.vehicleType || null,
+      fuel: vehicle.fuel || null,
+      doors: vehicle.doors ?? null,
+      km: vehicle.km ?? null
+    }
   });
+  logger.info(
+    {
+      vehicleId: vehicle.id,
+      action: result.action,
+      meliCategoryId: vehicle.meliCategoryId || null,
+      condition: vehicle.condition || null,
+      meliListingTypeId: vehicle.meliListingTypeId || null,
+      ok: result.ok,
+      missingFields: result.missingFields
+    },
+    "vehicles.ml.validation"
+  );
+  return result;
 };
 
 const dryRunOnly = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> => {
-  const local = await buildMeliVehiclePayload(vehicle, { dryRun: true });
-  return buildResult("dry-run", vehicle, local.payload, {
-    ok: local.ok,
-    missingFields: local.missingFields,
-    warnings: local.warnings,
-    apiCalled: false,
-    error: local.ok ? null : local.missingFields.join(", ")
-  });
+  return validateOnly(vehicle, { dryRun: true });
 };
 
 const assertPublishable = async (

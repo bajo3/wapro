@@ -11,6 +11,7 @@ vehicleRoutes.post("/vehicles/:id/ml/predict-category", isAuth, VehiclesControll
 vehicleRoutes.get("/vehicles/:id/ml/category-requirements", isAuth, VehiclesController.categoryRequirementsMl);
 vehicleRoutes.post("/vehicles/:id/ml/validate", isAuth, VehiclesController.validateMl);
 vehicleRoutes.post("/vehicles/:id/ml/dry-run", isAuth, VehiclesController.dryRunMl);
+vehicleRoutes.post("/vehicles/:id/ml/clear-error", isAuth, VehiclesController.clearMlError);
 vehicleRoutes.post("/vehicles/:id/ml/publish", isAuth, VehiclesController.publishMl);
 vehicleRoutes.put("/vehicles/:id/ml/sync", isAuth, VehiclesController.syncMl);
 vehicleRoutes.post("/vehicles/:id/ml/pause", isAuth, VehiclesController.pauseMl);

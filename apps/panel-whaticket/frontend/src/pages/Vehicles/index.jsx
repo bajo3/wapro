@@ -41,6 +41,7 @@ import WarningOutlinedIcon from "@material-ui/icons/WarningOutlined";
 import { toast } from "react-toastify";
 
 import {
+  clearVehicleMlError,
   createVehicle,
   deleteVehicle,
   dryRunVehicleMl,
@@ -232,6 +233,12 @@ const canPublishVehicle = (vehicle, mlHealth) =>
   mlHealth?.publishEnabled !== false &&
   !(Array.isArray(vehicle?.meliValidationErrors) && vehicle.meliValidationErrors.length > 0);
 
+const hasCurrentValidationForVehicle = (validationState, vehicle) =>
+  Boolean(validationState?.vehicleId && vehicle?.id && validationState.vehicleId === vehicle.id);
+
+const hasFreshValidationForVehicle = (validationState, vehicle, ok) =>
+  hasCurrentValidationForVehicle(validationState, vehicle) && validationState.ok === ok;
+
 function VehiclesPage() {
   const [vehicles, setVehicles] = useState([]);
   const [filters, setFilters] = useState({ q: "", internalStatus: "", meliStatus: "", currency: "" });
@@ -364,12 +371,36 @@ function VehiclesPage() {
     try {
       const data = await validateVehicleMl(vehicle.id);
       setValidationState({ ...data, vehicleTitle: vehicle.title || vehicle.label || `${vehicle.brand || ""} ${vehicle.model || ""}`.trim() });
+      if (editingVehicle?.id === vehicle.id) {
+        setEditingVehicle((current) =>
+          current
+            ? {
+                ...current,
+                meliLastError: data.ok ? null : (data.error || (Array.isArray(data.missingFields) ? data.missingFields.join(", ") : null)),
+                meliValidationErrors: Array.isArray(data.missingFields) ? data.missingFields : [],
+                meliPayloadDraft: data.payloadPreview || current.meliPayloadDraft
+              }
+            : current
+        );
+      }
       toast[data.ok ? "success" : "warn"](data.ok ? "Payload listo para ML" : "Hay datos faltantes para ML");
       loadVehicles();
     } catch (error) {
       const data = error?.response?.data;
       if (data?.payloadPreview || data?.missingFields || data?.warnings) {
         setValidationState({ ...data, vehicleTitle: vehicle.title || vehicle.label || `${vehicle.brand || ""} ${vehicle.model || ""}`.trim() });
+        if (editingVehicle?.id === vehicle.id) {
+          setEditingVehicle((current) =>
+            current
+              ? {
+                  ...current,
+                  meliLastError: data.error || (Array.isArray(data.missingFields) ? data.missingFields.join(", ") : current.meliLastError),
+                  meliValidationErrors: Array.isArray(data.missingFields) ? data.missingFields : current.meliValidationErrors,
+                  meliPayloadDraft: data.payloadPreview || current.meliPayloadDraft
+                }
+              : current
+          );
+        }
       }
       toast.error(data?.error || "No se pudo validar");
     } finally {
@@ -402,12 +433,36 @@ function VehiclesPage() {
     try {
       const data = await dryRunVehicleMl(vehicle.id);
       setValidationState({ ...data, vehicleTitle: vehicle.title || vehicle.label || `${vehicle.brand || ""} ${vehicle.model || ""}`.trim() });
+      if (editingVehicle?.id === vehicle.id) {
+        setEditingVehicle((current) =>
+          current
+            ? {
+                ...current,
+                meliLastError: data.ok ? null : (data.error || (Array.isArray(data.missingFields) ? data.missingFields.join(", ") : null)),
+                meliValidationErrors: Array.isArray(data.missingFields) ? data.missingFields : [],
+                meliPayloadDraft: data.payloadPreview || current.meliPayloadDraft
+              }
+            : current
+        );
+      }
       toast[data.ok ? "success" : "warn"](data.ok ? "Dry-run listo para revisar" : "Dry-run con faltantes");
       loadVehicles();
     } catch (error) {
       const data = error?.response?.data;
       if (data?.payloadPreview || data?.missingFields || data?.warnings) {
         setValidationState({ ...data, vehicleTitle: vehicle.title || vehicle.label || `${vehicle.brand || ""} ${vehicle.model || ""}`.trim() });
+        if (editingVehicle?.id === vehicle.id) {
+          setEditingVehicle((current) =>
+            current
+              ? {
+                  ...current,
+                  meliLastError: data.error || (Array.isArray(data.missingFields) ? data.missingFields.join(", ") : current.meliLastError),
+                  meliValidationErrors: Array.isArray(data.missingFields) ? data.missingFields : current.meliValidationErrors,
+                  meliPayloadDraft: data.payloadPreview || current.meliPayloadDraft
+                }
+              : current
+          );
+        }
       }
       toast.error(data?.error || "No se pudo ejecutar el dry-run");
     } finally {
@@ -469,6 +524,26 @@ function VehiclesPage() {
     } catch (error) {
       setCategoryRequirements(null);
       toast.error(error?.response?.data?.error || "No se pudieron consultar los requisitos de categoría");
+    } finally {
+      setValidatingId(null);
+    }
+  };
+
+  const onClearMlError = async (vehicle) => {
+    if (!vehicle?.id) return;
+    setValidatingId(vehicle.id);
+    try {
+      await clearVehicleMlError(vehicle.id);
+      if (editingVehicle?.id === vehicle.id) {
+        setEditingVehicle((current) => current ? { ...current, meliLastError: null, meliValidationErrors: [] } : current);
+      }
+      if (validationState?.vehicleId === vehicle.id) {
+        setValidationState(null);
+      }
+      toast.success("Error ML limpiado");
+      loadVehicles();
+    } catch (error) {
+      toast.error(error?.response?.data?.error || "No se pudo limpiar el error ML");
     } finally {
       setValidatingId(null);
     }
@@ -600,7 +675,7 @@ function VehiclesPage() {
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" style={{ fontWeight: 600 }}>{vehicle.title || vehicle.label || "Sin título"}</Typography>
-                      {vehicle.meliLastError ? <Typography variant="caption" color="error">Último error: {vehicle.meliLastError}</Typography> : null}
+                      {hasCurrentValidationForVehicle(validationState, vehicle) ? null : vehicle.meliLastError ? <Typography variant="caption" color="error">Último error: {vehicle.meliLastError}</Typography> : null}
                     </TableCell>
                     <TableCell>{[vehicle.brand, vehicle.model, vehicle.year].filter(Boolean).join(" / ") || "-"}</TableCell>
                     <TableCell>{vehicle.km ?? "-"}</TableCell>
@@ -617,6 +692,7 @@ function VehiclesPage() {
                       <Tooltip title="Ver / editar"><IconButton size="small" onClick={() => openEditDialog(vehicle)}><EditOutlinedIcon fontSize="small" /></IconButton></Tooltip>
                       <Tooltip title="Validar MercadoLibre"><IconButton size="small" onClick={() => onValidate(vehicle)}>{validatingId === vehicle.id ? <CircularProgress size={16} /> : <CheckCircleOutlineIcon fontSize="small" />}</IconButton></Tooltip>
                       <Tooltip title="Dry-run ML"><span><IconButton size="small" onClick={() => onDryRun(vehicle)} disabled={validatingId === vehicle.id}><WarningOutlinedIcon fontSize="small" /></IconButton></span></Tooltip>
+                      <Tooltip title="Limpiar error ML"><span><IconButton size="small" onClick={() => onClearMlError(vehicle)} disabled={validatingId === vehicle.id || (!vehicle.meliLastError && !(Array.isArray(vehicle.meliValidationErrors) && vehicle.meliValidationErrors.length))}><DeleteOutlineIcon fontSize="small" /></IconButton></span></Tooltip>
                       <Tooltip title="Publicar en ML"><span><IconButton size="small" onClick={() => runMlAction(vehicle, publishVehicleMl, "Publicación creada en MercadoLibre")} disabled={validatingId === vehicle.id || !canPublishVehicle(vehicle, mlHealth)}><AddIcon fontSize="small" /></IconButton></span></Tooltip>
                       <Tooltip title="Actualizar ML"><span><IconButton size="small" onClick={() => runMlAction(vehicle, syncVehicleMl, vehicle.meliItemId ? "Publicación sincronizada" : "Publicación creada en MercadoLibre")} disabled={validatingId === vehicle.id || !canPublishVehicle(vehicle, mlHealth)}><OpenInNewIcon fontSize="small" /></IconButton></span></Tooltip>
                       <Tooltip title="Pausar ML"><span><IconButton size="small" onClick={() => runMlAction(vehicle, pauseVehicleMl, "Publicación pausada en MercadoLibre")} disabled={validatingId === vehicle.id || mlHealth?.publishEnabled === false || !vehicle.meliItemId}><PauseCircleOutlineIcon fontSize="small" /></IconButton></span></Tooltip>
@@ -823,7 +899,12 @@ function VehiclesPage() {
             ) : null}
             {editingVehicle ? (
               <Grid item xs={12}>
-                <Typography variant="body2">Estado ML: {editingVehicle.meliStatus || "-"} · meliItemId: {editingVehicle.meliItemId || "-"} · permalink: {editingVehicle.permalink || "-"} · último error: {editingVehicle.meliLastError || "-"}</Typography>
+                <Typography variant="body2">Estado ML: {editingVehicle.meliStatus || "-"} · meliItemId: {editingVehicle.meliItemId || "-"} · permalink: {editingVehicle.permalink || "-"} · último error: {hasCurrentValidationForVehicle(validationState, editingVehicle) ? "-" : editingVehicle.meliLastError || "-"}</Typography>
+                <Box mt={1}>
+                  <Button size="small" variant="outlined" onClick={() => onClearMlError(editingVehicle)} disabled={!editingVehicle?.meliLastError && !(Array.isArray(editingVehicle?.meliValidationErrors) && editingVehicle.meliValidationErrors.length)}>
+                    Limpiar error ML
+                  </Button>
+                </Box>
               </Grid>
             ) : null}
           </Grid>
