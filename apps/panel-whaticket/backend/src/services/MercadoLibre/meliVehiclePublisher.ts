@@ -104,8 +104,13 @@ const logMeliAction = (
   );
 };
 
-const validateOnly = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> => {
-  const local = await buildMeliVehiclePayload(vehicle);
+// options.dryRun: cuando true, aplica fallback gold_special para listing_type_id.
+// assertPublishable llama sin options (modo estricto) para no enmascarar campos faltantes reales.
+const validateOnly = async (
+  vehicle: Vehicle,
+  options: { dryRun?: boolean } = {}
+): Promise<MeliVehicleActionResult> => {
+  const local = await buildMeliVehiclePayload(vehicle, options);
   return buildResult("validate", vehicle, local.payload, {
     ok: local.ok,
     missingFields: local.missingFields,
@@ -116,7 +121,7 @@ const validateOnly = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> 
 };
 
 const dryRunOnly = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> => {
-  const local = await buildMeliVehiclePayload(vehicle);
+  const local = await buildMeliVehiclePayload(vehicle, { dryRun: true });
   return buildResult("dry-run", vehicle, local.payload, {
     ok: local.ok,
     missingFields: local.missingFields,
@@ -159,7 +164,8 @@ const ensureTokenReady = async (
   return null;
 };
 
-export const validateVehicleForMeli = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> => validateOnly(vehicle);
+export const validateVehicleForMeli = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> =>
+  validateOnly(vehicle, { dryRun: true });
 
 export const dryRunVehicleForMeli = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> => dryRunOnly(vehicle);
 

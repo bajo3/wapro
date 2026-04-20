@@ -3,6 +3,7 @@ import {
   getCategoryAttributes,
   mapVehicleToMeliAttributes
 } from "../../helpers/meliCategoriesService";
+import { logger } from "../../utils/logger";
 
 type ValidationResult = {
   ok: boolean;
@@ -18,6 +19,15 @@ const asNumber = (value: any): number | null => {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+// Normaliza condition a los valores que acepta ML: "new" | "used".
+// Cubre valores en español que pueden venir de imports o datos legacy.
+const normalizeCondition = (value: any): string => {
+  const raw = asString(value).toLowerCase();
+  if (raw === "nuevo") return "new";
+  if (raw === "usado") return "used";
+  return raw;
 };
 
 const normalizePictures = (pictures: any): Array<Record<string, any>> => {
@@ -44,22 +54,39 @@ const normalizePictures = (pictures: any): Array<Record<string, any>> => {
     .sort((a, b) => Number(a!.order || 0) - Number(b!.order || 0)) as Array<Record<string, any>>;
 };
 
-export const buildMeliVehiclePayload = async (vehicle: Vehicle): Promise<ValidationResult> => {
+export const buildMeliVehiclePayload = async (
+  vehicle: Vehicle,
+  options: { dryRun?: boolean } = {}
+): Promise<ValidationResult> => {
   const missingFields: string[] = [];
   const warnings: string[] = [];
 
   const title = asString(vehicle.title);
   const categoryId = asString(vehicle.meliCategoryId);
-  const listingTypeId = asString(vehicle.meliListingTypeId || process.env.MELI_DEFAULT_LISTING_TYPE_ID);
+  // En validate/dry-run usar "gold_special" como fallback seguro si no está definido.
+  // En publish/sync la ausencia de listingTypeId se reporta como error real.
+  const rawListingTypeId = asString(vehicle.meliListingTypeId || process.env.MELI_DEFAULT_LISTING_TYPE_ID);
+  const listingTypeId = rawListingTypeId || (options.dryRun ? "gold_special" : "");
   const price = asNumber(vehicle.price);
   const currencyId = asString(vehicle.currency);
-  const condition = asString(vehicle.condition);
+  const condition = normalizeCondition(vehicle.condition);
   const brand = asString(vehicle.brand);
   const model = asString(vehicle.model);
   const year = asString(vehicle.year);
   const km = asNumber(vehicle.km);
   const description = asString(vehicle.description);
   const pictures = normalizePictures(vehicle.pictures);
+
+  logger.info(
+    {
+      vehicleId: vehicle.id,
+      meliCategoryId: categoryId || null,
+      condition: condition || null,
+      meliListingTypeId: listingTypeId || null,
+      dryRun: Boolean(options.dryRun)
+    },
+    "meli.buildPayload.input"
+  );
 
   let attributes = Array.isArray(vehicle.meliAttributes)
     ? vehicle.meliAttributes.filter((attribute) => attribute && typeof attribute === "object")
@@ -104,6 +131,11 @@ export const buildMeliVehiclePayload = async (vehicle: Vehicle): Promise<Validat
       }
     }
   }
+
+  logger.info(
+    { vehicleId: vehicle.id, ok: missingFields.length === 0, missingFields, warnings },
+    "meli.buildPayload.result"
+  );
 
   return {
     ok: missingFields.length === 0,
