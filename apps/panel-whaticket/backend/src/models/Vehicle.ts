@@ -114,6 +114,9 @@ class Vehicle extends Model<Vehicle> {
   description: string | null;
 
   @Column(DataType.JSONB)
+  images: Array<string | Record<string, any>>;
+
+  @Column(DataType.JSONB)
   pictures: Array<Record<string, any>>;
 
   @Column(DataType.STRING)

@@ -134,12 +134,52 @@ const buildRequestLogPayload = (
   };
 };
 
+const normalizeImageArrayForSnapshot = (value: any): any[] => {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return trimmed.split(/[\r\n,]+/).map((entry) => entry.trim()).filter(Boolean);
+    }
+  }
+  return [];
+};
+
+const logVehiclePayloadSnapshot = (vehicle: Vehicle) => {
+  const plainVehicle = typeof (vehicle as any).get === "function" ? (vehicle as any).get({ plain: true }) : vehicle;
+  const hasImagesField = Object.prototype.hasOwnProperty.call(plainVehicle, "images");
+  const hasPicturesField = Object.prototype.hasOwnProperty.call(plainVehicle, "pictures");
+  const imagesValue = (plainVehicle as any).images;
+  const picturesValue = (plainVehicle as any).pictures;
+  const normalizedImages = normalizeImageArrayForSnapshot(imagesValue);
+  const normalizedPictures = normalizeImageArrayForSnapshot(picturesValue);
+
+  logger.info(
+    {
+      vehicleId: vehicle.id,
+      hasImagesField,
+      imagesType: Array.isArray(imagesValue) ? "array" : typeof imagesValue,
+      imagesIsArray: Array.isArray(imagesValue),
+      imagesLength: normalizedImages.length,
+      hasPicturesField,
+      picturesType: Array.isArray(picturesValue) ? "array" : typeof picturesValue,
+      picturesLength: normalizedPictures.length
+    },
+    "meli.vehicle.payload.snapshot"
+  );
+};
+
 // validate/publish comparten el mismo builder vehicular.
 // El listing_type_id de vehiculos se normaliza alli a "classified".
 const validateOnly = async (
   vehicle: Vehicle,
   options: { dryRun?: boolean } = {}
 ): Promise<MeliVehicleActionResult> => {
+  logVehiclePayloadSnapshot(vehicle);
   const local = await buildMeliVehiclePayload(vehicle, options);
   const result = buildResult(options.dryRun ? "dry-run" : "validate", vehicle, local.payload, {
     ok: local.ok,
@@ -244,6 +284,7 @@ export const validateVehicleForMeli = async (vehicle: Vehicle): Promise<MeliVehi
 export const dryRunVehicleForMeli = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> => dryRunOnly(vehicle);
 
 export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}): Promise<MeliVehicleActionResult> => {
+  logVehiclePayloadSnapshot(vehicle);
   const local = await buildMeliVehiclePayload(vehicle);
 
   if (vehicle.meliItemId) {
@@ -330,6 +371,7 @@ export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}
 };
 
 export const syncVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}): Promise<MeliVehicleActionResult> => {
+  logVehiclePayloadSnapshot(vehicle);
   const local = await buildMeliVehiclePayload(vehicle);
 
   if (!isPublishingEnabled(deps)) {
@@ -413,6 +455,7 @@ const updateRemoteStatus = async (
   action: "pause" | "reactivate",
   deps: MeliDeps = {}
 ): Promise<MeliVehicleActionResult> => {
+  logVehiclePayloadSnapshot(vehicle);
   const local = await buildMeliVehiclePayload(vehicle);
 
   if (!isPublishingEnabled(deps)) {

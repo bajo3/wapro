@@ -134,6 +134,11 @@ const baseColumns = {
     type: DataTypes.TEXT,
     allowNull: true
   },
+  images: {
+    type: DataTypes.JSONB,
+    allowNull: false,
+    defaultValue: []
+  },
   pictures: {
     type: DataTypes.JSONB,
     allowNull: false,

@@ -123,6 +123,47 @@ const normalizePictures = (input: any): Array<Record<string, any>> => {
     .sort((a, b) => Number(a!.order || 0) - Number(b!.order || 0)) as Array<Record<string, any>>;
 };
 
+const normalizeImages = (input: any): Array<string | Record<string, any>> => {
+  if (!input) return [];
+
+  let images = input;
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (!trimmed) return [];
+
+    if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+      try {
+        images = JSON.parse(trimmed);
+      } catch {
+        images = trimmed.split(/[\r\n,]+/).map((entry) => entry.trim()).filter(Boolean);
+      }
+    } else {
+      images = trimmed.split(/[\r\n,]+/).map((entry) => entry.trim()).filter(Boolean);
+    }
+  }
+
+  if (!Array.isArray(images)) return [];
+
+  return images
+    .map((image) => {
+      if (typeof image === "string") {
+        const url = cleanString(image);
+        return url || null;
+      }
+
+      if (!image || typeof image !== "object") return null;
+
+      const url = cleanString(image.url || image.source || image.secure_url || image.src);
+      if (!url) return null;
+
+      return {
+        ...image,
+        url
+      };
+    })
+    .filter(Boolean) as Array<string | Record<string, any>>;
+};
+
 const normalizeArray = (input: any): any[] => {
   if (!input) return [];
   if (Array.isArray(input)) return input;
@@ -141,8 +182,14 @@ const normalizeArray = (input: any): any[] => {
 
 const serializeVehicle = (vehicle: Vehicle): Record<string, any> => {
   const title = cleanString(vehicle.title) || buildVehicleTitle(vehicle);
+  const images = normalizeImages((vehicle as any).images);
   const pictures = normalizePictures(vehicle.pictures);
-  const cover = pictures.find((picture) => picture.isCover) || pictures[0] || null;
+  const coverImage = images.find((image) => typeof image === "string" || image?.url) || null;
+  const coverPicture = pictures.find((picture) => picture.isCover) || pictures[0] || null;
+  const coverUrl =
+    typeof coverImage === "string"
+      ? coverImage
+      : cleanString((coverImage as any)?.url || (coverImage as any)?.source || (coverImage as any)?.secure_url);
   const numericPrice = vehicle.price !== null && vehicle.price !== undefined ? Number(vehicle.price) : null;
 
   return {
@@ -178,8 +225,9 @@ const serializeVehicle = (vehicle: Vehicle): Record<string, any> => {
     locationCity: vehicle.locationCity,
     locationState: vehicle.locationState,
     description: vehicle.description,
+    images,
     pictures,
-    imageUrl: cover?.url || null,
+    imageUrl: coverUrl || coverPicture?.url || null,
     permalink: vehicle.meliPermalink || vehicle.permalink || null,
     publishToMeli: Boolean(vehicle.publishToMeli),
     meliItemId: vehicle.meliItemId,
@@ -249,6 +297,7 @@ const buildPatch = (body: any, userId?: number, currentVehicle?: Vehicle): Recor
     locationCity: body.locationCity !== undefined ? cleanNullableString(body.locationCity) : currentVehicle?.locationCity ?? null,
     locationState: body.locationState !== undefined ? cleanNullableString(body.locationState) : currentVehicle?.locationState ?? null,
     description: body.description !== undefined ? cleanNullableString(body.description) : currentVehicle?.description ?? null,
+    images: body.images !== undefined ? normalizeImages(body.images) : normalizeImages((currentVehicle as any)?.images),
     pictures: body.pictures !== undefined ? normalizePictures(body.pictures) : normalizePictures(currentVehicle?.pictures),
     permalink: body.permalink !== undefined ? cleanNullableString(body.permalink) : currentVehicle?.permalink ?? null,
     publishToMeli: body.publishToMeli !== undefined ? Boolean(cleanBoolean(body.publishToMeli)) : Boolean(currentVehicle?.publishToMeli),
