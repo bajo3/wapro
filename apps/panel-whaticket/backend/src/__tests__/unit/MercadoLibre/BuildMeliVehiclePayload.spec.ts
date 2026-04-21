@@ -1,5 +1,6 @@
 jest.mock("../../../helpers/meliCategoriesService", () => ({
   getCategoryAttributes: jest.fn(async () => []),
+  getCategoryBuyingModes: jest.fn(async () => []),
   mapVehicleToMeliAttributes: jest.fn(() => ({
     attributes: [],
     missingRequired: [],
@@ -67,11 +68,12 @@ describe("buildMeliVehiclePayload", () => {
     expect(result.warnings).not.toContain("meliDomainId");
   });
 
-  it("keeps condition missing in dry-run when vehicle condition is null", async () => {
+  it("keeps condition missing in dry-run when vehicle condition is null and km is null", async () => {
     const result = await buildMeliVehiclePayload(
       {
         ...baseVehicle,
         condition: null,
+        km: null,
         pictures: ["https://img.test/1.jpg"]
       },
       { dryRun: true }
@@ -82,10 +84,11 @@ describe("buildMeliVehiclePayload", () => {
     expect(result.fatalErrors).toEqual([]);
   });
 
-  it("blocks publish payload when vehicle condition is missing", async () => {
+  it("blocks publish payload when vehicle condition is missing and km is null", async () => {
     const result = await buildMeliVehiclePayload({
       ...baseVehicle,
       condition: null,
+      km: null,
       pictures: ["https://img.test/1.jpg"]
     });
 
@@ -196,6 +199,39 @@ describe("buildMeliVehiclePayload", () => {
     expect(result.fatalErrors).toContain("Vehicle has no valid pictures for MercadoLibre publish.");
   });
 
+  it("never sends buy_it_now for MLA1744 + MLA-CARS_AND_VANS + classified", async () => {
+    const result = await buildMeliVehiclePayload({
+      ...baseVehicle,
+      meliCategoryId: "MLA1744",
+      meliDomainId: "MLA-CARS_AND_VANS",
+      pictures: ["https://img.test/1.jpg"]
+    });
+
+    expect(result.payload.listing_type_id).toBe("classified");
+    expect(result.payload.buying_mode).not.toBe("buy_it_now");
+    expect(result.payload.buying_mode).toBe("classified");
+  });
+
+  it("uses buying_mode=classified when category API returns empty buying_modes", async () => {
+    const result = await buildMeliVehiclePayload({
+      ...baseVehicle,
+      pictures: ["https://img.test/1.jpg"]
+    });
+
+    expect(result.payload.buying_mode).toBe("classified");
+  });
+
+  it("never triggers the classified+buy_it_now guard for standard vehicle payload", async () => {
+    const result = await buildMeliVehiclePayload({
+      ...baseVehicle,
+      pictures: ["https://img.test/1.jpg"]
+    });
+
+    const invalidComboError =
+      "buying_mode buy_it_now is incompatible with listing_type_id classified: use buying_mode classified instead.";
+    expect(result.fatalErrors).not.toContain(invalidComboError);
+  });
+
   it("builds a safe generated description when vehicle.description is missing", async () => {
     const result = await buildMeliVehiclePayload({
       ...baseVehicle,
@@ -219,7 +255,7 @@ describe("validateMeliVehiclePayload", () => {
         price: 8900001,
         currency_id: "ARS",
         available_quantity: 1,
-        buying_mode: "buy_it_now",
+        buying_mode: "classified",
         listing_type_id: "classified",
         condition: "used",
         attributes: []
@@ -233,6 +269,32 @@ describe("validateMeliVehiclePayload", () => {
 
     expect(validation.ok).toBe(false);
     expect(validation.fatalErrors).toEqual(["Vehicle has no valid pictures for MercadoLibre publish."]);
+  });
+
+  it("blocks payload when buying_mode=buy_it_now combined with listing_type_id=classified", () => {
+    const validation = validateMeliVehiclePayload(
+      {
+        title: "Peugeot 207",
+        category_id: "MLA1744",
+        price: 8900001,
+        currency_id: "ARS",
+        available_quantity: 1,
+        buying_mode: "buy_it_now",
+        listing_type_id: "classified",
+        condition: "used",
+        attributes: []
+      },
+      {
+        dryRun: false,
+        validPicturesCount: 1,
+        descriptionPlainText: "desc"
+      }
+    );
+
+    expect(validation.ok).toBe(false);
+    expect(validation.fatalErrors).toContain(
+      "buying_mode buy_it_now is incompatible with listing_type_id classified: use buying_mode classified instead."
+    );
   });
 });
 
