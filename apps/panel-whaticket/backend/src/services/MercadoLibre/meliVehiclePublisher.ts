@@ -10,7 +10,6 @@ import {
 
 export const MELI_PUBLISH_DISABLED_MESSAGE =
   "MercadoLibre publishing is disabled. Set MELI_PUBLISH_ENABLED=true to allow real publishing.";
-const MISSING_PICTURES_MESSAGE = "Vehicle has no valid pictures for MercadoLibre publish.";
 
 type MeliDeps = {
   request?: (path: string, options?: any) => Promise<{ ok: boolean; status: number; body: any }>;
@@ -22,6 +21,7 @@ export type MeliVehicleActionResult = {
   action: "validate" | "dry-run" | "publish" | "sync" | "pause" | "reactivate";
   missingFields: string[];
   warnings: string[];
+  fatalErrors: string[];
   payloadPreview: Record<string, any>;
   inputSnapshot?: Record<string, any>;
   apiCalled: boolean;
@@ -48,6 +48,7 @@ const buildResult = (
   action,
   missingFields: options.missingFields || [],
   warnings: options.warnings || [],
+  fatalErrors: options.fatalErrors || [],
   payloadPreview: payload,
   inputSnapshot: options.inputSnapshot,
   apiCalled: Boolean(options.apiCalled),
@@ -74,6 +75,7 @@ const buildBlockedResult = (
     statusCode,
     warnings,
     missingFields,
+    fatalErrors: statusCode >= 400 ? [error] : [],
     apiCalled: false
   });
 
@@ -90,6 +92,11 @@ const logMeliAction = (
   result: Partial<MeliVehicleActionResult>,
   requestBody?: any
 ) => {
+  const responseBody = sanitizeMeliLogPayload(result.rawResponse);
+  const responseCause = Array.isArray((result.rawResponse as any)?.cause)
+    ? (result.rawResponse as any).cause
+    : [];
+
   logger.info(
     {
       vehicleId: vehicle.id,
@@ -99,9 +106,12 @@ const logMeliAction = (
       category_id: payload.category_id || null,
       listing_type_id: payload.listing_type_id || null,
       status: result.meliStatus || null,
+      statusCode: result.statusCode ?? null,
       error: result.error || null,
+      message: (result.rawResponse as any)?.message || null,
+      cause: responseCause,
       requestPayload: sanitizeMeliLogPayload(requestBody ?? payload),
-      responseBody: sanitizeMeliLogPayload(result.rawResponse)
+      responseBody
     },
     "vehicles.ml.action"
   );
@@ -135,19 +145,23 @@ const validateOnly = async (
     ok: local.ok,
     missingFields: local.missingFields,
     warnings: local.warnings,
+    fatalErrors: local.fatalErrors,
     apiCalled: false,
-    error: local.ok ? null : local.missingFields.join(", "),
+    error: local.ok ? null : local.fatalErrors[0] || local.missingFields.join(", "),
     inputSnapshot: {
       vehicleId: vehicle.id,
       meliCategoryId: vehicle.meliCategoryId || null,
       condition: vehicle.condition || null,
       meliListingTypeId: vehicle.meliListingTypeId || null,
+      originalListingTypeId: local.originalListingTypeId,
+      finalListingTypeId: local.finalListingTypeId,
       version: vehicle.version || null,
       vehicleType: vehicle.vehicleType || null,
       fuel: vehicle.fuel || null,
       doors: vehicle.doors ?? null,
       km: vehicle.km ?? null,
-      picturesCount: Array.isArray(vehicle.pictures) ? vehicle.pictures.length : 0,
+      picturesRawType: local.picturesRawType,
+      picturesCount: local.picturesCount,
       validPicturesCount: local.validPicturesCount,
       hasDescription: Boolean(local.descriptionPlainText)
     }
@@ -158,9 +172,12 @@ const validateOnly = async (
       action: result.action,
       meliCategoryId: vehicle.meliCategoryId || null,
       condition: vehicle.condition || null,
-      meliListingTypeId: vehicle.meliListingTypeId || null,
+      originalListingTypeId: local.originalListingTypeId,
+      finalListingTypeId: local.finalListingTypeId,
       ok: result.ok,
-      missingFields: result.missingFields
+      missingFields: result.missingFields,
+      warnings: result.warnings,
+      fatalErrors: local.fatalErrors
     },
     "vehicles.ml.validation"
   );
@@ -176,17 +193,13 @@ const assertPublishable = async (
   action: MeliVehicleActionResult["action"]
 ): Promise<MeliVehicleActionResult | null> => {
   const validation = await validateOnly(vehicle);
-  if (validation.missingFields.length) {
+  if (validation.missingFields.length || validation.fatalErrors.length) {
     return {
       ...validation,
       action,
       ok: false,
       apiCalled: false,
-      statusCode: 400,
-      error:
-        validation.missingFields.includes("pictures") && !validation.payloadPreview?.pictures?.length
-          ? MISSING_PICTURES_MESSAGE
-          : validation.error
+      statusCode: 400
     };
   }
   return null;
@@ -275,7 +288,9 @@ export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}
       const result = buildResult("publish", vehicle, local.payload, {
         ok: false,
         warnings: local.warnings,
+        fatalErrors: [],
         apiCalled: true,
+        statusCode: response.status,
         rawResponse: response.body,
         error: response.body?.message || `MercadoLibre publish failed (${response.status})`
       });
@@ -295,6 +310,7 @@ export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}
     const result = buildResult("publish", vehicle, local.payload, {
       ok: true,
       warnings,
+      fatalErrors: [],
       apiCalled: true,
       rawResponse: descriptionResponse
         ? {
@@ -349,7 +365,9 @@ export const syncVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}): 
       const result = buildResult("sync", vehicle, local.payload, {
         ok: false,
         warnings: local.warnings,
+        fatalErrors: [],
         apiCalled: true,
+        statusCode: response.status,
         rawResponse: response.body,
         error: response.body?.message || `MercadoLibre sync failed (${response.status})`
       });
@@ -368,6 +386,7 @@ export const syncVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}): 
     const result = buildResult("sync", vehicle, local.payload, {
       ok: true,
       warnings,
+      fatalErrors: [],
       apiCalled: true,
       rawResponse: descriptionResponse
         ? {
@@ -412,6 +431,7 @@ const updateRemoteStatus = async (
     const result = buildResult(action, vehicle, local.payload, {
       ok: false,
       warnings: local.warnings,
+      fatalErrors: [],
       apiCalled: false,
       error: "vehicle_has_no_meli_item",
       statusCode: 409
@@ -431,7 +451,9 @@ const updateRemoteStatus = async (
       const result = buildResult(action, vehicle, local.payload, {
         ok: false,
         warnings: local.warnings,
+        fatalErrors: [],
         apiCalled: true,
+        statusCode: response.status,
         rawResponse: response.body,
         error: response.body?.message || `MercadoLibre ${action} failed (${response.status})`
       });
@@ -442,6 +464,7 @@ const updateRemoteStatus = async (
     const result = buildResult(action, vehicle, local.payload, {
       ok: true,
       warnings: local.warnings,
+      fatalErrors: [],
       apiCalled: true,
       rawResponse: response.body,
       ...extractRemoteSnapshot(response.body),

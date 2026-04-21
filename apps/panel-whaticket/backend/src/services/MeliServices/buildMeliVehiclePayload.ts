@@ -5,18 +5,53 @@ import {
 } from "../../helpers/meliCategoriesService";
 import { logger } from "../../utils/logger";
 
-type ValidationResult = {
+export type MeliVehiclePayloadValidation = {
   ok: boolean;
   missingFields: string[];
   warnings: string[];
+  fatalErrors: string[];
+};
+
+export type ValidationResult = {
+  ok: boolean;
+  missingFields: string[];
+  warnings: string[];
+  fatalErrors: string[];
   payload: Record<string, any>;
   mappedAttributes: Array<Record<string, any>>;
   descriptionPlainText: string;
   validPicturesCount: number;
+  picturesCount: number;
+  picturesRawType: string;
+  originalListingTypeId: string | null;
+  finalListingTypeId: string | null;
+  validation: MeliVehiclePayloadValidation;
 };
 
-const asString = (value: any): string => String(value ?? "").trim();
+type NormalizedPicture = {
+  url: string;
+  order: number;
+};
+
+type NormalizePicturesResult = {
+  pictures: NormalizedPicture[];
+  picturesCount: number;
+  validPicturesCount: number;
+  picturesRawType: string;
+};
+
+type ValidatePayloadOptions = {
+  dryRun?: boolean;
+  validPicturesCount?: number;
+  descriptionPlainText?: string;
+  requiredAttributeIds?: string[];
+};
+
 const VEHICLE_LISTING_TYPE_ID = "classified";
+const VEHICLE_PICTURES_FATAL_ERROR = "Vehicle has no valid pictures for MercadoLibre publish.";
+const VEHICLE_PICTURE_FIELDS = ["pictures", "images", "photos", "gallery", "image_urls", "imageUrls", "thumbnail"] as const;
+
+const asString = (value: any): string => String(value ?? "").trim();
 
 const asNumber = (value: any): number | null => {
   if (value === null || value === undefined || value === "") return null;
@@ -24,8 +59,6 @@ const asNumber = (value: any): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-// Normaliza condition a los valores que acepta ML: "new" | "used".
-// Cubre valores en español que pueden venir de imports o datos legacy.
 const normalizeCondition = (value: any): string => {
   const raw = asString(value).toLowerCase();
   if (raw === "nuevo") return "new";
@@ -33,10 +66,52 @@ const normalizeCondition = (value: any): string => {
   return raw;
 };
 
-const normalizePictures = (pictures: any): Array<Record<string, any>> => {
-  const list = Array.isArray(pictures) ? pictures : [];
-  return list
-    .map((item: any, index: number) => {
+const isValidHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value);
+
+const normalizePictureInput = (input: any): any[] => {
+  if (input === null || input === undefined || input === "") return [];
+
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (!trimmed) return [];
+
+    if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        return trimmed.split(/[\r\n,]+/).map((entry) => entry.trim()).filter(Boolean);
+      }
+    }
+
+    return trimmed.split(/[\r\n,]+/).map((entry) => entry.trim()).filter(Boolean);
+  }
+
+  if (Array.isArray(input)) return input;
+  if (typeof input === "object") return [input];
+  return [];
+};
+
+const detectPicturesRawType = (values: any[]): string => {
+  if (!values.length) return "none";
+  const types = Array.from(new Set(values.map((value) => {
+    if (Array.isArray(value)) return "array";
+    if (value === null) return "null";
+    return typeof value;
+  })));
+
+  return types.length === 1 ? types[0] : "mixed";
+};
+
+const normalizeVehiclePictures = (vehicle: Vehicle): NormalizePicturesResult => {
+  const candidateValues = VEHICLE_PICTURE_FIELDS
+    .map((field) => (vehicle as any)[field])
+    .filter((value) => value !== undefined && value !== null && value !== "");
+  const rawType = detectPicturesRawType(candidateValues);
+  const rawPictures = candidateValues.flatMap((value) => normalizePictureInput(value));
+
+  const normalized = rawPictures
+    .map((item: any, index: number): NormalizedPicture | null => {
       if (typeof item === "string") {
         const url = asString(item);
         if (!url) return null;
@@ -45,7 +120,7 @@ const normalizePictures = (pictures: any): Array<Record<string, any>> => {
 
       if (!item || typeof item !== "object") return null;
 
-      const url = asString(item.url || item.secure_url || item.source_url);
+      const url = asString(item.url || item.source || item.secure_url || item.source_url || item.src);
       if (!url) return null;
 
       return {
@@ -54,14 +129,55 @@ const normalizePictures = (pictures: any): Array<Record<string, any>> => {
       };
     })
     .filter(Boolean)
-    .sort((a, b) => Number(a!.order || 0) - Number(b!.order || 0)) as Array<Record<string, any>>;
+    .sort((a, b) => Number(a!.order || 0) - Number(b!.order || 0)) as NormalizedPicture[];
+
+  const deduped: NormalizedPicture[] = [];
+  const seen = new Set<string>();
+  for (const picture of normalized) {
+    const normalizedUrl = asString(picture.url);
+    if (!normalizedUrl) continue;
+    if (!isValidHttpUrl(normalizedUrl)) continue;
+    if (seen.has(normalizedUrl)) continue;
+
+    seen.add(normalizedUrl);
+    deduped.push({ url: normalizedUrl, order: deduped.length });
+  }
+
+  logger.info(
+    {
+      vehicleId: vehicle.id,
+      picturesRawType: rawType,
+      picturesCount: normalized.length,
+      validPicturesCount: deduped.length
+    },
+    "meli.vehicle.pictures.normalized"
+  );
+
+  return {
+    pictures: deduped,
+    picturesCount: normalized.length,
+    validPicturesCount: deduped.length,
+    picturesRawType: rawType
+  };
 };
 
-const isValidHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value);
+const buildVehicleTitle = (vehicle: Vehicle): string =>
+  [vehicle.brand, vehicle.model, vehicle.version, vehicle.year]
+    .map(asString)
+    .filter(Boolean)
+    .join(" ")
+    .trim();
 
 const buildVehicleDescription = (vehicle: Vehicle): string => {
+  const contactPieces = [
+    asString(process.env.MELI_DEALERSHIP_NAME),
+    asString(process.env.MELI_DEALERSHIP_PHONE),
+    asString(process.env.MELI_DEALERSHIP_WHATSAPP),
+    asString(process.env.MELI_DEALERSHIP_CONTACT)
+  ].filter(Boolean);
+
   const lines = [
-    [asString(vehicle.brand), asString(vehicle.model), asString(vehicle.version)].filter(Boolean).join(" ").trim(),
+    buildVehicleTitle(vehicle),
     asString(vehicle.year) ? `Ano: ${asString(vehicle.year)}` : "",
     Number.isFinite(Number(vehicle.km)) ? `Kilometraje: ${Number(vehicle.km)} km` : "",
     asString(vehicle.fuel) ? `Combustible: ${asString(vehicle.fuel)}` : "",
@@ -72,91 +188,133 @@ const buildVehicleDescription = (vehicle: Vehicle): string => {
       : "",
     asString(vehicle.locationCity) || asString(vehicle.locationState)
       ? `Ubicacion: ${[asString(vehicle.locationCity), asString(vehicle.locationState)].filter(Boolean).join(", ")}`
-      : ""
+      : "",
+    contactPieces.length ? `Contacto: ${contactPieces.join(" | ")}` : ""
   ].filter(Boolean);
 
   return lines.join("\n");
 };
 
-const resolveVehicleListingTypeId = (vehicle: Vehicle, categoryId: string): string => {
-  const requestedListingTypeId = asString(
-    vehicle.meliListingTypeId || process.env.MELI_DEFAULT_LISTING_TYPE_ID || process.env.MELI_LISTING_TYPE_ID
+const resolveVehicleDescription = (vehicle: Vehicle): string => {
+  const providedDescription = asString((vehicle as any).description);
+  const description = providedDescription || buildVehicleDescription(vehicle);
+
+  logger.info(
+    {
+      vehicleId: vehicle.id,
+      hasDescription: Boolean(description),
+      generatedDescription: !providedDescription && Boolean(description),
+      descriptionLength: description.length
+    },
+    "meli.vehicle.description.resolved"
   );
 
-  if (requestedListingTypeId && requestedListingTypeId !== VEHICLE_LISTING_TYPE_ID) {
-    logger.info(
-      {
-        vehicleId: vehicle.id,
-        category_id: categoryId || null,
-        listing_type_id: VEHICLE_LISTING_TYPE_ID,
-        reason: "vehicle_category_requires_classified"
-      },
-      "meli.vehicle.listingType.override"
-    );
+  return description;
+};
+
+const resolveVehicleListingTypeId = (vehicle: Vehicle, categoryId: string): { original: string | null; final: string } => {
+  const original = asString(
+    (vehicle as any).meliListingTypeId || process.env.MELI_DEFAULT_LISTING_TYPE_ID || process.env.MELI_LISTING_TYPE_ID
+  ) || null;
+  const final = VEHICLE_LISTING_TYPE_ID;
+
+  logger.info(
+    {
+      vehicleId: vehicle.id,
+      category_id: categoryId || null,
+      originalListingTypeId: original,
+      finalListingTypeId: final,
+      reason: original !== final ? "vehicle_category_requires_classified" : "vehicle_category_default_classified"
+    },
+    "meli.vehicle.listingType.override"
+  );
+
+  return { original, final };
+};
+
+export const validateMeliVehiclePayload = (
+  payload: Record<string, any>,
+  options: ValidatePayloadOptions = {}
+): MeliVehiclePayloadValidation => {
+  const missingFields: string[] = [];
+  const warnings: string[] = [];
+  const fatalErrors: string[] = [];
+
+  if (!asString(payload.title)) missingFields.push("title");
+  if (!asString(payload.category_id)) missingFields.push("category_id");
+  if (asNumber(payload.price) === null || Number(payload.price) <= 0) missingFields.push("price");
+  if (!asString(payload.currency_id)) missingFields.push("currency_id");
+  if (asNumber(payload.available_quantity) === null || Number(payload.available_quantity) <= 0) missingFields.push("available_quantity");
+  if (!asString(payload.buying_mode)) missingFields.push("buying_mode");
+  if (!asString(payload.listing_type_id)) missingFields.push("listing_type_id");
+  if (!asString(payload.condition)) missingFields.push("condition");
+
+  for (const attributeId of options.requiredAttributeIds || []) {
+    if (!missingFields.includes(attributeId)) {
+      missingFields.push(attributeId);
+    }
   }
 
-  return VEHICLE_LISTING_TYPE_ID;
+  if (!asString(options.descriptionPlainText)) {
+    warnings.push("description");
+  }
+
+  if ((options.validPicturesCount || 0) <= 0) {
+    warnings.push("pictures");
+    if (!options.dryRun) {
+      missingFields.push("pictures");
+      fatalErrors.push(VEHICLE_PICTURES_FATAL_ERROR);
+    }
+  }
+
+  const dedupedMissingFields = Array.from(new Set(missingFields));
+  const dedupedWarnings = Array.from(new Set(warnings));
+  const dedupedFatalErrors = Array.from(new Set(fatalErrors));
+
+  return {
+    ok: dedupedMissingFields.length === 0 && dedupedFatalErrors.length === 0,
+    missingFields: dedupedMissingFields,
+    warnings: dedupedWarnings,
+    fatalErrors: dedupedFatalErrors
+  };
 };
 
 export const buildMeliVehiclePayload = async (
   vehicle: Vehicle,
   options: { dryRun?: boolean } = {}
 ): Promise<ValidationResult> => {
-  const missingFields: string[] = [];
-  const warnings: string[] = [];
-
-  const title = asString(vehicle.title);
-  const categoryId = asString(vehicle.meliCategoryId);
-  const listingTypeId = resolveVehicleListingTypeId(vehicle, categoryId);
-  const price = asNumber(vehicle.price);
-  const currencyId = asString(vehicle.currency);
-  const condition = normalizeCondition(vehicle.condition);
-  const brand = asString(vehicle.brand);
-  const model = asString(vehicle.model);
-  const year = asString(vehicle.year);
-  const km = asNumber(vehicle.km);
-  const providedDescription = asString(vehicle.description);
-  const description = providedDescription || buildVehicleDescription(vehicle);
-  const pictures = normalizePictures(vehicle.pictures);
-  const validPictures = pictures.filter((picture) => isValidHttpUrl(asString(picture.url)));
+  const title = asString((vehicle as any).title) || buildVehicleTitle(vehicle);
+  const categoryId = asString((vehicle as any).meliCategoryId);
+  const listingType = resolveVehicleListingTypeId(vehicle, categoryId);
+  const price = asNumber((vehicle as any).price);
+  const currencyId = asString((vehicle as any).currency);
+  const condition = normalizeCondition((vehicle as any).condition);
+  const description = resolveVehicleDescription(vehicle);
+  const normalizedPictures = normalizeVehiclePictures(vehicle);
 
   logger.info(
     {
       vehicleId: vehicle.id,
       meliCategoryId: categoryId || null,
       condition: condition || null,
-      meliListingTypeId: listingTypeId || null,
+      originalListingTypeId: listingType.original,
+      finalListingTypeId: listingType.final,
       dryRun: Boolean(options.dryRun),
-      picturesCount: pictures.length,
-      validPicturesCount: validPictures.length,
+      picturesRawType: normalizedPictures.picturesRawType,
+      picturesCount: normalizedPictures.picturesCount,
+      validPicturesCount: normalizedPictures.validPicturesCount,
       hasDescription: Boolean(description)
     },
     "meli.buildPayload.input"
   );
 
-  let attributes = Array.isArray(vehicle.meliAttributes)
-    ? vehicle.meliAttributes.filter((attribute) => attribute && typeof attribute === "object")
+  let attributes = Array.isArray((vehicle as any).meliAttributes)
+    ? (vehicle as any).meliAttributes.filter((attribute: any) => attribute && typeof attribute === "object")
     : [];
+  const requiredAttributeIds: string[] = [];
+  const warnings: string[] = [];
 
-  if (!title) missingFields.push("title");
-  if (!categoryId) missingFields.push("category_id");
-  if (price === null || price <= 0) missingFields.push("price");
-  if (!currencyId) missingFields.push("currency_id");
-  if (!condition) missingFields.push("condition");
-  if (!listingTypeId) missingFields.push("listing_type_id");
-  if (!brand) missingFields.push("brand");
-  if (!model) missingFields.push("model");
-  if (!year) missingFields.push("year");
-  if (condition === "used" && (km === null || km < 0)) missingFields.push("km");
-
-  if (!description) warnings.push("description");
-  if (!validPictures.length) {
-    warnings.push("pictures");
-    if (!options.dryRun) {
-      missingFields.push("pictures");
-    }
-  }
-  if (!vehicle.meliDomainId) warnings.push("meliDomainId");
+  if (!(vehicle as any).meliDomainId) warnings.push("meliDomainId");
 
   if (categoryId) {
     try {
@@ -164,12 +322,15 @@ export const buildMeliVehiclePayload = async (
       const mapping = mapVehicleToMeliAttributes(vehicle, categoryAttributes);
       attributes = mapping.attributes;
 
-      const KM_ALIASES = new Set(["km", "KILOMETERS", "VEHICLE_MILEAGE"]);
-      const hasKmAlready = missingFields.some(f => KM_ALIASES.has(f));
+      const kmAliases = new Set(["km", "KILOMETERS", "VEHICLE_MILEAGE"]);
+      const baseKmMissing =
+        condition === "used" &&
+        (asNumber((vehicle as any).km) === null || Number((vehicle as any).km) < 0);
+
       mapping.missingRequired.forEach((attributeId) => {
-        if (KM_ALIASES.has(attributeId) && hasKmAlready) return;
-        if (!missingFields.includes(attributeId)) {
-          missingFields.push(attributeId);
+        if (kmAliases.has(attributeId) && baseKmMissing) return;
+        if (!requiredAttributeIds.includes(attributeId)) {
+          requiredAttributeIds.push(attributeId);
         }
       });
 
@@ -186,11 +347,6 @@ export const buildMeliVehiclePayload = async (
     }
   }
 
-  logger.info(
-    { vehicleId: vehicle.id, ok: missingFields.length === 0, missingFields, warnings },
-    "meli.buildPayload.result"
-  );
-
   const payload: Record<string, any> = {
     title,
     category_id: categoryId || null,
@@ -198,23 +354,62 @@ export const buildMeliVehiclePayload = async (
     currency_id: currencyId || null,
     available_quantity: 1,
     buying_mode: "buy_it_now",
-    listing_type_id: listingTypeId || null,
+    listing_type_id: listingType.final,
     condition: condition || null,
     attributes
   };
 
-  if (validPictures.length) {
-    payload.pictures = validPictures.map((picture) => ({ source: asString(picture.url) }));
+  if (normalizedPictures.validPicturesCount > 0) {
+    payload.pictures = normalizedPictures.pictures.map((picture) => ({ source: picture.url }));
   }
 
-  return {
-    ok: missingFields.length === 0,
-    missingFields,
-    warnings,
-    mappedAttributes: attributes,
-    payload,
+  const validation = validateMeliVehiclePayload(payload, {
+    dryRun: options.dryRun,
+    validPicturesCount: normalizedPictures.validPicturesCount,
     descriptionPlainText: description,
-    validPicturesCount: validPictures.length
+    requiredAttributeIds
+  });
+
+  const mergedWarnings = Array.from(new Set([...warnings, ...validation.warnings]));
+
+  logger.info(
+    {
+      vehicleId: vehicle.id,
+      ok: validation.ok,
+      missingFields: validation.missingFields,
+      warnings: mergedWarnings,
+      fatalErrors: validation.fatalErrors
+    },
+    "meli.vehicle.payload.validation"
+  );
+
+  logger.info(
+    {
+      vehicleId: vehicle.id,
+      ok: validation.ok,
+      missingFields: validation.missingFields,
+      warnings: mergedWarnings
+    },
+    "meli.buildPayload.result"
+  );
+
+  return {
+    ok: validation.ok,
+    missingFields: validation.missingFields,
+    warnings: mergedWarnings,
+    fatalErrors: validation.fatalErrors,
+    payload,
+    mappedAttributes: attributes,
+    descriptionPlainText: description,
+    validPicturesCount: normalizedPictures.validPicturesCount,
+    picturesCount: normalizedPictures.picturesCount,
+    picturesRawType: normalizedPictures.picturesRawType,
+    originalListingTypeId: listingType.original,
+    finalListingTypeId: listingType.final,
+    validation: {
+      ...validation,
+      warnings: mergedWarnings
+    }
   };
 };
 

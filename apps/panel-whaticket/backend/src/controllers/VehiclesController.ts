@@ -281,7 +281,12 @@ const buildPatch = (body: any, userId?: number, currentVehicle?: Vehicle): Recor
 const persistMeliResult = async (vehicle: Vehicle, result: any, userId?: number) => {
   const patch: Record<string, any> = {
     meliPayloadDraft: result.payloadPreview,
-    meliValidationErrors: Array.isArray(result.missingFields) ? result.missingFields : [],
+    meliValidationErrors: Array.from(
+      new Set([
+        ...(Array.isArray(result.missingFields) ? result.missingFields : []),
+        ...(Array.isArray(result.fatalErrors) ? result.fatalErrors : [])
+      ])
+    ),
     updatedByUserId: userId ?? vehicle.updatedByUserId ?? null
   };
 
@@ -331,6 +336,7 @@ const sendMeliActionResponse = async (
       ok: result.ok,
       missingFields: result.missingFields,
       warnings: result.warnings,
+      fatalErrors: Array.isArray(result.fatalErrors) ? result.fatalErrors : [],
       payloadPreview: result.payloadPreview,
       inputSnapshot: result.inputSnapshot || null,
       meliItemId: result.meliItemId ?? vehicle.meliItemId ?? null,
