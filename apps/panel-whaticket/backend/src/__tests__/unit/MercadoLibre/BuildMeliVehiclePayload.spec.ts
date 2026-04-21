@@ -43,18 +43,33 @@ const baseVehicle = {
 } as any;
 
 describe("buildMeliVehiclePayload", () => {
-  it("forces classified for vehicle categories even when input is gold_special", async () => {
+  it("keeps the vehicle listing type when preflight has not resolved a package yet", async () => {
     const result = await buildMeliVehiclePayload({
       ...baseVehicle,
       pictures: ["https://img.test/1.jpg"]
     });
 
     expect(result.originalListingTypeId).toBe("gold_special");
-    expect(result.finalListingTypeId).toBe("classified");
-    expect(result.payload.listing_type_id).toBe("classified");
+    expect(result.finalListingTypeId).toBe("gold_special");
+    expect(result.payload.listing_type_id).toBe("gold_special");
   });
 
-  it("defaults vehicle category and domain when MercadoLibre metadata is missing", async () => {
+  it("applies preflight overrides for category and listing type", async () => {
+    const result = await buildMeliVehiclePayload({
+      ...baseVehicle,
+      pictures: ["https://img.test/1.jpg"]
+    }, {
+      resolvedCategoryId: "MLA999999",
+      resolvedDomainId: "MLA-CUSTOM-DOMAIN",
+      resolvedListingTypeId: "silver"
+    });
+
+    expect(result.payload.category_id).toBe("MLA999999");
+    expect(result.payload.listing_type_id).toBe("silver");
+    expect(result.finalListingTypeId).toBe("silver");
+  });
+
+  it("marks category missing instead of silently defaulting it", async () => {
     const result = await buildMeliVehiclePayload({
       ...baseVehicle,
       meliCategoryId: null,
@@ -62,9 +77,10 @@ describe("buildMeliVehiclePayload", () => {
       pictures: ["https://img.test/1.jpg"]
     });
 
-    expect(result.payload.category_id).toBe("MLA1744");
-    expect(result.missingFields).not.toContain("category_id");
-    expect(result.warnings).not.toContain("meliDomainId");
+    expect(result.ok).toBe(false);
+    expect(result.payload.category_id).toBeNull();
+    expect(result.missingFields).toContain("category_id");
+    expect(result.fatalErrors).toContain("Vehicle category is required for MercadoLibre publish.");
   });
 
   it("keeps condition missing in dry-run when vehicle condition is null", async () => {
@@ -208,6 +224,29 @@ describe("buildMeliVehiclePayload", () => {
     expect(result.descriptionPlainText).toContain("Kilometraje: 120000 km");
     expect(result.descriptionPlainText).toContain("Precio: 8900001 ARS");
   });
+
+  it("requires a description for publish when generation is not possible", async () => {
+    const result = await buildMeliVehiclePayload({
+      ...baseVehicle,
+      title: null,
+      brand: null,
+      model: null,
+      version: null,
+      year: null,
+      km: null,
+      fuel: null,
+      transmission: null,
+      color: null,
+      price: null,
+      currency: null,
+      description: null,
+      pictures: ["https://img.test/1.jpg"]
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.missingFields).toContain("description");
+    expect(result.fatalErrors).toContain("Vehicle description is required for MercadoLibre publish.");
+  });
 });
 
 describe("validateMeliVehiclePayload", () => {
@@ -237,16 +276,16 @@ describe("validateMeliVehiclePayload", () => {
 });
 
 describe("normalizeMeliVehicleMetadata", () => {
-  it("returns safe defaults for vehicle category and domain", () => {
+  it("returns missing metadata instead of hardcoded defaults", () => {
     const metadata = normalizeMeliVehicleMetadata({
       ...baseVehicle,
       meliCategoryId: null,
       meliDomainId: null
     } as any);
 
-    expect(metadata.categoryId).toBe("MLA1744");
-    expect(metadata.domainId).toBe("MLA-CARS_AND_VANS");
-    expect(metadata.categorySource).toBe("vehicle_default_mla1744");
-    expect(metadata.domainSource).toBe("vehicle_default_mla_cars_and_vans");
+    expect(metadata.categoryId).toBeNull();
+    expect(metadata.domainId).toBeNull();
+    expect(metadata.categorySource).toBe("missing_vehicle_category");
+    expect(metadata.domainSource).toBe("missing_vehicle_domain");
   });
 });
