@@ -106,8 +106,8 @@ const logMeliAction = (
   );
 };
 
-// options.dryRun: cuando true, aplica fallback gold_special para listing_type_id.
-// assertPublishable llama sin options (modo estricto) para no enmascarar campos faltantes reales.
+// validate/publish comparten el mismo builder vehicular.
+// El listing_type_id de vehiculos se normaliza alli a "classified".
 const validateOnly = async (
   vehicle: Vehicle,
   options: { dryRun?: boolean } = {}

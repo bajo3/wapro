@@ -14,6 +14,7 @@ type ValidationResult = {
 };
 
 const asString = (value: any): string => String(value ?? "").trim();
+const VEHICLE_LISTING_TYPE_ID = "classified";
 
 const asNumber = (value: any): number | null => {
   if (value === null || value === undefined || value === "") return null;
@@ -54,6 +55,26 @@ const normalizePictures = (pictures: any): Array<Record<string, any>> => {
     .sort((a, b) => Number(a!.order || 0) - Number(b!.order || 0)) as Array<Record<string, any>>;
 };
 
+const resolveVehicleListingTypeId = (vehicle: Vehicle, categoryId: string): string => {
+  const requestedListingTypeId = asString(
+    vehicle.meliListingTypeId || process.env.MELI_DEFAULT_LISTING_TYPE_ID || process.env.MELI_LISTING_TYPE_ID
+  );
+
+  if (requestedListingTypeId && requestedListingTypeId !== VEHICLE_LISTING_TYPE_ID) {
+    logger.info(
+      {
+        vehicleId: vehicle.id,
+        category_id: categoryId || null,
+        listing_type_id: VEHICLE_LISTING_TYPE_ID,
+        reason: "vehicle_category_requires_classified"
+      },
+      "meli.vehicle.listingType.override"
+    );
+  }
+
+  return VEHICLE_LISTING_TYPE_ID;
+};
+
 export const buildMeliVehiclePayload = async (
   vehicle: Vehicle,
   options: { dryRun?: boolean } = {}
@@ -63,10 +84,7 @@ export const buildMeliVehiclePayload = async (
 
   const title = asString(vehicle.title);
   const categoryId = asString(vehicle.meliCategoryId);
-  // En validate/dry-run usar "gold_special" como fallback seguro si no está definido.
-  // En publish/sync la ausencia de listingTypeId se reporta como error real.
-  const rawListingTypeId = asString(vehicle.meliListingTypeId || process.env.MELI_DEFAULT_LISTING_TYPE_ID);
-  const listingTypeId = rawListingTypeId || (options.dryRun ? "gold_special" : "");
+  const listingTypeId = resolveVehicleListingTypeId(vehicle, categoryId);
   const price = asNumber(vehicle.price);
   const currencyId = asString(vehicle.currency);
   const condition = normalizeCondition(vehicle.condition);
