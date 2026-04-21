@@ -10,6 +10,7 @@ import {
 
 export const MELI_PUBLISH_DISABLED_MESSAGE =
   "MercadoLibre publishing is disabled. Set MELI_PUBLISH_ENABLED=true to allow real publishing.";
+const MISSING_PICTURES_MESSAGE = "Vehicle has no valid pictures for MercadoLibre publish.";
 
 type MeliDeps = {
   request?: (path: string, options?: any) => Promise<{ ok: boolean; status: number; body: any }>;
@@ -106,6 +107,23 @@ const logMeliAction = (
   );
 };
 
+const buildRequestLogPayload = (
+  payload: Record<string, any>,
+  descriptionPlainText: string
+): Record<string, any> => {
+  const description = String(descriptionPlainText || "").trim();
+  if (!description) {
+    return payload;
+  }
+
+  return {
+    item: payload,
+    description: {
+      plain_text: description
+    }
+  };
+};
+
 // validate/publish comparten el mismo builder vehicular.
 // El listing_type_id de vehiculos se normaliza alli a "classified".
 const validateOnly = async (
@@ -128,7 +146,10 @@ const validateOnly = async (
       vehicleType: vehicle.vehicleType || null,
       fuel: vehicle.fuel || null,
       doors: vehicle.doors ?? null,
-      km: vehicle.km ?? null
+      km: vehicle.km ?? null,
+      picturesCount: Array.isArray(vehicle.pictures) ? vehicle.pictures.length : 0,
+      validPicturesCount: local.validPicturesCount,
+      hasDescription: Boolean(local.descriptionPlainText)
     }
   });
   logger.info(
@@ -161,10 +182,31 @@ const assertPublishable = async (
       action,
       ok: false,
       apiCalled: false,
-      statusCode: 400
+      statusCode: 400,
+      error:
+        validation.missingFields.includes("pictures") && !validation.payloadPreview?.pictures?.length
+          ? MISSING_PICTURES_MESSAGE
+          : validation.error
     };
   }
   return null;
+};
+
+const upsertItemDescription = async (
+  requester: NonNullable<MeliDeps["request"]>,
+  itemId: string,
+  plainText: string,
+  method: "POST" | "PUT"
+): Promise<{ ok: boolean; status: number; body: any } | null> => {
+  const description = String(plainText || "").trim();
+  if (!itemId || !description) {
+    return null;
+  }
+
+  return requester(`/items/${itemId}/description`, {
+    method,
+    body: JSON.stringify({ plain_text: description })
+  });
 };
 
 const ensureTokenReady = async (
@@ -241,14 +283,28 @@ export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}
       return result;
     }
 
+    const snapshot = extractRemoteSnapshot(response.body);
+    const descriptionResponse = snapshot.meliItemId
+      ? await upsertItemDescription(requester, snapshot.meliItemId, local.descriptionPlainText, "POST")
+      : null;
+    const warnings = [...local.warnings];
+    if (descriptionResponse && !descriptionResponse.ok) {
+      warnings.push(`description_upload_failed:${descriptionResponse.status}`);
+    }
+
     const result = buildResult("publish", vehicle, local.payload, {
       ok: true,
-      warnings: local.warnings,
+      warnings,
       apiCalled: true,
-      rawResponse: response.body,
-      ...extractRemoteSnapshot(response.body)
+      rawResponse: descriptionResponse
+        ? {
+            item: response.body,
+            description: descriptionResponse.body
+          }
+        : response.body,
+      ...snapshot
     });
-    logMeliAction(vehicle, "publish", local.payload, result, local.payload);
+    logMeliAction(vehicle, "publish", local.payload, result, buildRequestLogPayload(local.payload, local.descriptionPlainText));
     return result;
   } catch (error) {
     const result = buildBlockedResult("publish", vehicle, local.payload, toErrorMessage(error), 500, local.warnings);
@@ -302,16 +358,28 @@ export const syncVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}): 
     }
 
     const snapshot = extractRemoteSnapshot(response.body);
+    const descriptionResponse = snapshot.meliItemId
+      ? await upsertItemDescription(requester, snapshot.meliItemId, local.descriptionPlainText, "PUT")
+      : null;
+    const warnings = [...local.warnings];
+    if (descriptionResponse && !descriptionResponse.ok) {
+      warnings.push(`description_upload_failed:${descriptionResponse.status}`);
+    }
     const result = buildResult("sync", vehicle, local.payload, {
       ok: true,
-      warnings: local.warnings,
+      warnings,
       apiCalled: true,
-      rawResponse: response.body,
+      rawResponse: descriptionResponse
+        ? {
+            item: response.body,
+            description: descriptionResponse.body
+          }
+        : response.body,
       meliItemId: snapshot.meliItemId ?? vehicle.meliItemId,
       permalink: snapshot.permalink ?? vehicle.meliPermalink ?? vehicle.permalink ?? null,
       meliStatus: snapshot.meliStatus ?? vehicle.meliStatus ?? null
     });
-    logMeliAction(vehicle, "sync", local.payload, result, local.payload);
+    logMeliAction(vehicle, "sync", local.payload, result, buildRequestLogPayload(local.payload, local.descriptionPlainText));
     return result;
   } catch (error) {
     const result = buildBlockedResult("sync", vehicle, local.payload, toErrorMessage(error), 500, local.warnings);

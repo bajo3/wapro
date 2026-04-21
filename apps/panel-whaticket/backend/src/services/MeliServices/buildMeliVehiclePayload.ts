@@ -11,6 +11,8 @@ type ValidationResult = {
   warnings: string[];
   payload: Record<string, any>;
   mappedAttributes: Array<Record<string, any>>;
+  descriptionPlainText: string;
+  validPicturesCount: number;
 };
 
 const asString = (value: any): string => String(value ?? "").trim();
@@ -55,6 +57,27 @@ const normalizePictures = (pictures: any): Array<Record<string, any>> => {
     .sort((a, b) => Number(a!.order || 0) - Number(b!.order || 0)) as Array<Record<string, any>>;
 };
 
+const isValidHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value);
+
+const buildVehicleDescription = (vehicle: Vehicle): string => {
+  const lines = [
+    [asString(vehicle.brand), asString(vehicle.model), asString(vehicle.version)].filter(Boolean).join(" ").trim(),
+    asString(vehicle.year) ? `Ano: ${asString(vehicle.year)}` : "",
+    Number.isFinite(Number(vehicle.km)) ? `Kilometraje: ${Number(vehicle.km)} km` : "",
+    asString(vehicle.fuel) ? `Combustible: ${asString(vehicle.fuel)}` : "",
+    asString(vehicle.transmission) ? `Transmision: ${asString(vehicle.transmission)}` : "",
+    asString(vehicle.color) ? `Color: ${asString(vehicle.color)}` : "",
+    Number.isFinite(Number(vehicle.price)) && asString(vehicle.currency)
+      ? `Precio: ${Number(vehicle.price)} ${asString(vehicle.currency)}`
+      : "",
+    asString(vehicle.locationCity) || asString(vehicle.locationState)
+      ? `Ubicacion: ${[asString(vehicle.locationCity), asString(vehicle.locationState)].filter(Boolean).join(", ")}`
+      : ""
+  ].filter(Boolean);
+
+  return lines.join("\n");
+};
+
 const resolveVehicleListingTypeId = (vehicle: Vehicle, categoryId: string): string => {
   const requestedListingTypeId = asString(
     vehicle.meliListingTypeId || process.env.MELI_DEFAULT_LISTING_TYPE_ID || process.env.MELI_LISTING_TYPE_ID
@@ -92,8 +115,10 @@ export const buildMeliVehiclePayload = async (
   const model = asString(vehicle.model);
   const year = asString(vehicle.year);
   const km = asNumber(vehicle.km);
-  const description = asString(vehicle.description);
+  const providedDescription = asString(vehicle.description);
+  const description = providedDescription || buildVehicleDescription(vehicle);
   const pictures = normalizePictures(vehicle.pictures);
+  const validPictures = pictures.filter((picture) => isValidHttpUrl(asString(picture.url)));
 
   logger.info(
     {
@@ -101,7 +126,10 @@ export const buildMeliVehiclePayload = async (
       meliCategoryId: categoryId || null,
       condition: condition || null,
       meliListingTypeId: listingTypeId || null,
-      dryRun: Boolean(options.dryRun)
+      dryRun: Boolean(options.dryRun),
+      picturesCount: pictures.length,
+      validPicturesCount: validPictures.length,
+      hasDescription: Boolean(description)
     },
     "meli.buildPayload.input"
   );
@@ -122,7 +150,12 @@ export const buildMeliVehiclePayload = async (
   if (condition === "used" && (km === null || km < 0)) missingFields.push("km");
 
   if (!description) warnings.push("description");
-  if (!pictures.length) warnings.push("pictures");
+  if (!validPictures.length) {
+    warnings.push("pictures");
+    if (!options.dryRun) {
+      missingFields.push("pictures");
+    }
+  }
   if (!vehicle.meliDomainId) warnings.push("meliDomainId");
 
   if (categoryId) {
@@ -158,23 +191,30 @@ export const buildMeliVehiclePayload = async (
     "meli.buildPayload.result"
   );
 
+  const payload: Record<string, any> = {
+    title,
+    category_id: categoryId || null,
+    price,
+    currency_id: currencyId || null,
+    available_quantity: 1,
+    buying_mode: "buy_it_now",
+    listing_type_id: listingTypeId || null,
+    condition: condition || null,
+    attributes
+  };
+
+  if (validPictures.length) {
+    payload.pictures = validPictures.map((picture) => ({ source: asString(picture.url) }));
+  }
+
   return {
     ok: missingFields.length === 0,
     missingFields,
     warnings,
     mappedAttributes: attributes,
-    payload: {
-      title,
-      category_id: categoryId || null,
-      price,
-      currency_id: currencyId || null,
-      available_quantity: 1,
-      buying_mode: "buy_it_now",
-      listing_type_id: listingTypeId || null,
-      condition: condition || null,
-      pictures: pictures.map((picture) => ({ source: picture.url })),
-      attributes
-    }
+    payload,
+    descriptionPlainText: description,
+    validPicturesCount: validPictures.length
   };
 };
 
