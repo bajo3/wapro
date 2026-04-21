@@ -35,7 +35,9 @@ type NormalizedPicture = {
 
 type NormalizePicturesResult = {
   pictures: NormalizedPicture[];
-  picturesCount: number;
+  selectedSourceField: string;
+  rawImagesCount: number;
+  rawPicturesCount: number;
   validPicturesCount: number;
   picturesRawType: string;
 };
@@ -49,7 +51,6 @@ type ValidatePayloadOptions = {
 
 const VEHICLE_LISTING_TYPE_ID = "classified";
 const VEHICLE_PICTURES_FATAL_ERROR = "Vehicle has no valid pictures for MercadoLibre publish.";
-const VEHICLE_PICTURE_FIELDS = ["pictures", "images", "photos", "gallery", "image_urls", "imageUrls", "thumbnail"] as const;
 
 const asString = (value: any): string => String(value ?? "").trim();
 
@@ -104,11 +105,60 @@ const detectPicturesRawType = (values: any[]): string => {
 };
 
 const normalizeVehiclePictures = (vehicle: Vehicle): NormalizePicturesResult => {
-  const candidateValues = VEHICLE_PICTURE_FIELDS
-    .map((field) => (vehicle as any)[field])
-    .filter((value) => value !== undefined && value !== null && value !== "");
-  const rawType = detectPicturesRawType(candidateValues);
-  const rawPictures = candidateValues.flatMap((value) => normalizePictureInput(value));
+  const rawImagesInput = (vehicle as any).images;
+  const rawPicturesInput = (vehicle as any).pictures;
+  const normalizedImagesInput = normalizePictureInput(rawImagesInput);
+  const normalizedPicturesInput = normalizePictureInput(rawPicturesInput);
+
+  const candidateSources = [
+    {
+      field: "images",
+      rawInput: rawImagesInput,
+      entries: normalizedImagesInput
+    },
+    {
+      field: "pictures",
+      rawInput: rawPicturesInput,
+      entries: normalizedPicturesInput
+    },
+    {
+      field: "photos",
+      rawInput: (vehicle as any).photos,
+      entries: normalizePictureInput((vehicle as any).photos)
+    },
+    {
+      field: "gallery",
+      rawInput: (vehicle as any).gallery,
+      entries: normalizePictureInput((vehicle as any).gallery)
+    },
+    {
+      field: "image_urls",
+      rawInput: (vehicle as any).image_urls,
+      entries: normalizePictureInput((vehicle as any).image_urls)
+    },
+    {
+      field: "imageUrls",
+      rawInput: (vehicle as any).imageUrls,
+      entries: normalizePictureInput((vehicle as any).imageUrls)
+    },
+    {
+      field: "thumbnail",
+      rawInput: (vehicle as any).thumbnail,
+      entries: normalizePictureInput((vehicle as any).thumbnail)
+    }
+  ];
+
+  const selectedSource =
+    candidateSources.find((source) => source.field === "images" && source.entries.length > 0) ||
+    candidateSources.find((source) => source.field === "pictures" && source.entries.length > 0) ||
+    candidateSources.find((source) => source.entries.length > 0) || {
+      field: normalizedImagesInput.length || rawImagesInput !== undefined ? "images" : "pictures",
+      rawInput: normalizedImagesInput.length || rawImagesInput !== undefined ? rawImagesInput : rawPicturesInput,
+      entries: normalizedImagesInput.length > 0 ? normalizedImagesInput : normalizedPicturesInput
+    };
+
+  const rawType = detectPicturesRawType([selectedSource.rawInput].filter((value) => value !== undefined));
+  const rawPictures = selectedSource.entries;
 
   const normalized = rawPictures
     .map((item: any, index: number): NormalizedPicture | null => {
@@ -146,8 +196,10 @@ const normalizeVehiclePictures = (vehicle: Vehicle): NormalizePicturesResult => 
   logger.info(
     {
       vehicleId: vehicle.id,
+      selectedSourceField: selectedSource.field,
+      rawImagesCount: normalizedImagesInput.length,
+      rawPicturesCount: normalizedPicturesInput.length,
       picturesRawType: rawType,
-      picturesCount: normalized.length,
       validPicturesCount: deduped.length
     },
     "meli.vehicle.pictures.normalized"
@@ -155,7 +207,9 @@ const normalizeVehiclePictures = (vehicle: Vehicle): NormalizePicturesResult => 
 
   return {
     pictures: deduped,
-    picturesCount: normalized.length,
+    selectedSourceField: selectedSource.field,
+    rawImagesCount: normalizedImagesInput.length,
+    rawPicturesCount: normalizedPicturesInput.length,
     validPicturesCount: deduped.length,
     picturesRawType: rawType
   };
@@ -297,15 +351,28 @@ export const buildMeliVehiclePayload = async (
       vehicleId: vehicle.id,
       meliCategoryId: categoryId || null,
       condition: condition || null,
+      sourceOfTruth: "wapro_vehicle",
+      usesMeliPayloadDraft: false,
       originalListingTypeId: listingType.original,
       finalListingTypeId: listingType.final,
       dryRun: Boolean(options.dryRun),
+      selectedSourceField: normalizedPictures.selectedSourceField,
+      rawImagesCount: normalizedPictures.rawImagesCount,
+      rawPicturesCount: normalizedPictures.rawPicturesCount,
       picturesRawType: normalizedPictures.picturesRawType,
-      picturesCount: normalizedPictures.picturesCount,
       validPicturesCount: normalizedPictures.validPicturesCount,
       hasDescription: Boolean(description)
     },
     "meli.buildPayload.input"
+  );
+
+  logger.info(
+    {
+      vehicleId: vehicle.id,
+      sourceOfTruth: "wapro_vehicle",
+      usesMeliPayloadDraft: false
+    },
+    "meli.vehicle.payload.source"
   );
 
   let attributes = Array.isArray((vehicle as any).meliAttributes)
@@ -402,7 +469,7 @@ export const buildMeliVehiclePayload = async (
     mappedAttributes: attributes,
     descriptionPlainText: description,
     validPicturesCount: normalizedPictures.validPicturesCount,
-    picturesCount: normalizedPictures.picturesCount,
+    picturesCount: normalizedPictures.rawImagesCount + normalizedPictures.rawPicturesCount,
     picturesRawType: normalizedPictures.picturesRawType,
     originalListingTypeId: listingType.original,
     finalListingTypeId: listingType.final,

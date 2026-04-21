@@ -69,6 +69,29 @@ describe("buildMeliVehiclePayload", () => {
     expect(result.payload.pictures).toEqual([{ source: "https://img.test/1.jpg" }]);
   });
 
+  it("uses vehicle.images as canonical WaPro photo source", async () => {
+    const result = await buildMeliVehiclePayload({
+      ...baseVehicle,
+      images: Array.from({ length: 25 }, (_, index) => `https://img.test/${index + 1}.jpg`),
+      pictures: "[]"
+    });
+
+    expect(result.validPicturesCount).toBe(25);
+    expect(result.payload.pictures).toHaveLength(25);
+    expect(result.payload.pictures[0]).toEqual({ source: "https://img.test/1.jpg" });
+  });
+
+  it("falls back to vehicle.pictures only when images is empty", async () => {
+    const result = await buildMeliVehiclePayload({
+      ...baseVehicle,
+      images: "[]",
+      pictures: JSON.stringify([{ url: "https://img.test/fallback.jpg" }])
+    });
+
+    expect(result.validPicturesCount).toBe(1);
+    expect(result.payload.pictures).toEqual([{ source: "https://img.test/fallback.jpg" }]);
+  });
+
   it("normalizes pictures from object arrays", async () => {
     const result = await buildMeliVehiclePayload({
       ...baseVehicle,
