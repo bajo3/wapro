@@ -17,6 +17,7 @@ jest.mock("../../../utils/logger", () => ({
 
 import {
   buildMeliVehiclePayload,
+  normalizeMeliVehicleMetadata,
   validateMeliVehiclePayload
 } from "../../../services/MeliServices/buildMeliVehiclePayload";
 
@@ -51,6 +52,56 @@ describe("buildMeliVehiclePayload", () => {
     expect(result.originalListingTypeId).toBe("gold_special");
     expect(result.finalListingTypeId).toBe("classified");
     expect(result.payload.listing_type_id).toBe("classified");
+  });
+
+  it("defaults vehicle category and domain when MercadoLibre metadata is missing", async () => {
+    const result = await buildMeliVehiclePayload({
+      ...baseVehicle,
+      meliCategoryId: null,
+      meliDomainId: null,
+      pictures: ["https://img.test/1.jpg"]
+    });
+
+    expect(result.payload.category_id).toBe("MLA1744");
+    expect(result.missingFields).not.toContain("category_id");
+    expect(result.warnings).not.toContain("meliDomainId");
+  });
+
+  it("keeps condition missing in dry-run when vehicle condition is null", async () => {
+    const result = await buildMeliVehiclePayload(
+      {
+        ...baseVehicle,
+        condition: null,
+        pictures: ["https://img.test/1.jpg"]
+      },
+      { dryRun: true }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.missingFields).toContain("condition");
+    expect(result.fatalErrors).toEqual([]);
+  });
+
+  it("blocks publish payload when vehicle condition is missing", async () => {
+    const result = await buildMeliVehiclePayload({
+      ...baseVehicle,
+      condition: null,
+      pictures: ["https://img.test/1.jpg"]
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.missingFields).toContain("condition");
+    expect(result.fatalErrors).toContain("Vehicle condition is required for MercadoLibre publish.");
+  });
+
+  it("maps 0km condition to new", async () => {
+    const result = await buildMeliVehiclePayload({
+      ...baseVehicle,
+      condition: "0km",
+      pictures: ["https://img.test/1.jpg"]
+    });
+
+    expect(result.payload.condition).toBe("new");
   });
 
   it("normalizes pictures from string arrays and removes duplicates", async () => {
@@ -182,5 +233,20 @@ describe("validateMeliVehiclePayload", () => {
 
     expect(validation.ok).toBe(false);
     expect(validation.fatalErrors).toEqual(["Vehicle has no valid pictures for MercadoLibre publish."]);
+  });
+});
+
+describe("normalizeMeliVehicleMetadata", () => {
+  it("returns safe defaults for vehicle category and domain", () => {
+    const metadata = normalizeMeliVehicleMetadata({
+      ...baseVehicle,
+      meliCategoryId: null,
+      meliDomainId: null
+    } as any);
+
+    expect(metadata.categoryId).toBe("MLA1744");
+    expect(metadata.domainId).toBe("MLA-CARS_AND_VANS");
+    expect(metadata.categorySource).toBe("vehicle_default_mla1744");
+    expect(metadata.domainSource).toBe("vehicle_default_mla_cars_and_vans");
   });
 });
