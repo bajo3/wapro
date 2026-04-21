@@ -1,5 +1,6 @@
 import fetch from "node-fetch";
 import pg from "pg";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 import { resolveDatabaseUrl } from "../../config/resolveDatabaseUrl";
 
@@ -7,6 +8,7 @@ const MELI_API_URL = process.env.MELI_API_URL || "https://api.mercadolibre.com";
 const MELI_TOKEN_URL = `${MELI_API_URL}/oauth/token`;
 const TOKEN_EXPIRY_BUFFER_MS = 60_000;
 const TOKEN_ID = "main";
+const EXTERNAL_SUPABASE_API_ERROR_MESSAGE = "Cannot read external MercadoLibre token from Supabase API.";
 const EXTERNAL_DB_ERROR_MESSAGE = "Cannot read external MercadoLibre token database.";
 const EXTERNAL_TOKEN_EXPIRED_MESSAGE =
   "MercadoLibre external token expired. Refresh it from the token owner system.";
@@ -31,27 +33,38 @@ export type MeliTokenHealth = {
   isExpired: boolean;
   publishEnabled: boolean;
   canAttemptRefresh: boolean;
-  source?: "local" | "external";
+  source?: MeliTokenSource;
   error?: string | null;
 };
 
-type MeliTokenSource = "local" | "external";
+type MeliTokenSource = "local" | "external-supabase-js" | "external-database";
 
 let localPool: pg.Pool | null = null;
 let externalMeliTokenPool: pg.Pool | null = null;
+let externalMeliSupabaseClient: SupabaseClient | null = null;
 
 const isPublishingEnabled = (): boolean => process.env.MELI_PUBLISH_ENABLED === "true";
 
 const toErrorMessage = (error: any): string => String(error?.message || error || "unknown_error");
 
-const getMeliTokenSource = (): MeliTokenSource =>
-  String(process.env.MELI_TOKENS_DATABASE_URL || "").trim() ? "external" : "local";
+const hasExternalSupabaseConfig = (): boolean =>
+  Boolean(String(process.env.MELI_TOKENS_SUPABASE_URL || "").trim()) &&
+  Boolean(String(process.env.MELI_TOKENS_SUPABASE_SERVICE_ROLE_KEY || "").trim());
+
+const hasExternalDatabaseConfig = (): boolean =>
+  Boolean(String(process.env.MELI_TOKENS_DATABASE_URL || "").trim());
+
+const getMeliTokenSource = (): MeliTokenSource => {
+  if (hasExternalSupabaseConfig()) return "external-supabase-js";
+  if (hasExternalDatabaseConfig()) return "external-database";
+  return "local";
+};
 
 const getMeliTokenRefreshOwner = (): string =>
   String(process.env.MELI_TOKEN_REFRESH_OWNER || "").trim().toLowerCase();
 
 const shouldBlockRefresh = (): boolean =>
-  getMeliTokenSource() === "external" || getMeliTokenRefreshOwner() === "external";
+  getMeliTokenSource() !== "local" || getMeliTokenRefreshOwner() === "external";
 
 const withSafeSupabaseParams = (rawUrl: string): string => {
   let url = rawUrl;
@@ -113,6 +126,26 @@ const getExternalMeliTokenPool = (): pg.Pool => {
   return externalMeliTokenPool;
 };
 
+const getExternalMeliSupabaseClient = (): SupabaseClient => {
+  if (externalMeliSupabaseClient) return externalMeliSupabaseClient;
+
+  const supabaseUrl = String(process.env.MELI_TOKENS_SUPABASE_URL || "").trim();
+  const serviceRoleKey = String(process.env.MELI_TOKENS_SUPABASE_SERVICE_ROLE_KEY || "").trim();
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error("MELI_TOKENS_SUPABASE_URL and MELI_TOKENS_SUPABASE_SERVICE_ROLE_KEY are required");
+  }
+
+  externalMeliSupabaseClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  });
+
+  return externalMeliSupabaseClient;
+};
+
 const logMeliTokenMetadata = (token: MeliTokenRow | null, source: MeliTokenSource): void => {
   const expiresAt = token?.expires_at ?? null;
   const isExpired = typeof expiresAt === "number" ? expiresAt <= Date.now() : false;
@@ -135,21 +168,47 @@ const readTokenRowFromPool = async (pool: pg.Pool): Promise<MeliTokenRow | null>
   return rows[0] ?? null;
 };
 
+const readTokenRowFromSupabase = async (): Promise<MeliTokenRow | null> => {
+  const { data, error } = await getExternalMeliSupabaseClient()
+    .schema("public")
+    .from("meli_tokens")
+    .select("id, access_token, refresh_token, expires_at, created_at, updated_at")
+    .eq("id", TOKEN_ID)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return (data as MeliTokenRow | null) ?? null;
+};
+
 export const readMeliTokenRow = async (): Promise<MeliTokenRow | null> => {
   const source = getMeliTokenSource();
 
   try {
     const token =
-      source === "external"
-        ? await readTokenRowFromPool(getExternalMeliTokenPool())
-        : await readTokenRowFromPool(getLocalPool());
+      source === "external-supabase-js"
+        ? await readTokenRowFromSupabase()
+        : source === "external-database"
+          ? await readTokenRowFromPool(getExternalMeliTokenPool())
+          : await readTokenRowFromPool(getLocalPool());
 
     logMeliTokenMetadata(token, source);
     return token;
   } catch (error) {
-    if (source === "external") {
+    if (source === "external-supabase-js") {
+      console.error("[meliTokenService] external Supabase token read failed", {
+        meliTokenSource: source,
+        error: toErrorMessage(error)
+      });
+      throw new Error(EXTERNAL_SUPABASE_API_ERROR_MESSAGE);
+    }
+
+    if (source === "external-database") {
       console.error("[meliTokenService] external token DB read failed", {
-        meliTokenSource: "external",
+        meliTokenSource: source,
         error: toErrorMessage(error)
       });
       throw new Error(EXTERNAL_DB_ERROR_MESSAGE);
@@ -160,7 +219,7 @@ export const readMeliTokenRow = async (): Promise<MeliTokenRow | null> => {
 };
 
 const saveMeliTokenRow = async (accessToken: string, refreshToken: string, expiresAt: number): Promise<void> => {
-  if (getMeliTokenSource() === "external") {
+  if (getMeliTokenSource() !== "local") {
     throw new Error("MercadoLibre token writes are disabled for external token source.");
   }
 
@@ -180,7 +239,7 @@ export const refreshMeliToken = async (currentRefreshToken: string): Promise<Mel
   if (shouldBlockRefresh()) {
     const source = getMeliTokenSource();
     throw new Error(
-      source === "external"
+      source !== "local"
         ? EXTERNAL_TOKEN_EXPIRED_MESSAGE
         : "MercadoLibre token refresh is disabled because MELI_TOKEN_REFRESH_OWNER=external."
     );
@@ -234,7 +293,7 @@ export const getValidMeliAccessToken = async (): Promise<string> => {
   }
 
   if (!token.access_token) {
-    throw new Error(source === "external" ? MISSING_TOKEN_VALUES_MESSAGE : MISSING_TOKEN_VALUES_MESSAGE);
+    throw new Error(MISSING_TOKEN_VALUES_MESSAGE);
   }
 
   const isExpired =
@@ -243,7 +302,7 @@ export const getValidMeliAccessToken = async (): Promise<string> => {
   if (isExpired) {
     if (shouldBlockRefresh()) {
       throw new Error(
-        source === "external"
+        source !== "local"
           ? EXTERNAL_TOKEN_EXPIRED_MESSAGE
           : "MercadoLibre token refresh is disabled because MELI_TOKEN_REFRESH_OWNER=external."
       );
