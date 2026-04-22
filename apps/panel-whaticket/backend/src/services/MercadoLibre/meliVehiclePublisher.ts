@@ -467,7 +467,7 @@ const normalizeImageArrayForSnapshot = (value: any): any[] => {
       const parsed = JSON.parse(trimmed);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
-      return trimmed.split(/[\r\n,]+/).map((entry) => entry.trim()).filter(Boolean);
+      return trimmed.split(/[\r\n,]+/).map((entry: string) => entry.trim()).filter(Boolean);
     }
   }
   return [];

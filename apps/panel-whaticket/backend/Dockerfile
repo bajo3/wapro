@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim as build-deps
+FROM node:20-bookworm-slim AS build-deps
 
 # deps base
 RUN apt-get update \
