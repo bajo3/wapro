@@ -160,7 +160,7 @@ const normalizePackList = (body: any): MeliPackCatalogEntry[] => {
 
   return candidates
     .map(normalizePackEntry)
-    .filter((entry) => entry.listingTypeId || entry.promotionPackId);
+    .filter((entry: MeliPackCatalogEntry) => entry.listingTypeId || entry.promotionPackId);
 };
 
 const resolveVehicleCategoryForPublish = async (
