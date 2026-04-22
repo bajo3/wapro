@@ -76,7 +76,7 @@ const buildRequestMock = (overrides: Record<string, any> = {}) =>
     if (path === "/users/me") {
       return { ok: true, status: 200, body: { id: 123456, nickname: "dealer" } };
     }
-    if (path === "/categories/MLA1744/classifieds_promotion_packs") {
+    if (path === "/users/123456/classifieds_promotion_packs") {
       return {
         ok: true,
         status: 200,
@@ -98,7 +98,7 @@ const buildRequestMock = (overrides: Record<string, any> = {}) =>
         ]
       };
     }
-    if (path === "/users/123456/classifieds_promotion_packs?package_content=ALL") {
+    if (path === "/users/123456/classifieds_promotion_packs/silver?categoryId=MLA1744") {
       return {
         ok: true,
         status: 200,
@@ -113,6 +113,13 @@ const buildRequestMock = (overrides: Record<string, any> = {}) =>
             listing_details: [{ listing_type_id: "silver", available_listings: 2, remaining_listings: 2 }]
           }
         ]
+      };
+    }
+    if (path === "/users/123456/classifieds_promotion_packs/gold_special?categoryId=MLA1744") {
+      return {
+        ok: true,
+        status: 200,
+        body: []
       };
     }
     if (path === "/items") {
@@ -154,7 +161,11 @@ describe("publishVehicleToMeli preflight", () => {
       city: { name: "Rosario" }
     });
     expect(request).toHaveBeenCalledWith("/items", expect.objectContaining({ method: "POST" }));
-    expect(request).toHaveBeenCalledWith("/categories/MLA1744/classifieds_promotion_packs", expect.objectContaining({ method: "GET" }));
+    expect(request).toHaveBeenCalledWith("/users/123456/classifieds_promotion_packs", expect.objectContaining({ method: "GET" }));
+    expect(request).toHaveBeenCalledWith(
+      "/users/123456/classifieds_promotion_packs/silver?categoryId=MLA1744",
+      expect.objectContaining({ method: "GET" })
+    );
   });
 
   it("returns an actionable error when category_id cannot be resolved and vehicle hints are missing", async () => {
@@ -244,6 +255,26 @@ describe("publishVehicleToMeli preflight", () => {
             listing_details: [{ listing_type_id: "silver", available_listings: 0, remaining_listings: 0 }]
           }
         ]
+      },
+      "/users/123456/classifieds_promotion_packs": {
+        ok: true,
+        status: 200,
+        body: [
+          {
+            promotion_pack_id: "PK1",
+            category_id: "MLA1744",
+            description: "Paquete 15 Basico",
+            package_content: "publications",
+            status: "active",
+            remaining_listings: 0,
+            listing_details: [{ listing_type_id: "silver", available_listings: 0, remaining_listings: 0 }]
+          }
+        ]
+      },
+      "/users/123456/classifieds_promotion_packs/silver?categoryId=MLA1744": {
+        ok: true,
+        status: 200,
+        body: []
       }
     });
 
@@ -256,6 +287,27 @@ describe("publishVehicleToMeli preflight", () => {
     expect(result.apiCalled).toBe(false);
     expect(result.statusCode).toBe(409);
     expect(result.error).toContain("No se pudo resolver paquete/listing_type_id");
+    expect(request).not.toHaveBeenCalledWith("/items", expect.anything());
+  });
+
+  it("stops publish with clear error when the MercadoLibre seller packages endpoint returns 404", async () => {
+    const request = buildRequestMock({
+      "/users/123456/classifieds_promotion_packs": {
+        ok: false,
+        status: 404,
+        body: { message: "not_found" }
+      }
+    });
+
+    const result = await publishVehicleToMeli(baseVehicle, {
+      request,
+      publishEnabled: true
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.apiCalled).toBe(false);
+    expect(result.statusCode).toBe(404);
+    expect(result.error).toBe("No se encontró endpoint/paquete de publicación ML para este vendedor/categoría");
     expect(request).not.toHaveBeenCalledWith("/items", expect.anything());
   });
 
@@ -275,6 +327,45 @@ describe("publishVehicleToMeli preflight", () => {
             remaining_listings: 5,
             listing_details: [{ listing_type_id: "gold_special", available_listings: 5, remaining_listings: 5 }]
           },
+          {
+            promotion_pack_id: "PK-PUBLICATION",
+            category_id: "MLA1744",
+            description: "Pack Publicacion",
+            package_content: "publications",
+            status: "active",
+            remaining_listings: 1,
+            listing_details: [{ listing_type_id: "silver", available_listings: 1, remaining_listings: 1 }]
+          }
+        ]
+      },
+      "/users/123456/classifieds_promotion_packs": {
+        ok: true,
+        status: 200,
+        body: [
+          {
+            promotion_pack_id: "PK-UPGRADE",
+            category_id: "MLA1744",
+            description: "Pack Destacado",
+            package_content: "upgrades",
+            status: "active",
+            remaining_listings: 5,
+            listing_details: [{ listing_type_id: "gold_special", available_listings: 5, remaining_listings: 5 }]
+          },
+          {
+            promotion_pack_id: "PK-PUBLICATION",
+            category_id: "MLA1744",
+            description: "Pack Publicacion",
+            package_content: "publications",
+            status: "active",
+            remaining_listings: 1,
+            listing_details: [{ listing_type_id: "silver", available_listings: 1, remaining_listings: 1 }]
+          }
+        ]
+      },
+      "/users/123456/classifieds_promotion_packs/silver?categoryId=MLA1744": {
+        ok: true,
+        status: 200,
+        body: [
           {
             promotion_pack_id: "PK-PUBLICATION",
             category_id: "MLA1744",

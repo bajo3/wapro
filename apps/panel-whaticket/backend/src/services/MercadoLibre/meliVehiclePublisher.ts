@@ -306,6 +306,45 @@ const buildPackageDebugSummary = (
   listingTypeCompatible: !entry.listingTypeId || allowedListingTypes.size === 0 || allowedListingTypes.has(entry.listingTypeId)
 });
 
+const getResponseKeys = (body: any): string[] => {
+  if (Array.isArray(body)) {
+    const firstObject = body.find((entry) => entry && typeof entry === "object" && !Array.isArray(entry));
+    return firstObject ? Object.keys(firstObject) : [];
+  }
+  if (body && typeof body === "object") {
+    return Object.keys(body);
+  }
+  return [];
+};
+
+const logPackageEndpointResult = (
+  vehicleId: string | number,
+  sellerId: number,
+  categoryId: string | null,
+  endpoint: string,
+  response: { ok: boolean; status: number; body: any },
+  packageCount: number,
+  listingTypeId: string | null,
+  selectedListingTypeId: string | null,
+  reason?: string | null
+) => {
+  logger.info(
+    {
+      vehicleId,
+      sellerId,
+      categoryId,
+      endpoint,
+      statusCode: response.status,
+      responseKeys: getResponseKeys(response.body),
+      packageCount,
+      listingTypeId,
+      selectedListingTypeId,
+      reason: reason || null
+    },
+    "meli.vehicle.package.endpoint"
+  );
+};
+
 const resolveVehicleCategoryForPublish = async (
   vehicle: Vehicle
 ): Promise<{ categoryId: string | null; domainId: string | null; source: string; details: Record<string, any> | null }> => {
@@ -392,6 +431,9 @@ const selectVehiclePackage = (
       return rightQuota - leftQuota;
     })[0] || null;
 };
+
+const buildListingTypeValidationEndpoint = (sellerId: number, listingTypeId: string, categoryId: string): string =>
+  `/users/${sellerId}/classifieds_promotion_packs/${encodeURIComponent(listingTypeId)}?categoryId=${encodeURIComponent(categoryId)}`;
 
 export const resolveVehicleMeliPreflight = async (
   vehicle: Vehicle,
@@ -485,18 +527,117 @@ export const resolveVehicleMeliPreflight = async (
     allowedBuyingModes
   );
 
-  const packageCatalogResponse = categoryResolution.categoryId
-    ? await requester(`/categories/${categoryResolution.categoryId}/classifieds_promotion_packs`, { method: "GET" })
-    : { ok: false, status: 400, body: [] };
-  const sellerPackagesResponse = await requester(`/users/${sellerId}/classifieds_promotion_packs?package_content=ALL`, {
+  const sellerPackagesEndpoint = `/users/${sellerId}/classifieds_promotion_packs`;
+  const sellerPackagesResponse = await requester(sellerPackagesEndpoint, {
     method: "GET"
   });
-  const packageCatalog = packageCatalogResponse.ok ? normalizePackList(packageCatalogResponse.body) : [];
   const sellerPackages = sellerPackagesResponse.ok ? normalizePackList(sellerPackagesResponse.body) : [];
-  const selectedPackage =
+  const packageCatalog = sellerPackages;
+  const preliminarySelectedPackage =
     categoryResolution.categoryId && sellerPackagesResponse.ok
-      ? selectVehiclePackage(packageCatalog, sellerPackages, categoryResolution.categoryId, categoryResolution.domainId)
+      ? selectVehiclePackage(sellerPackages, sellerPackages, categoryResolution.categoryId, categoryResolution.domainId)
       : null;
+  const candidateListingTypes = Array.from(new Set([
+    originalListingTypeId,
+    preliminarySelectedPackage?.listingTypeId || null,
+    ...sellerPackages
+      .filter((entry) => !entry.packageContent || entry.packageContent.toLowerCase() === "publications")
+      .map((entry) => entry.listingTypeId)
+  ].filter(Boolean) as string[]));
+  let selectedPackage: MeliPackCatalogEntry | null = null;
+  let selectedListingTypeReason: string | null = null;
+
+  logPackageEndpointResult(
+    vehicle.id,
+    sellerId,
+    categoryResolution.categoryId,
+    sellerPackagesEndpoint,
+    sellerPackagesResponse,
+    sellerPackages.length,
+    null,
+    preliminarySelectedPackage?.listingTypeId || null,
+    sellerPackagesResponse.ok ? "seller_packages_loaded" : "seller_packages_request_failed"
+  );
+
+  if (sellerPackagesResponse.ok && categoryResolution.categoryId) {
+    for (const listingTypeId of candidateListingTypes) {
+      const validationEndpoint = buildListingTypeValidationEndpoint(sellerId, listingTypeId, categoryResolution.categoryId);
+      const validationResponse = await requester(validationEndpoint, { method: "GET" });
+
+      if (validationResponse.status === 404) {
+        logPackageEndpointResult(
+          vehicle.id,
+          sellerId,
+          categoryResolution.categoryId,
+          validationEndpoint,
+          validationResponse,
+          0,
+          listingTypeId,
+          null,
+          "listing_type_validation_404"
+        );
+
+        return {
+          ok: false,
+          sellerId,
+          originalCategoryId,
+          finalCategoryId: categoryResolution.categoryId,
+          categorySource: categoryResolution.source,
+          originalCondition,
+          finalCondition: finalConditionResolution.condition,
+          conditionSource: finalConditionResolution.source,
+          originalDomainId,
+          finalDomainId: categoryResolution.domainId,
+          domainSource: originalDomainId ? "vehicle_field" : "publish_preflight",
+          originalListingTypeId,
+          finalListingTypeId: null,
+          listingTypeSource: "missing_vehicle_listing_type",
+          originalBuyingMode,
+          finalBuyingMode: finalBuyingModeResolution.buyingMode,
+          buyingModeSource: finalBuyingModeResolution.source,
+          packageCatalog,
+          sellerPackages,
+          selectedPackage: null,
+          missingFields: [
+            ...(categoryResolution.categoryId ? [] : ["category_id"]),
+            ...(finalConditionResolution.condition ? [] : ["condition"]),
+            "listing_type_id"
+          ],
+          error: "No se encontró endpoint/paquete de publicación ML para este vendedor/categoría",
+          statusCode: 404
+        };
+      }
+
+      const validatedPackages = validationResponse.ok ? normalizePackList(validationResponse.body) : [];
+      const matchingValidatedPackage = validatedPackages.find((entry) => entry.listingTypeId === listingTypeId) || null;
+
+      logPackageEndpointResult(
+        vehicle.id,
+        sellerId,
+        categoryResolution.categoryId,
+        validationEndpoint,
+        validationResponse,
+        validatedPackages.length,
+        listingTypeId,
+        matchingValidatedPackage?.listingTypeId || null,
+        validationResponse.ok ? "listing_type_validated" : "listing_type_validation_failed"
+      );
+
+      if (validationResponse.ok && matchingValidatedPackage) {
+        selectedPackage = {
+          ...matchingValidatedPackage,
+          promotionPackId:
+            matchingValidatedPackage.promotionPackId ||
+            sellerPackages.find((entry) => entry.listingTypeId === listingTypeId)?.promotionPackId ||
+            null
+        };
+        selectedListingTypeReason = listingTypeId === originalListingTypeId
+          ? "vehicle_listing_type_validated"
+          : "seller_package_listing_type_validated";
+        break;
+      }
+    }
+  }
 
   const finalCategoryId = categoryResolution.categoryId;
   const finalDomainId = categoryResolution.domainId;
@@ -520,7 +661,7 @@ export const resolveVehicleMeliPreflight = async (
       conditionSource: finalConditionResolution.source,
       originalListingTypeId,
       finalListingTypeId,
-      listingTypeSource: finalListingTypeId ? "seller_package_selection" : "missing_vehicle_listing_type",
+      listingTypeSource: finalListingTypeId ? selectedListingTypeReason || "seller_package_selection" : "missing_vehicle_listing_type",
       originalBuyingMode,
       finalBuyingMode: finalBuyingModeResolution.buyingMode,
       selectedListingTypeId: selectedPackage?.listingTypeId || null,
@@ -630,34 +771,6 @@ export const resolveVehicleMeliPreflight = async (
     };
   }
 
-  if (!packageCatalogResponse.ok && finalCategoryId) {
-    return {
-      ok: false,
-      sellerId,
-      originalCategoryId,
-      finalCategoryId,
-      categorySource: categoryResolution.source,
-      originalCondition,
-      finalCondition,
-      conditionSource: finalConditionResolution.source,
-      originalDomainId,
-      finalDomainId,
-      domainSource: originalDomainId ? "vehicle_field" : "publish_preflight",
-      originalListingTypeId,
-      finalListingTypeId,
-      listingTypeSource: finalListingTypeId ? "seller_package_selection" : "missing_vehicle_listing_type",
-      originalBuyingMode,
-      finalBuyingMode: finalBuyingModeResolution.buyingMode,
-      buyingModeSource: finalBuyingModeResolution.source,
-      packageCatalog,
-      sellerPackages,
-      selectedPackage,
-      missingFields,
-      error: `MercadoLibre vehicle package catalog failed (${packageCatalogResponse.status}).`,
-      statusCode: 502
-    };
-  }
-
   if (!sellerPackagesResponse.ok) {
     return {
       ok: false,
@@ -681,8 +794,11 @@ export const resolveVehicleMeliPreflight = async (
       sellerPackages,
       selectedPackage,
       missingFields,
-      error: `MercadoLibre seller package check failed (${sellerPackagesResponse.status}).`,
-      statusCode: 502
+      error:
+        sellerPackagesResponse.status === 404
+          ? "No se encontró endpoint/paquete de publicación ML para este vendedor/categoría"
+          : `MercadoLibre seller package check failed (${sellerPackagesResponse.status}).`,
+      statusCode: sellerPackagesResponse.status === 404 ? 404 : 502
     };
   }
 
