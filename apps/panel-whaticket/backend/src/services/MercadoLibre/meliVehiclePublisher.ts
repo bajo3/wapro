@@ -21,8 +21,12 @@ type MeliPackCatalogEntry = {
   promotionPackId: string | null;
   listingTypeId: string | null;
   categoryId: string | null;
+  domainId: string | null;
   availableListings: number;
+  remainingListings: number;
   status: string | null;
+  name: string | null;
+  packageContent: string | null;
   raw: Record<string, any>;
 };
 
@@ -66,7 +70,6 @@ const asNumber = (value: any): number | null => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
-const VEHICLE_PACKAGES_CATEGORY_ID = "MLA1743";
 
 const buildVehicleTitle = (vehicle: Partial<Vehicle>): string =>
   [vehicle.brand, vehicle.model, vehicle.version, vehicle.year]
@@ -122,30 +125,60 @@ const extractRemoteSnapshot = (body: any) => ({
   meliStatus: body?.status || null
 });
 
-const normalizePackEntry = (entry: any): MeliPackCatalogEntry => ({
-  promotionPackId: asString(
-    entry?.promotion_pack_id || entry?.promotionPackId || entry?.package_id || entry?.id
-  ) || null,
-  listingTypeId: asString(
-    entry?.listing_type_id ||
-    entry?.listingTypeId ||
-    entry?.listing_type ||
-    entry?.listingType ||
-    entry?.type
-  ) || null,
-  categoryId: asString(entry?.category_id || entry?.categoryId) || null,
-  availableListings: Math.max(
+const normalizePackEntry = (entry: any, detail?: any): MeliPackCatalogEntry => {
+  const source = detail || entry;
+  const availableListings = Math.max(
     0,
     asNumber(
+      source?.available_listings ||
+      source?.availableListings ||
+      source?.available_quantity ||
+      source?.available_quantity_limit ||
+      source?.remaining_listings ||
       entry?.available_listings ||
       entry?.availableListings ||
       entry?.available_quantity ||
-      entry?.available_quantity_limit
+      entry?.available_quantity_limit ||
+      entry?.remaining_listings
     ) || 0
-  ),
-  status: asString(entry?.status || entry?.state) || null,
-  raw: sanitizeMeliLogPayload(entry)
-});
+  );
+  const remainingListings = Math.max(
+    0,
+    asNumber(source?.remaining_listings || entry?.remaining_listings || availableListings) || 0
+  );
+
+  return {
+    promotionPackId: asString(
+      entry?.promotion_pack_id || entry?.promotionPackId || entry?.package_id || entry?.id
+    ) || null,
+    listingTypeId: asString(
+      source?.listing_type_id ||
+      source?.listingTypeId ||
+      source?.listing_type ||
+      source?.listingType ||
+      source?.type ||
+      entry?.listing_type_id ||
+      entry?.listingTypeId ||
+      entry?.listing_type ||
+      entry?.listingType ||
+      entry?.type
+    ) || null,
+    categoryId: asString(
+      source?.category_id || source?.categoryId || entry?.category_id || entry?.categoryId
+    ) || null,
+    domainId: asString(
+      source?.domain_id || source?.domainId || entry?.domain_id || entry?.domainId
+    ) || null,
+    availableListings,
+    remainingListings,
+    status: asString(source?.status || source?.state || entry?.status || entry?.state) || null,
+    name: asString(
+      entry?.name || entry?.description || entry?.package_name || entry?.packageName || source?.name || source?.description
+    ) || null,
+    packageContent: asString(entry?.package_content || entry?.packageContent) || null,
+    raw: sanitizeMeliLogPayload(entry)
+  };
+};
 
 const normalizePackList = (body: any): MeliPackCatalogEntry[] => {
   const candidates = Array.isArray(body)
@@ -159,9 +192,40 @@ const normalizePackList = (body: any): MeliPackCatalogEntry[] => {
           : [];
 
   return candidates
-    .map(normalizePackEntry)
+    .flatMap((entry: any) => {
+      const listingDetails = Array.isArray(entry?.listing_details) ? entry.listing_details : [];
+      if (!listingDetails.length) {
+        return [normalizePackEntry(entry)];
+      }
+      return listingDetails.map((detail: any) => normalizePackEntry(entry, detail));
+    })
     .filter((entry: MeliPackCatalogEntry) => entry.listingTypeId || entry.promotionPackId);
 };
+
+const isCategoryCompatible = (entry: MeliPackCatalogEntry, categoryId: string | null): boolean =>
+  !entry.categoryId || !categoryId || entry.categoryId === categoryId;
+
+const isDomainCompatible = (entry: MeliPackCatalogEntry, domainId: string | null): boolean =>
+  !entry.domainId || !domainId || entry.domainId === domainId;
+
+const buildPackageDebugSummary = (
+  entry: MeliPackCatalogEntry,
+  categoryId: string | null,
+  domainId: string | null,
+  allowedListingTypes: Set<string>
+) => ({
+  packageId: entry.promotionPackId,
+  listingTypeId: entry.listingTypeId,
+  name: entry.name,
+  packageContent: entry.packageContent,
+  availableListings: entry.availableListings,
+  remainingListings: entry.remainingListings,
+  categoryId: entry.categoryId,
+  domainId: entry.domainId,
+  categoryCompatible: isCategoryCompatible(entry, categoryId),
+  domainCompatible: isDomainCompatible(entry, domainId),
+  listingTypeCompatible: !entry.listingTypeId || allowedListingTypes.size === 0 || allowedListingTypes.has(entry.listingTypeId)
+});
 
 const resolveVehicleCategoryForPublish = async (
   vehicle: Vehicle
@@ -209,7 +273,9 @@ const resolveVehicleCategoryForPublish = async (
 
 const selectVehiclePackage = (
   packageCatalog: MeliPackCatalogEntry[],
-  sellerPackages: MeliPackCatalogEntry[]
+  sellerPackages: MeliPackCatalogEntry[],
+  categoryId: string | null,
+  domainId: string | null
 ): MeliPackCatalogEntry | null => {
   const allowedListingTypes = new Set(
     packageCatalog
@@ -219,10 +285,17 @@ const selectVehiclePackage = (
 
   return sellerPackages
     .filter((entry) => Boolean(entry.listingTypeId))
-    .filter((entry) => entry.availableListings > 0)
+    .filter((entry) => entry.remainingListings > 0 || entry.availableListings > 0)
     .filter((entry) => !entry.status || ["active", "published", "usable"].includes(entry.status.toLowerCase()))
+    .filter((entry) => !entry.packageContent || entry.packageContent.toLowerCase() === "publications")
+    .filter((entry) => isCategoryCompatible(entry, categoryId))
+    .filter((entry) => isDomainCompatible(entry, domainId))
     .filter((entry) => allowedListingTypes.size === 0 || allowedListingTypes.has(entry.listingTypeId as string))
-    .sort((left, right) => right.availableListings - left.availableListings)[0] || null;
+    .sort((left, right) => {
+      const rightQuota = Math.max(right.remainingListings, right.availableListings);
+      const leftQuota = Math.max(left.remainingListings, left.availableListings);
+      return rightQuota - leftQuota;
+    })[0] || null;
 };
 
 const preflightVehiclePublish = async (
@@ -319,8 +392,8 @@ const preflightVehiclePublish = async (
   }
 
   const [catalogResponse, sellerPackagesResponse] = await Promise.all([
-    requester(`/categories/${VEHICLE_PACKAGES_CATEGORY_ID}/classifieds_promotion_packs`, { method: "GET" }),
-    requester(`/users/${sellerId}/classifieds_promotion_packs`, { method: "GET" })
+    requester(`/categories/${categoryResolution.categoryId}/classifieds_promotion_packs`, { method: "GET" }),
+    requester(`/users/${sellerId}/classifieds_promotion_packs?package_content=ALL`, { method: "GET" })
   ]);
 
   if (!catalogResponse.ok) {
@@ -361,14 +434,36 @@ const preflightVehiclePublish = async (
       vehicleId: vehicle.id,
       sellerId,
       categoryId: categoryResolution.categoryId,
+      domainId: categoryResolution.domainId,
       packageCatalogCount: packageCatalog.length,
       sellerPackageCount: sellerPackages.length,
-      sellerPackagesWithQuota: sellerPackages.filter((entry) => entry.availableListings > 0).length
+      sellerPackagesWithQuota: sellerPackages.filter((entry) => entry.remainingListings > 0 || entry.availableListings > 0).length,
+      packageCatalog: packageCatalog.map((entry) =>
+        buildPackageDebugSummary(
+          entry,
+          categoryResolution.categoryId,
+          categoryResolution.domainId,
+          new Set(packageCatalog.map((catalogEntry) => catalogEntry.listingTypeId).filter(Boolean) as string[])
+        )
+      ),
+      sellerPackages: sellerPackages.map((entry) =>
+        buildPackageDebugSummary(
+          entry,
+          categoryResolution.categoryId,
+          categoryResolution.domainId,
+          new Set(packageCatalog.map((catalogEntry) => catalogEntry.listingTypeId).filter(Boolean) as string[])
+        )
+      )
     },
     "meli.vehicle.package.check"
   );
 
-  const selectedPackage = selectVehiclePackage(packageCatalog, sellerPackages);
+  const selectedPackage = selectVehiclePackage(
+    packageCatalog,
+    sellerPackages,
+    categoryResolution.categoryId,
+    categoryResolution.domainId
+  );
 
   logger.info(
     {
@@ -377,7 +472,9 @@ const preflightVehiclePublish = async (
       categoryId: categoryResolution.categoryId,
       selectedListingTypeId: selectedPackage?.listingTypeId || null,
       selectedPromotionPackId: selectedPackage?.promotionPackId || null,
-      selectedAvailableListings: selectedPackage?.availableListings ?? 0
+      selectedAvailableListings: selectedPackage?.availableListings ?? 0,
+      selectedRemainingListings: selectedPackage?.remainingListings ?? 0,
+      selectedPackageName: selectedPackage?.name || null
     },
     "meli.vehicle.package.selected"
   );
@@ -392,7 +489,7 @@ const preflightVehiclePublish = async (
       packageCatalog,
       sellerPackages,
       selectedPackage: null,
-      error: "No MercadoLibre vehicle package with available quota and valid listing type was found for this seller.",
+      error: "No hay paquete/listing type válido disponible para esta categoría/vendedor",
       statusCode: 409
     };
   }
@@ -688,6 +785,28 @@ export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}
     );
     logMeliAction(vehicle, "publish", local.payload, blocked);
     return blocked;
+  }
+
+  if (local.payload.listing_type_id !== preflight.listingTypeId) {
+    const result = buildBlockedResult(
+      "publish",
+      vehicle,
+      local.payload,
+      "Selected MercadoLibre package listing type does not match the final payload.",
+      409,
+      local.warnings,
+      local.missingFields
+    );
+    logger.error(
+      {
+        vehicleId: vehicle.id,
+        selectedListingTypeId: preflight.listingTypeId,
+        payloadListingTypeId: local.payload.listing_type_id || null
+      },
+      "meli.vehicle.publish.error"
+    );
+    logMeliAction(vehicle, "publish", local.payload, result);
+    return result;
   }
 
   try {
