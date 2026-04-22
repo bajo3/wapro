@@ -18,6 +18,7 @@ jest.mock("../../../services/MercadoLibre/meliTokenService", () => ({
 
 jest.mock("../../../helpers/meliCategoriesService", () => ({
   getCategoryAttributes: jest.fn(async () => []),
+  getCategoryBuyingModes: jest.fn(async () => ["classified"]),
   mapVehicleToMeliAttributes: jest.fn(() => ({
     attributes: [],
     missingRequired: [],
@@ -31,7 +32,7 @@ jest.mock("../../../helpers/meliCategoriesService", () => ({
   predictVehicleCategories: jest.fn(async () => [])
 }));
 
-import { publishVehicleToMeli } from "../../../services/MercadoLibre/meliVehiclePublisher";
+import { publishVehicleToMeli, validateVehicleForMeli } from "../../../services/MercadoLibre/meliVehiclePublisher";
 import {
   getCategoryDetails,
   predictVehicleCategories
@@ -146,6 +147,7 @@ describe("publishVehicleToMeli preflight", () => {
     expect(result.apiCalled).toBe(true);
     expect(result.payloadPreview.category_id).toBe("MLA1744");
     expect(result.payloadPreview.listing_type_id).toBe("silver");
+    expect(result.payloadPreview.buying_mode).toBe("classified");
     expect(result.payloadPreview.condition).toBe("used");
     expect(result.payloadPreview.location).toEqual({
       state: { name: "Santa Fe" },
@@ -155,14 +157,19 @@ describe("publishVehicleToMeli preflight", () => {
     expect(request).toHaveBeenCalledWith("/categories/MLA1744/classifieds_promotion_packs", expect.objectContaining({ method: "GET" }));
   });
 
-  it("returns an actionable error when category_id cannot be resolved", async () => {
+  it("returns an actionable error when category_id cannot be resolved and vehicle hints are missing", async () => {
     mockedPredictVehicleCategories.mockResolvedValue([]);
     const request = buildRequestMock();
 
     const result = await publishVehicleToMeli(
       {
         ...baseVehicle,
-        meliCategoryId: null
+        title: "",
+        brand: "",
+        model: "",
+        version: "",
+        meliCategoryId: null,
+        meliDomainId: null
       },
       {
         request,
@@ -177,7 +184,31 @@ describe("publishVehicleToMeli preflight", () => {
     expect(request).not.toHaveBeenCalledWith("/items", expect.anything());
   });
 
-  it("blocks publish when condition is missing", async () => {
+  it("resolves preflight required fields for an incomplete vehicle before validation", async () => {
+    const request = buildRequestMock();
+
+    const result = await validateVehicleForMeli(
+      {
+        ...baseVehicle,
+        id: "vehicle-preflight-missing-fields",
+        meliCategoryId: null,
+        meliDomainId: "MLA-CARS_AND_VANS",
+        condition: null,
+        meliListingTypeId: null,
+        km: null
+      },
+      { request }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.missingFields).toEqual([]);
+    expect(result.payloadPreview.category_id).toBe("MLA1744");
+    expect(result.payloadPreview.condition).toBe("used");
+    expect(result.payloadPreview.listing_type_id).toBe("silver");
+    expect(result.payloadPreview.buying_mode).toBe("classified");
+  });
+
+  it("defaults missing condition to used for vehicle preflight", async () => {
     const request = buildRequestMock();
 
     const result = await publishVehicleToMeli(
@@ -192,11 +223,9 @@ describe("publishVehicleToMeli preflight", () => {
       }
     );
 
-    expect(result.ok).toBe(false);
-    expect(result.apiCalled).toBe(false);
-    expect(result.missingFields).toContain("condition");
-    expect(result.fatalErrors).toContain("Vehicle condition is required for MercadoLibre publish.");
-    expect(request).not.toHaveBeenCalledWith("/items", expect.anything());
+    expect(result.ok).toBe(true);
+    expect(result.payloadPreview.condition).toBe("used");
+    expect(result.missingFields).toEqual([]);
   });
 
   it("stops publish when the seller has no available vehicle package quota", async () => {
@@ -226,7 +255,7 @@ describe("publishVehicleToMeli preflight", () => {
     expect(result.ok).toBe(false);
     expect(result.apiCalled).toBe(false);
     expect(result.statusCode).toBe(409);
-    expect(result.error).toBe("No hay paquete/listing type válido disponible para esta categoría/vendedor");
+    expect(result.error).toContain("No se pudo resolver paquete/listing_type_id");
     expect(request).not.toHaveBeenCalledWith("/items", expect.anything());
   });
 
@@ -277,7 +306,19 @@ describe("publishVehicleToMeli preflight", () => {
 
     expect(result.ok).toBe(true);
     expect(result.payloadPreview.listing_type_id).toBe("silver");
+    expect(result.payloadPreview.buying_mode).toBe("classified");
     expect(requestBodies).toHaveLength(1);
     expect(requestBodies[0].listing_type_id).toBe("silver");
+    expect(requestBodies[0].buying_mode).toBe("classified");
+  });
+
+  it("never leaves default_buy_it_now for vehicle payloads with valid package resolution", async () => {
+    const request = buildRequestMock();
+
+    const result = await validateVehicleForMeli(baseVehicle, { request });
+
+    expect(result.ok).toBe(true);
+    expect(result.payloadPreview.buying_mode).toBe("classified");
+    expect(result.payloadPreview.buying_mode).not.toBe("buy_it_now");
   });
 });

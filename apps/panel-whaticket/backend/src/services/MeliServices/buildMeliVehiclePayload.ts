@@ -35,7 +35,9 @@ export type BuildMeliVehiclePayloadOptions = {
   dryRun?: boolean;
   resolvedCategoryId?: string | null;
   resolvedDomainId?: string | null;
+  resolvedCondition?: string | null;
   resolvedListingTypeId?: string | null;
+  resolvedBuyingMode?: string | null;
   requireLocation?: boolean;
 };
 
@@ -333,7 +335,12 @@ export const normalizeMeliVehicleMetadata = (
   ) || null;
   const categoryId = asString(options.resolvedCategoryId) || originalCategoryId;
   const domainId = asString(options.resolvedDomainId) || originalDomainId;
-  const inferredCondition = inferVehicleCondition(vehicle, originalCondition);
+  const inferredCondition = asString(options.resolvedCondition)
+    ? {
+        condition: asString(options.resolvedCondition),
+        source: "publish_preflight"
+      }
+    : inferVehicleCondition(vehicle, originalCondition);
   const listingTypeId = asString(options.resolvedListingTypeId) || originalListingTypeId;
   const missingFields: string[] = [];
   const warnings: string[] = [];
@@ -457,8 +464,30 @@ const resolveBuyingMode = async (
   vehicleId: number | string,
   categoryId: string | null,
   domainId: string | null,
-  listingTypeId: string | null
+  listingTypeId: string | null,
+  forcedBuyingMode?: string | null
 ): Promise<{ buyingMode: string; source: string; allowedBuyingModes: string[] }> => {
+  if (asString(forcedBuyingMode)) {
+    logger.info(
+      {
+        vehicleId,
+        categoryId,
+        domainId,
+        originalBuyingMode: "buy_it_now",
+        finalBuyingMode: asString(forcedBuyingMode),
+        source: "publish_preflight",
+        allowedBuyingModes: []
+      },
+      "meli.vehicle.buyingMode.resolved"
+    );
+
+    return {
+      buyingMode: asString(forcedBuyingMode),
+      source: "publish_preflight",
+      allowedBuyingModes: []
+    };
+  }
+
   if (listingTypeId === "classified") {
     logger.info(
       {
@@ -678,7 +707,8 @@ export const buildMeliVehiclePayload = async (
     vehicle.id,
     metadata.categoryId,
     metadata.domainId,
-    metadata.listingTypeId
+    metadata.listingTypeId,
+    options.resolvedBuyingMode
   );
 
   const payload: Record<string, any> = {

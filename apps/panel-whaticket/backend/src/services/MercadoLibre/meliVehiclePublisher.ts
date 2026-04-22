@@ -7,7 +7,7 @@ import {
   MISSING_TOKEN_ROW_MESSAGE,
   MISSING_TOKEN_VALUES_MESSAGE
 } from "./meliTokenService";
-import { getCategoryDetails, predictVehicleCategories } from "../../helpers/meliCategoriesService";
+import { getCategoryBuyingModes, getCategoryDetails, predictVehicleCategories } from "../../helpers/meliCategoriesService";
 
 export const MELI_PUBLISH_DISABLED_MESSAGE =
   "MercadoLibre publishing is disabled. Set MELI_PUBLISH_ENABLED=true to allow real publishing.";
@@ -33,12 +33,25 @@ type MeliPackCatalogEntry = {
 type MeliVehiclePublishPreflight = {
   ok: boolean;
   sellerId: number | null;
-  categoryId: string | null;
-  domainId: string | null;
-  listingTypeId: string | null;
+  originalCategoryId: string | null;
+  finalCategoryId: string | null;
+  categorySource: string;
+  originalCondition: string | null;
+  finalCondition: string | null;
+  conditionSource: string;
+  originalDomainId: string | null;
+  finalDomainId: string | null;
+  domainSource: string;
+  originalListingTypeId: string | null;
+  finalListingTypeId: string | null;
+  listingTypeSource: string;
+  originalBuyingMode: string;
+  finalBuyingMode: string | null;
+  buyingModeSource: string;
   packageCatalog: MeliPackCatalogEntry[];
   sellerPackages: MeliPackCatalogEntry[];
   selectedPackage: MeliPackCatalogEntry | null;
+  missingFields: string[];
   error?: string;
   statusCode?: number;
 };
@@ -77,6 +90,72 @@ const buildVehicleTitle = (vehicle: Partial<Vehicle>): string =>
     .filter(Boolean)
     .join(" ")
     .trim();
+
+const normalizeVehicleCondition = (value: any): string | null => {
+  const normalized = asString(value).toLowerCase();
+  if (!normalized) return null;
+  if (["used", "usado"].includes(normalized)) return "used";
+  if (["new", "nuevo", "0km", "0 km"].includes(normalized)) return "new";
+  return normalized;
+};
+
+const inferVehicleConditionForPreflight = (
+  vehicle: Vehicle,
+  domainId: string | null
+): { condition: string | null; source: string } => {
+  const explicitCondition = normalizeVehicleCondition((vehicle as any).condition);
+  if (explicitCondition) {
+    return {
+      condition: explicitCondition,
+      source: "vehicle_field_normalized"
+    };
+  }
+
+  const normalizedKm = asNumber((vehicle as any).km ?? (vehicle as any).kms ?? (vehicle as any).kilometers ?? (vehicle as any).mileage);
+  if (normalizedKm !== null && normalizedKm > 0) {
+    return {
+      condition: "used",
+      source: "km_gt_zero_inferred_used"
+    };
+  }
+
+  if (domainId === "MLA-CARS_AND_VANS") {
+    return {
+      condition: "used",
+      source: "vehicle_domain_default_used"
+    };
+  }
+
+  return {
+    condition: null,
+    source: "missing_explicit_vehicle_condition"
+  };
+};
+
+const resolveVehicleBuyingMode = (
+  categoryId: string | null,
+  domainId: string | null,
+  allowedBuyingModes: string[]
+): { buyingMode: string | null; source: string } => {
+  if (allowedBuyingModes.includes("classified")) {
+    return {
+      buyingMode: "classified",
+      source: "category_buying_modes_vehicle_classified"
+    };
+  }
+
+  if (domainId === "MLA-CARS_AND_VANS" || categoryId === "MLA1744") {
+    return {
+      buyingMode: "classified",
+      source: "vehicle_domain_classified_default"
+    };
+  }
+
+  return {
+    buyingMode: null,
+    source: "vehicle_buying_mode_unresolved"
+  };
+};
 
 const buildResult = (
   action: MeliVehicleActionResult["action"],
@@ -257,15 +336,31 @@ const resolveVehicleCategoryForPublish = async (
   const selected = predictions.find((prediction) => asString(prediction.category_id)) || null;
   const categoryId = asString(selected?.category_id) || null;
   const details = categoryId ? await getCategoryDetails(categoryId) : null;
+  const predictedOrExplicitDomainId =
+    asString(selected?.domain_id) ||
+    explicitDomainId ||
+    asString(details?.settings?.catalog_domain) ||
+    asString(details?.domain_id) ||
+    null;
+
+  if (!categoryId && predictedOrExplicitDomainId === "MLA-CARS_AND_VANS") {
+    const fallbackCategoryId = "MLA1744";
+    const fallbackDetails = await getCategoryDetails(fallbackCategoryId);
+    return {
+      categoryId: fallbackCategoryId,
+      domainId:
+        predictedOrExplicitDomainId ||
+        asString(fallbackDetails?.settings?.catalog_domain) ||
+        asString(fallbackDetails?.domain_id) ||
+        null,
+      source: "vehicle_domain_fallback_mla1744",
+      details: fallbackDetails
+    };
+  }
 
   return {
     categoryId,
-    domainId:
-      asString(selected?.domain_id) ||
-      explicitDomainId ||
-      asString(details?.settings?.catalog_domain) ||
-      asString(details?.domain_id) ||
-      null,
+    domainId: predictedOrExplicitDomainId,
     source: categoryId ? "predictor_top_result" : "predictor_no_match",
     details
   };
@@ -298,15 +393,24 @@ const selectVehiclePackage = (
     })[0] || null;
 };
 
-const preflightVehiclePublish = async (
+export const resolveVehicleMeliPreflight = async (
   vehicle: Vehicle,
   requester: NonNullable<MeliDeps["request"]>
 ): Promise<MeliVehiclePublishPreflight> => {
+  const originalCategoryId = asString((vehicle as any).meliCategoryId) || null;
+  const originalDomainId = asString((vehicle as any).meliDomainId) || null;
+  const originalCondition = normalizeVehicleCondition((vehicle as any).condition);
+  const originalListingTypeId = asString((vehicle as any).meliListingTypeId) || null;
+  const originalBuyingMode = "buy_it_now";
+
   logger.info(
     {
       vehicleId: vehicle.id,
-      hasStoredCategoryId: Boolean(vehicle.meliCategoryId),
-      hasStoredListingTypeId: Boolean(vehicle.meliListingTypeId),
+      originalCategoryId,
+      originalCondition,
+      originalDomainId,
+      originalListingTypeId,
+      originalBuyingMode,
       hasMeliItemId: Boolean(vehicle.meliItemId)
     },
     "meli.vehicle.preflight.start"
@@ -317,12 +421,25 @@ const preflightVehiclePublish = async (
     return {
       ok: false,
       sellerId: null,
-      categoryId: null,
-      domainId: asString((vehicle as any).meliDomainId) || null,
-      listingTypeId: null,
+      originalCategoryId,
+      finalCategoryId: null,
+      categorySource: originalCategoryId ? "vehicle_field" : "missing_vehicle_category",
+      originalCondition,
+      finalCondition: null,
+      conditionSource: originalCondition ? "vehicle_field_normalized" : "missing_explicit_vehicle_condition",
+      originalDomainId,
+      finalDomainId: originalDomainId,
+      domainSource: originalDomainId ? "vehicle_field" : "missing_vehicle_domain",
+      originalListingTypeId,
+      finalListingTypeId: null,
+      listingTypeSource: originalListingTypeId ? "vehicle_field" : "missing_vehicle_listing_type",
+      originalBuyingMode,
+      finalBuyingMode: null,
+      buyingModeSource: "vehicle_buying_mode_unresolved",
       packageCatalog: [],
       sellerPackages: [],
       selectedPackage: null,
+      missingFields: ["category_id", "condition", "listing_type_id"],
       error: `MercadoLibre /users/me failed (${meResponse.status})`,
       statusCode: 502
     };
@@ -333,45 +450,154 @@ const preflightVehiclePublish = async (
     return {
       ok: false,
       sellerId: null,
-      categoryId: null,
-      domainId: asString((vehicle as any).meliDomainId) || null,
-      listingTypeId: null,
+      originalCategoryId,
+      finalCategoryId: null,
+      categorySource: originalCategoryId ? "vehicle_field" : "missing_vehicle_category",
+      originalCondition,
+      finalCondition: null,
+      conditionSource: originalCondition ? "vehicle_field_normalized" : "missing_explicit_vehicle_condition",
+      originalDomainId,
+      finalDomainId: originalDomainId,
+      domainSource: originalDomainId ? "vehicle_field" : "missing_vehicle_domain",
+      originalListingTypeId,
+      finalListingTypeId: null,
+      listingTypeSource: originalListingTypeId ? "vehicle_field" : "missing_vehicle_listing_type",
+      originalBuyingMode,
+      finalBuyingMode: null,
+      buyingModeSource: "vehicle_buying_mode_unresolved",
       packageCatalog: [],
       sellerPackages: [],
       selectedPackage: null,
+      missingFields: ["category_id", "condition", "listing_type_id"],
       error: "MercadoLibre /users/me did not return a valid seller id.",
       statusCode: 502
     };
   }
 
   const categoryResolution = await resolveVehicleCategoryForPublish(vehicle);
+  const finalConditionResolution = inferVehicleConditionForPreflight(vehicle, categoryResolution.domainId);
+  const allowedBuyingModes = categoryResolution.categoryId
+    ? await getCategoryBuyingModes(categoryResolution.categoryId)
+    : [];
+  const finalBuyingModeResolution = resolveVehicleBuyingMode(
+    categoryResolution.categoryId,
+    categoryResolution.domainId,
+    allowedBuyingModes
+  );
+
+  const packageCatalogResponse = categoryResolution.categoryId
+    ? await requester(`/categories/${categoryResolution.categoryId}/classifieds_promotion_packs`, { method: "GET" })
+    : { ok: false, status: 400, body: [] };
+  const sellerPackagesResponse = await requester(`/users/${sellerId}/classifieds_promotion_packs?package_content=ALL`, {
+    method: "GET"
+  });
+  const packageCatalog = packageCatalogResponse.ok ? normalizePackList(packageCatalogResponse.body) : [];
+  const sellerPackages = sellerPackagesResponse.ok ? normalizePackList(sellerPackagesResponse.body) : [];
+  const selectedPackage =
+    categoryResolution.categoryId && sellerPackagesResponse.ok
+      ? selectVehiclePackage(packageCatalog, sellerPackages, categoryResolution.categoryId, categoryResolution.domainId)
+      : null;
+
+  const finalCategoryId = categoryResolution.categoryId;
+  const finalDomainId = categoryResolution.domainId;
+  const finalCondition = finalConditionResolution.condition;
+  const finalListingTypeId = selectedPackage?.listingTypeId || null;
+  const missingFields = [
+    ...(!finalCategoryId ? ["category_id"] : []),
+    ...(!finalCondition ? ["condition"] : []),
+    ...(!finalListingTypeId ? ["listing_type_id"] : [])
+  ];
 
   logger.info(
     {
       vehicleId: vehicle.id,
       sellerId,
-      categoryId: categoryResolution.categoryId,
-      domainId: categoryResolution.domainId,
-      source: categoryResolution.source,
-      listingAllowed:
-        typeof categoryResolution.details?.settings?.listing_allowed === "boolean"
-          ? categoryResolution.details.settings.listing_allowed
-          : null
+      originalCategoryId,
+      finalCategoryId,
+      categorySource: categoryResolution.source,
+      originalCondition,
+      finalCondition,
+      conditionSource: finalConditionResolution.source,
+      originalListingTypeId,
+      finalListingTypeId,
+      listingTypeSource: finalListingTypeId ? "seller_package_selection" : "missing_vehicle_listing_type",
+      originalBuyingMode,
+      finalBuyingMode: finalBuyingModeResolution.buyingMode,
+      selectedListingTypeId: selectedPackage?.listingTypeId || null,
+      packageCatalogCount: packageCatalog.length,
+      missingFields,
+      packageCatalog: packageCatalog.map((entry) =>
+        buildPackageDebugSummary(
+          entry,
+          finalCategoryId,
+          finalDomainId,
+          new Set(packageCatalog.map((catalogEntry) => catalogEntry.listingTypeId).filter(Boolean) as string[])
+        )
+      ),
+      sellerPackages: sellerPackages.map((entry) =>
+        buildPackageDebugSummary(
+          entry,
+          finalCategoryId,
+          finalDomainId,
+          new Set(packageCatalog.map((catalogEntry) => catalogEntry.listingTypeId).filter(Boolean) as string[])
+        )
+      )
     },
-    "meli.vehicle.category.resolved"
+    "meli.vehicle.preflight.resolved"
   );
 
-  if (!categoryResolution.categoryId) {
+  if (!finalCategoryId) {
     return {
       ok: false,
       sellerId,
-      categoryId: null,
-      domainId: categoryResolution.domainId,
-      listingTypeId: null,
-      packageCatalog: [],
-      sellerPackages: [],
+      originalCategoryId,
+      finalCategoryId,
+      categorySource: categoryResolution.source,
+      originalCondition,
+      finalCondition,
+      conditionSource: finalConditionResolution.source,
+      originalDomainId,
+      finalDomainId,
+      domainSource: originalDomainId ? "vehicle_field" : "publish_preflight",
+      originalListingTypeId,
+      finalListingTypeId,
+      listingTypeSource: "missing_vehicle_listing_type",
+      originalBuyingMode,
+      finalBuyingMode: finalBuyingModeResolution.buyingMode,
+      buyingModeSource: finalBuyingModeResolution.source,
+      packageCatalog,
+      sellerPackages,
       selectedPackage: null,
+      missingFields,
       error: "Vehicle category could not be resolved for MercadoLibre publish.",
+      statusCode: 400
+    };
+  }
+
+  if (!finalCondition) {
+    return {
+      ok: false,
+      sellerId,
+      originalCategoryId,
+      finalCategoryId,
+      categorySource: categoryResolution.source,
+      originalCondition,
+      finalCondition,
+      conditionSource: finalConditionResolution.source,
+      originalDomainId,
+      finalDomainId,
+      domainSource: originalDomainId ? "vehicle_field" : "publish_preflight",
+      originalListingTypeId,
+      finalListingTypeId,
+      listingTypeSource: finalListingTypeId ? "seller_package_selection" : "missing_vehicle_listing_type",
+      originalBuyingMode,
+      finalBuyingMode: finalBuyingModeResolution.buyingMode,
+      buyingModeSource: finalBuyingModeResolution.source,
+      packageCatalog,
+      sellerPackages,
+      selectedPackage,
+      missingFields,
+      error: "Vehicle condition is required for MercadoLibre publish.",
       statusCode: 400
     };
   }
@@ -380,33 +606,54 @@ const preflightVehiclePublish = async (
     return {
       ok: false,
       sellerId,
-      categoryId: categoryResolution.categoryId,
-      domainId: categoryResolution.domainId,
-      listingTypeId: null,
-      packageCatalog: [],
-      sellerPackages: [],
-      selectedPackage: null,
+      originalCategoryId,
+      finalCategoryId,
+      categorySource: categoryResolution.source,
+      originalCondition,
+      finalCondition,
+      conditionSource: finalConditionResolution.source,
+      originalDomainId,
+      finalDomainId,
+      domainSource: originalDomainId ? "vehicle_field" : "publish_preflight",
+      originalListingTypeId,
+      finalListingTypeId,
+      listingTypeSource: finalListingTypeId ? "seller_package_selection" : "missing_vehicle_listing_type",
+      originalBuyingMode,
+      finalBuyingMode: finalBuyingModeResolution.buyingMode,
+      buyingModeSource: finalBuyingModeResolution.source,
+      packageCatalog,
+      sellerPackages,
+      selectedPackage,
+      missingFields,
       error: `MercadoLibre category ${categoryResolution.categoryId} does not allow listings.`,
       statusCode: 400
     };
   }
 
-  const [catalogResponse, sellerPackagesResponse] = await Promise.all([
-    requester(`/categories/${categoryResolution.categoryId}/classifieds_promotion_packs`, { method: "GET" }),
-    requester(`/users/${sellerId}/classifieds_promotion_packs?package_content=ALL`, { method: "GET" })
-  ]);
-
-  if (!catalogResponse.ok) {
+  if (!packageCatalogResponse.ok && finalCategoryId) {
     return {
       ok: false,
       sellerId,
-      categoryId: categoryResolution.categoryId,
-      domainId: categoryResolution.domainId,
-      listingTypeId: null,
-      packageCatalog: [],
-      sellerPackages: [],
-      selectedPackage: null,
-      error: `MercadoLibre vehicle package catalog failed (${catalogResponse.status}).`,
+      originalCategoryId,
+      finalCategoryId,
+      categorySource: categoryResolution.source,
+      originalCondition,
+      finalCondition,
+      conditionSource: finalConditionResolution.source,
+      originalDomainId,
+      finalDomainId,
+      domainSource: originalDomainId ? "vehicle_field" : "publish_preflight",
+      originalListingTypeId,
+      finalListingTypeId,
+      listingTypeSource: finalListingTypeId ? "seller_package_selection" : "missing_vehicle_listing_type",
+      originalBuyingMode,
+      finalBuyingMode: finalBuyingModeResolution.buyingMode,
+      buyingModeSource: finalBuyingModeResolution.source,
+      packageCatalog,
+      sellerPackages,
+      selectedPackage,
+      missingFields,
+      error: `MercadoLibre vehicle package catalog failed (${packageCatalogResponse.status}).`,
       statusCode: 502
     };
   }
@@ -415,96 +662,91 @@ const preflightVehiclePublish = async (
     return {
       ok: false,
       sellerId,
-      categoryId: categoryResolution.categoryId,
-      domainId: categoryResolution.domainId,
-      listingTypeId: null,
-      packageCatalog: normalizePackList(catalogResponse.body),
-      sellerPackages: [],
-      selectedPackage: null,
+      originalCategoryId,
+      finalCategoryId,
+      categorySource: categoryResolution.source,
+      originalCondition,
+      finalCondition,
+      conditionSource: finalConditionResolution.source,
+      originalDomainId,
+      finalDomainId,
+      domainSource: originalDomainId ? "vehicle_field" : "publish_preflight",
+      originalListingTypeId,
+      finalListingTypeId,
+      listingTypeSource: finalListingTypeId ? "seller_package_selection" : "missing_vehicle_listing_type",
+      originalBuyingMode,
+      finalBuyingMode: finalBuyingModeResolution.buyingMode,
+      buyingModeSource: finalBuyingModeResolution.source,
+      packageCatalog,
+      sellerPackages,
+      selectedPackage,
+      missingFields,
       error: `MercadoLibre seller package check failed (${sellerPackagesResponse.status}).`,
       statusCode: 502
     };
   }
 
-  const packageCatalog = normalizePackList(catalogResponse.body);
-  const sellerPackages = normalizePackList(sellerPackagesResponse.body);
-
-  logger.info(
-    {
-      vehicleId: vehicle.id,
-      sellerId,
-      categoryId: categoryResolution.categoryId,
-      domainId: categoryResolution.domainId,
-      packageCatalogCount: packageCatalog.length,
-      sellerPackageCount: sellerPackages.length,
-      sellerPackagesWithQuota: sellerPackages.filter((entry) => entry.remainingListings > 0 || entry.availableListings > 0).length,
-      packageCatalog: packageCatalog.map((entry) =>
-        buildPackageDebugSummary(
-          entry,
-          categoryResolution.categoryId,
-          categoryResolution.domainId,
-          new Set(packageCatalog.map((catalogEntry) => catalogEntry.listingTypeId).filter(Boolean) as string[])
-        )
-      ),
-      sellerPackages: sellerPackages.map((entry) =>
-        buildPackageDebugSummary(
-          entry,
-          categoryResolution.categoryId,
-          categoryResolution.domainId,
-          new Set(packageCatalog.map((catalogEntry) => catalogEntry.listingTypeId).filter(Boolean) as string[])
-        )
-      )
-    },
-    "meli.vehicle.package.check"
-  );
-
-  const selectedPackage = selectVehiclePackage(
-    packageCatalog,
-    sellerPackages,
-    categoryResolution.categoryId,
-    categoryResolution.domainId
-  );
-
-  logger.info(
-    {
-      vehicleId: vehicle.id,
-      sellerId,
-      categoryId: categoryResolution.categoryId,
-      selectedListingTypeId: selectedPackage?.listingTypeId || null,
-      selectedPromotionPackId: selectedPackage?.promotionPackId || null,
-      selectedAvailableListings: selectedPackage?.availableListings ?? 0,
-      selectedRemainingListings: selectedPackage?.remainingListings ?? 0,
-      selectedPackageName: selectedPackage?.name || null
-    },
-    "meli.vehicle.package.selected"
-  );
-
-  if (!selectedPackage?.listingTypeId) {
+  if (!finalListingTypeId) {
     return {
       ok: false,
       sellerId,
-      categoryId: categoryResolution.categoryId,
-      domainId: categoryResolution.domainId,
-      listingTypeId: null,
+      originalCategoryId,
+      finalCategoryId,
+      categorySource: categoryResolution.source,
+      originalCondition,
+      finalCondition,
+      conditionSource: finalConditionResolution.source,
+      originalDomainId,
+      finalDomainId,
+      domainSource: originalDomainId ? "vehicle_field" : "publish_preflight",
+      originalListingTypeId,
+      finalListingTypeId,
+      listingTypeSource: "missing_vehicle_listing_type",
+      originalBuyingMode,
+      finalBuyingMode: finalBuyingModeResolution.buyingMode,
+      buyingModeSource: finalBuyingModeResolution.source,
       packageCatalog,
       sellerPackages,
       selectedPackage: null,
-      error: "No hay paquete/listing type válido disponible para esta categoría/vendedor",
+      missingFields,
+      error: "No se pudo resolver paquete/listing_type_id v?lido para este vendedor/categor?a",
       statusCode: 409
     };
   }
 
   return {
-    ok: true,
+    ok: missingFields.length === 0 && Boolean(finalBuyingModeResolution.buyingMode),
     sellerId,
-    categoryId: categoryResolution.categoryId,
-    domainId: categoryResolution.domainId,
-    listingTypeId: selectedPackage.listingTypeId,
+    originalCategoryId,
+    finalCategoryId,
+    categorySource: categoryResolution.source,
+    originalCondition,
+    finalCondition,
+    conditionSource: finalConditionResolution.source,
+    originalDomainId,
+    finalDomainId,
+    domainSource: originalDomainId ? "vehicle_field" : "publish_preflight",
+    originalListingTypeId,
+    finalListingTypeId,
+    listingTypeSource: "seller_package_selection",
+    originalBuyingMode,
+    finalBuyingMode: finalBuyingModeResolution.buyingMode,
+    buyingModeSource: finalBuyingModeResolution.source,
     packageCatalog,
     sellerPackages,
-    selectedPackage
+    selectedPackage,
+    missingFields
   };
 };
+
+const buildOptionsFromPreflight = (preflight: MeliVehiclePublishPreflight): BuildMeliVehiclePayloadOptions => ({
+  resolvedCategoryId: preflight.finalCategoryId,
+  resolvedDomainId: preflight.finalDomainId,
+  resolvedCondition: preflight.finalCondition,
+  resolvedListingTypeId: preflight.finalListingTypeId,
+  resolvedBuyingMode: preflight.finalBuyingMode,
+  requireLocation: true
+});
 
 const logMeliAction = (
   vehicle: Vehicle,
@@ -598,22 +840,35 @@ const logVehiclePayloadSnapshot = (vehicle: Vehicle) => {
 // El listing_type_id de vehiculos se normaliza alli a "classified".
 const validateOnly = async (
   vehicle: Vehicle,
-  options: BuildMeliVehiclePayloadOptions = {}
+  options: BuildMeliVehiclePayloadOptions = {},
+  requester: NonNullable<MeliDeps["request"]> = meliApiRequest
 ): Promise<MeliVehicleActionResult> => {
   logVehiclePayloadSnapshot(vehicle);
-  const local = await buildMeliVehiclePayload(vehicle, options);
+  const preflight = await resolveVehicleMeliPreflight(vehicle, requester);
+  const mergedOptions = {
+    ...options,
+    ...buildOptionsFromPreflight(preflight),
+    dryRun: options.dryRun
+  };
+  const local = await buildMeliVehiclePayload(vehicle, mergedOptions);
   const result = buildResult(options.dryRun ? "dry-run" : "validate", vehicle, local.payload, {
-    ok: local.ok,
-    missingFields: local.missingFields,
+    ok: preflight.ok && local.ok,
+    missingFields: Array.from(new Set([...(preflight.missingFields || []), ...local.missingFields])),
     warnings: local.warnings,
-    fatalErrors: local.fatalErrors,
+    fatalErrors: preflight.ok ? local.fatalErrors : Array.from(new Set([...(local.fatalErrors || []), preflight.error || "meli_vehicle_preflight_failed"])),
     apiCalled: false,
-    error: local.ok ? null : local.fatalErrors[0] || local.missingFields.join(", "),
+    error: preflight.ok ? (local.ok ? null : local.fatalErrors[0] || local.missingFields.join(", ")) : preflight.error || "meli_vehicle_preflight_failed",
     inputSnapshot: {
       vehicleId: vehicle.id,
-      meliCategoryId: vehicle.meliCategoryId || null,
-      condition: vehicle.condition || null,
-      meliListingTypeId: vehicle.meliListingTypeId || null,
+      meliCategoryId: preflight.finalCategoryId,
+      condition: preflight.finalCondition,
+      meliListingTypeId: preflight.finalListingTypeId,
+      meliDomainId: preflight.finalDomainId,
+      buyingMode: preflight.finalBuyingMode,
+      categorySource: preflight.categorySource,
+      conditionSource: preflight.conditionSource,
+      listingTypeSource: preflight.listingTypeSource,
+      buyingModeSource: preflight.buyingModeSource,
       originalListingTypeId: local.originalListingTypeId,
       finalListingTypeId: local.finalListingTypeId,
       version: vehicle.version || null,
@@ -631,10 +886,19 @@ const validateOnly = async (
     {
       vehicleId: vehicle.id,
       action: result.action,
-      meliCategoryId: vehicle.meliCategoryId || null,
-      condition: vehicle.condition || null,
-      originalListingTypeId: local.originalListingTypeId,
+      originalCategoryId: preflight.originalCategoryId,
+      finalCategoryId: preflight.finalCategoryId,
+      categorySource: preflight.categorySource,
+      originalCondition: preflight.originalCondition,
+      finalCondition: preflight.finalCondition,
+      conditionSource: preflight.conditionSource,
+      originalListingTypeId: preflight.originalListingTypeId,
       finalListingTypeId: local.finalListingTypeId,
+      listingTypeSource: preflight.listingTypeSource,
+      originalBuyingMode: preflight.originalBuyingMode,
+      finalBuyingMode: preflight.finalBuyingMode,
+      selectedListingTypeId: preflight.selectedPackage?.listingTypeId || null,
+      packageCatalogCount: preflight.packageCatalog.length,
       ok: result.ok,
       missingFields: result.missingFields,
       warnings: result.warnings,
@@ -652,9 +916,10 @@ const dryRunOnly = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> =>
 const assertPublishable = async (
   vehicle: Vehicle,
   action: MeliVehicleActionResult["action"],
-  options: BuildMeliVehiclePayloadOptions = {}
+  options: BuildMeliVehiclePayloadOptions = {},
+  requester: NonNullable<MeliDeps["request"]> = meliApiRequest
 ): Promise<MeliVehicleActionResult | null> => {
-  const validation = await validateOnly(vehicle, options);
+  const validation = await validateOnly(vehicle, options, requester);
   if (validation.missingFields.length || validation.fatalErrors.length) {
     return {
       ...validation,
@@ -700,50 +965,47 @@ const ensureTokenReady = async (
   return null;
 };
 
-export const validateVehicleForMeli = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> =>
-  validateOnly(vehicle, { dryRun: true });
+export const validateVehicleForMeli = async (vehicle: Vehicle, deps: MeliDeps = {}): Promise<MeliVehicleActionResult> =>
+  validateOnly(vehicle, { dryRun: true }, deps.request || meliApiRequest);
 
-export const dryRunVehicleForMeli = async (vehicle: Vehicle): Promise<MeliVehicleActionResult> => dryRunOnly(vehicle);
+export const dryRunVehicleForMeli = async (vehicle: Vehicle, deps: MeliDeps = {}): Promise<MeliVehicleActionResult> =>
+  validateOnly(vehicle, { dryRun: true }, deps.request || meliApiRequest);
 
 export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}): Promise<MeliVehicleActionResult> => {
   logVehiclePayloadSnapshot(vehicle);
   const requester = deps.request || meliApiRequest;
   let buildOptions: BuildMeliVehiclePayloadOptions = {};
-  let local = await buildMeliVehiclePayload(vehicle);
+  let localPayload: Record<string, any> = {};
 
   if (vehicle.meliItemId) {
     const result = buildBlockedResult(
       "publish",
       vehicle,
-      local.payload,
+      localPayload,
       "Vehicle already has MercadoLibre item. Use sync instead.",
       409,
-      local.warnings
+      []
     );
-    logMeliAction(vehicle, "publish", local.payload, result);
+    logMeliAction(vehicle, "publish", localPayload, result);
     return result;
   }
 
   if (!isPublishingEnabled(deps)) {
-    const result = buildBlockedResult("publish", vehicle, local.payload, MELI_PUBLISH_DISABLED_MESSAGE, 503, local.warnings);
-    logMeliAction(vehicle, "publish", local.payload, result);
+    const result = buildBlockedResult("publish", vehicle, localPayload, MELI_PUBLISH_DISABLED_MESSAGE, 503, []);
+    logMeliAction(vehicle, "publish", localPayload, result);
     return result;
   }
 
-  const tokenBlocked = await ensureTokenReady("publish", vehicle, local.payload, local.warnings);
+  const tokenBlocked = await ensureTokenReady("publish", vehicle, localPayload, []);
   if (tokenBlocked) {
-    logMeliAction(vehicle, "publish", local.payload, tokenBlocked);
+    logMeliAction(vehicle, "publish", localPayload, tokenBlocked);
     return tokenBlocked;
   }
 
-  const preflight = await preflightVehiclePublish(vehicle, requester);
-  buildOptions = {
-    resolvedCategoryId: preflight.categoryId,
-    resolvedDomainId: preflight.domainId,
-    resolvedListingTypeId: preflight.listingTypeId,
-    requireLocation: true
-  };
-  local = await buildMeliVehiclePayload(vehicle, buildOptions);
+  const preflight = await resolveVehicleMeliPreflight(vehicle, requester);
+  buildOptions = buildOptionsFromPreflight(preflight);
+  const local = await buildMeliVehiclePayload(vehicle, buildOptions);
+  localPayload = local.payload;
 
   if (!preflight.ok) {
     const result = buildBlockedResult(
@@ -753,7 +1015,7 @@ export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}
       preflight.error || "meli_vehicle_preflight_failed",
       preflight.statusCode || 400,
       local.warnings,
-      local.missingFields
+      Array.from(new Set([...(preflight.missingFields || []), ...local.missingFields]))
     );
     logger.error(
       {
@@ -762,8 +1024,8 @@ export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}
         error: result.error,
         missingFields: result.missingFields,
         sellerId: preflight.sellerId,
-        categoryId: preflight.categoryId,
-        listingTypeId: preflight.listingTypeId
+        categoryId: preflight.finalCategoryId,
+        listingTypeId: preflight.finalListingTypeId
       },
       "meli.vehicle.publish.error"
     );
@@ -771,7 +1033,7 @@ export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}
     return result;
   }
 
-  const blocked = await assertPublishable(vehicle, "publish", buildOptions);
+  const blocked = await assertPublishable(vehicle, "publish", buildOptions, requester);
   if (blocked) {
     logger.error(
       {
@@ -787,7 +1049,7 @@ export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}
     return blocked;
   }
 
-  if (local.payload.listing_type_id !== preflight.listingTypeId) {
+  if (local.payload.listing_type_id !== preflight.finalListingTypeId) {
     const result = buildBlockedResult(
       "publish",
       vehicle,
@@ -800,7 +1062,7 @@ export const publishVehicleToMeli = async (vehicle: Vehicle, deps: MeliDeps = {}
     logger.error(
       {
         vehicleId: vehicle.id,
-        selectedListingTypeId: preflight.listingTypeId,
+        selectedListingTypeId: preflight.finalListingTypeId,
         payloadListingTypeId: local.payload.listing_type_id || null
       },
       "meli.vehicle.publish.error"
